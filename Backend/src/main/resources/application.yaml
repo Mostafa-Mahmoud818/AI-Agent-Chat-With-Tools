@@ -1,0 +1,32 @@
+# https://docs.camunda.io/docs/apis-tools/spring-zeebe-sdk/getting-started/
+# https://docs.camunda.io/docs/apis-tools/spring-zeebe-sdk/configuration/
+
+camunda:
+  client:
+    mode: ${CAMUNDA_CLIENT_MODE:saas}
+    auth:
+      client-id: ${CAMUNDA_CLIENT_ID:1oK3u5HDdDFw-kVqdCvZCVv5tMBdauys}
+      client-secret: ${CAMUNDA_CLIENT_SECRET:eKE6nBs5PB3_Vw8UqrnBRA6v2uEf7L_HxBqMl1sMO4mK7YwqZzrHS3OKo3xT0fkD}
+      token-url: https://login.cloud.camunda.io/oauth/token
+    grpc-address: grpcs://${camunda.client.cloud.cluster-id}.${camunda.client.cloud.region}.zeebe.camunda.io:443
+    rest-address: https://${camunda.client.cloud.region}.zeebe.camunda.io/${camunda.client.cloud.cluster-id}
+    cloud:
+      cluster-id: ${CAMUNDA_CLIENT_CLOUD_CLUSTERID:6bab2a8e-36e6-46d5-8ab1-a3c116417742}
+      region: ${CAMUNDA_CLIENT_CLOUD_REGION:ric-1}
+
+server:
+  port: 8081
+
+app:
+  cors:
+    # Allow both localhost and 127.0.0.1 (browsers treat them as different origins)
+    allowed-origins: http://localhost:5173,http://127.0.0.1:5173
+  camunda:
+    # Orchestration Cluster REST API (v2) base URL
+    cluster-api-url: https://${camunda.client.cloud.region}.zeebe.camunda.io/${camunda.client.cloud.cluster-id}
+    process-id: ai-agent-chat-with-tools
+
+logging:
+  level:
+    com.example.aichat: DEBUG
+    io.camunda: INFO
