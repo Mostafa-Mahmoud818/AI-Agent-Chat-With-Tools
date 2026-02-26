@@ -1,5 +1,11 @@
-# https://docs.camunda.io/docs/apis-tools/spring-zeebe-sdk/getting-started/
-# https://docs.camunda.io/docs/apis-tools/spring-zeebe-sdk/configuration/
+# Copy this file to application.yaml and fill in your values.
+# application.yaml is gitignored — never commit real credentials.
+#
+# Required environment variables (or set values directly here for local dev only):
+#   CAMUNDA_CLIENT_ID         - OAuth client ID from Camunda Console
+#   CAMUNDA_CLIENT_SECRET     - OAuth client secret from Camunda Console
+#   CAMUNDA_CLIENT_CLOUD_CLUSTERID - Your cluster ID (e.g. 6bab2a8e-...)
+#   CAMUNDA_CLIENT_CLOUD_REGION    - Your cluster region (e.g. ric-1)
 
 camunda:
   client:
@@ -19,10 +25,8 @@ server:
 
 app:
   cors:
-    # Allow both localhost and 127.0.0.1 (browsers treat them as different origins)
     allowed-origins: http://localhost:5173,http://127.0.0.1:5173
   camunda:
-    # Orchestration Cluster REST API (v2) base URL
     cluster-api-url: https://${camunda.client.cloud.region}.zeebe.camunda.io/${camunda.client.cloud.cluster-id}
     process-id: ai-agent-chat-with-tools
 

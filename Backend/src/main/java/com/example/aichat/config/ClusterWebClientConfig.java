@@ -10,19 +10,20 @@ import org.springframework.web.reactive.function.client.ClientRequest;
 import org.springframework.web.reactive.function.client.ExchangeFilterFunction;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Map;
 
 /**
  * Configures an OAuth2-authenticated WebClient for the Camunda
  * Orchestration Cluster REST API (v2).
- * Automatically fetches and caches access tokens using client_credentials
- * grant.
+ * Automatically fetches and caches access tokens using client_credentials grant.
  */
 @Configuration
-public class TasklistClientConfig {
+public class ClusterWebClientConfig {
 
-    private static final Logger log = LoggerFactory.getLogger(TasklistClientConfig.class);
+    private static final Logger log = LoggerFactory.getLogger(ClusterWebClientConfig.class);
 
     @Value("${camunda.client.auth.client-id}")
     private String clientId;
@@ -36,6 +37,7 @@ public class TasklistClientConfig {
     @Value("${app.camunda.cluster-api-url}")
     private String clusterApiUrl;
 
+    private final WebClient authClient = WebClient.create();
     private String cachedToken;
     private Instant tokenExpiry = Instant.MIN;
 
@@ -65,19 +67,12 @@ public class TasklistClientConfig {
 
         log.info("Fetching new OAuth token from {}", authTokenUrl);
 
-        // Fetch a new token from Camunda's OAuth endpoint
-        WebClient authClient = WebClient.create();
-
-        Map<String, String> formData = Map.of(
+        String body = encodeFormData(Map.of(
                 "grant_type", "client_credentials",
                 "client_id", clientId,
                 "client_secret", clientSecret,
-                "audience", "zeebe.camunda.io");
-
-        String body = formData.entrySet().stream()
-                .map(e -> e.getKey() + "=" + e.getValue())
-                .reduce((a, b) -> a + "&" + b)
-                .orElse("");
+                "audience", "zeebe.camunda.io"
+        ));
 
         Map<?, ?> response = authClient.post()
                 .uri(authTokenUrl)
@@ -90,10 +85,18 @@ public class TasklistClientConfig {
         if (response != null) {
             cachedToken = (String) response.get("access_token");
             int expiresIn = (Integer) response.get("expires_in");
-            tokenExpiry = Instant.now().plusSeconds(expiresIn - 60); // refresh 60s early
+            tokenExpiry = Instant.now().plusSeconds(expiresIn - 60);
             log.info("OAuth token acquired, expires in {}s", expiresIn);
         }
 
         return cachedToken;
+    }
+
+    private static String encodeFormData(Map<String, String> data) {
+        return data.entrySet().stream()
+                .map(e -> URLEncoder.encode(e.getKey(), StandardCharsets.UTF_8)
+                        + "=" + URLEncoder.encode(e.getValue(), StandardCharsets.UTF_8))
+                .reduce((a, b) -> a + "&" + b)
+                .orElse("");
     }
 }

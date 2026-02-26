@@ -1,4 +1,4 @@
 package com.example.aichat.dto;
 
-public record StartChatResponse(String processInstanceKey) {
+public record StartChatResponse(String sessionId, String processInstanceKey) {
 }
