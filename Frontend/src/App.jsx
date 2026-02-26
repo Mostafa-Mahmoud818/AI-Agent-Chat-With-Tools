@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import ChatWindow from './components/ChatWindow'
 import './App.css'
 
