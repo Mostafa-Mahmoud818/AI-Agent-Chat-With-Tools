@@ -17,13 +17,17 @@ Thumbs.db
 .env.local
 .env.*.local
 *.local
+!.env.example
+!Backend/.env.example
 
 # App config (may contain secrets / credentials)
+# application.yaml.template IS committed — it contains no real values
 Backend/src/main/resources/application.yaml
 Backend/src/main/resources/application.yml
 Backend/src/main/resources/application-*.yaml
 Backend/src/main/resources/application-*.yml
 Backend/src/main/resources/application-*.properties
+!Backend/src/main/resources/application.yaml.template
 
 # Logs
 logs/
