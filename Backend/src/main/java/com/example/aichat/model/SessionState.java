@@ -9,9 +9,11 @@ public class SessionState {
     private final Instant createdAt;
 
     private String lastResponseText;
+    private String lastHandledBy;
     private boolean awaitingResponse;
     private boolean expired;
     private int consecutiveEmptyPolls;
+    private int consecutiveErrors;
 
     public SessionState(String sessionId, String processInstanceKey) {
         this.sessionId = sessionId;
@@ -19,6 +21,7 @@ public class SessionState {
         this.awaitingResponse = true;
         this.expired = false;
         this.consecutiveEmptyPolls = 0;
+        this.consecutiveErrors = 0;
         this.createdAt = Instant.now();
     }
 
@@ -40,6 +43,14 @@ public class SessionState {
 
     public synchronized void setLastResponseText(String lastResponseText) {
         this.lastResponseText = lastResponseText;
+    }
+
+    public synchronized String getLastHandledBy() {
+        return lastHandledBy;
+    }
+
+    public synchronized void setLastHandledBy(String lastHandledBy) {
+        this.lastHandledBy = lastHandledBy;
     }
 
     public synchronized boolean isAwaitingResponse() {
@@ -73,11 +84,23 @@ public class SessionState {
         this.consecutiveEmptyPolls = 0;
     }
 
+    public synchronized int getConsecutiveErrors() {
+        return consecutiveErrors;
+    }
+
+    public synchronized void incrementConsecutiveErrors() {
+        this.consecutiveErrors++;
+    }
+
+    public synchronized void resetConsecutiveErrors() {
+        this.consecutiveErrors = 0;
+    }
+
     /**
      * Atomically check for a new response and update state.
      * Returns the new responseText if detected, null if still waiting.
      */
-    public synchronized String checkAndAcceptNewResponse(String currentResponseText) {
+    public synchronized String checkAndAcceptNewResponse(String currentResponseText, String handledBy) {
         if (currentResponseText == null || currentResponseText.isBlank()) {
             return null;
         }
@@ -85,6 +108,7 @@ public class SessionState {
         if (awaitingResponse) {
             if (lastResponseText == null || !lastResponseText.equals(currentResponseText)) {
                 lastResponseText = currentResponseText;
+                lastHandledBy = handledBy;
                 awaitingResponse = false;
                 consecutiveEmptyPolls = 0;
                 return currentResponseText;

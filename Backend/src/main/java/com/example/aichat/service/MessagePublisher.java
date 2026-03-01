@@ -1,12 +1,12 @@
 package com.example.aichat.service;
 
 import io.camunda.client.CamundaClient;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Wraps Zeebe message publishing, so the publish-message-with-TTL
@@ -15,23 +15,23 @@ import java.util.Map;
 @Component
 public class MessagePublisher {
 
-    private static final Logger log = LoggerFactory.getLogger(MessagePublisher.class);
-    private static final Duration DEFAULT_TTL = Duration.ofSeconds(30);
-
     private final CamundaClient camundaClient;
+    private final Duration ttl;
 
-    public MessagePublisher(CamundaClient camundaClient) {
+    public MessagePublisher(
+            CamundaClient camundaClient,
+            @Value("${app.camunda.messages.ttl-seconds}") int ttlSeconds) {
         this.camundaClient = camundaClient;
+        this.ttl = Duration.ofSeconds(ttlSeconds);
     }
 
     public void publish(String messageName, String correlationKey, Map<String, Object> variables) {
-        log.info("Publishing message '{}' with correlationKey '{}'", messageName, correlationKey);
         camundaClient.newPublishMessageCommand()
                 .messageName(messageName)
                 .correlationKey(correlationKey)
                 .variables(variables)
-                .timeToLive(DEFAULT_TTL)
+                .timeToLive(ttl)
                 .send()
-                .join();
+                .join(30, TimeUnit.SECONDS);
     }
 }

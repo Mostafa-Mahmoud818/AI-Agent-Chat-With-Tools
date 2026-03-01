@@ -19,25 +19,37 @@ public class CamundaChatService implements ChatService {
 
     private static final Logger log = LoggerFactory.getLogger(CamundaChatService.class);
 
-    private static final int MAX_PI_SEARCH_ATTEMPTS = 20;
-    private static final long PI_SEARCH_DELAY_MS = 1500;
-    private static final int EMPTY_POLLS_BEFORE_EXPIRY_CHECK = 60;
-    private static final String[] TERMINAL_STATES = {"COMPLETED", "CANCELED"};
+    private static final String[] TERMINAL_STATES = { "COMPLETED", "CANCELED" };
 
     private final CamundaRestClient restClient;
     private final MessagePublisher messagePublisher;
     private final SessionRepository sessionRepository;
-
-    @Value("${app.camunda.process-id}")
-    private String processId;
+    private final String processId;
+    private final String startMessageName;
+    private final String replyMessageName;
+    private final int maxPiSearchAttempts;
+    private final long piSearchDelayMs;
+    private final int emptyPollsBeforeExpiryCheck;
 
     public CamundaChatService(
             CamundaRestClient restClient,
             MessagePublisher messagePublisher,
-            SessionRepository sessionRepository) {
+            SessionRepository sessionRepository,
+            @Value("${app.camunda.process-id}") String processId,
+            @Value("${app.camunda.messages.start}") String startMessageName,
+            @Value("${app.camunda.messages.reply}") String replyMessageName,
+            @Value("${app.polling.pi-search-max-attempts}") int maxPiSearchAttempts,
+            @Value("${app.polling.pi-search-delay-ms}") long piSearchDelayMs,
+            @Value("${app.polling.empty-polls-before-expiry-check}") int emptyPollsBeforeExpiryCheck) {
         this.restClient = restClient;
         this.messagePublisher = messagePublisher;
         this.sessionRepository = sessionRepository;
+        this.processId = processId;
+        this.startMessageName = startMessageName;
+        this.replyMessageName = replyMessageName;
+        this.maxPiSearchAttempts = maxPiSearchAttempts;
+        this.piSearchDelayMs = piSearchDelayMs;
+        this.emptyPollsBeforeExpiryCheck = emptyPollsBeforeExpiryCheck;
     }
 
     @Override
@@ -47,16 +59,15 @@ public class CamundaChatService implements ChatService {
         Map<String, Object> variables = Map.of(
                 "sessionId", sessionId,
                 "inputText", inputText,
-                "inputDocuments", Collections.emptyList()
-        );
+                "inputDocuments", Collections.emptyList());
 
         try {
-            messagePublisher.publish("ai-chat-start", "", variables);
+            messagePublisher.publish(startMessageName, "", variables);
         } catch (Exception e) {
             throw new ProcessStartException("Failed to publish start message: " + e.getMessage(), e);
         }
 
-        log.info("Published ai-chat-start message for session {}", sessionId);
+        log.info("Published {} message for session {}", startMessageName, sessionId);
 
         String processInstanceKey = findProcessInstanceKey(sessionId);
         SessionState session = new SessionState(sessionId, processInstanceKey);
@@ -78,18 +89,14 @@ public class CamundaChatService implements ChatService {
             }
 
             session.resetEmptyPolls();
+            session.resetConsecutiveErrors();
 
-            Object agentVar = variables.get("agent");
-            log.debug("Session {}: agent variable type={}, value={}",
-                    sessionId, agentVar == null ? "null" : agentVar.getClass().getSimpleName(), agentVar);
-
-            String responseText = extractResponseText(agentVar);
-            log.debug("Session {}: extractResponseText returned: {}", sessionId,
-                    responseText != null ? responseText.substring(0, Math.min(80, responseText.length())) + "..." : "null");
-
-            String accepted = session.checkAndAcceptNewResponse(responseText);
+            String routeCategory = extractRouteCategory(variables);
+            String responseText = extractResponseText(variables.get("agent"));
+            String handledBy = resolveAgentLabel(routeCategory);
+            String accepted = session.checkAndAcceptNewResponse(responseText, handledBy);
             if (accepted != null) {
-                return new ChatResponseDTO("ready", accepted);
+                return new ChatResponseDTO("ready", accepted, handledBy);
             }
 
             return lastKnownOrProcessing(session);
@@ -97,8 +104,15 @@ public class CamundaChatService implements ChatService {
         } catch (SessionExpiredException e) {
             throw e;
         } catch (Exception e) {
-            log.error("Error getting response for session {}: {}", sessionId, e.getMessage());
-            return new ChatResponseDTO("processing", null);
+            session.incrementConsecutiveErrors();
+            if (session.getConsecutiveErrors() >= 3) {
+                log.error("Persistent error getting response for session {} ({} consecutive): {}",
+                        sessionId, session.getConsecutiveErrors(), e.getMessage());
+                return new ChatResponseDTO("error",
+                        "Unable to retrieve response. Please try again or start a new chat.", null);
+            }
+            log.warn("Transient error getting response for session {}: {}", sessionId, e.getMessage());
+            return new ChatResponseDTO("processing", null, null);
         }
     }
 
@@ -108,11 +122,10 @@ public class CamundaChatService implements ChatService {
 
         Map<String, Object> variables = Map.of(
                 "followUpInput", followUpInput,
-                "followUpDocuments", Collections.emptyList()
-        );
+                "followUpDocuments", Collections.emptyList());
 
         try {
-            messagePublisher.publish("ai-chat-user-reply", sessionId, variables);
+            messagePublisher.publish(replyMessageName, sessionId, variables);
         } catch (Exception e) {
             log.error("Failed to publish reply for session {}: {}", sessionId, e.getMessage());
             if (restClient.isProcessInstanceInState(session.getProcessInstanceKey(), TERMINAL_STATES)) {
@@ -123,13 +136,20 @@ public class CamundaChatService implements ChatService {
         }
 
         session.setAwaitingResponse(true);
-        log.info("Published ai-chat-user-reply for session {}", sessionId);
+        log.info("Published {} for session {}", replyMessageName, sessionId);
     }
 
     private ChatResponseDTO handleEmptyVariables(SessionState session) {
         session.incrementEmptyPolls();
 
-        if (session.getConsecutiveEmptyPolls() >= EMPTY_POLLS_BEFORE_EXPIRY_CHECK) {
+        // Early warning: surface potential API connectivity issues before the expiry
+        // threshold
+        if (session.getConsecutiveEmptyPolls() == 5 && session.isAwaitingResponse()) {
+            log.warn("Session {} has had {} consecutive empty variable polls — possible Camunda API connectivity issue",
+                    session.getSessionId(), session.getConsecutiveEmptyPolls());
+        }
+
+        if (session.getConsecutiveEmptyPolls() >= emptyPollsBeforeExpiryCheck) {
             if (restClient.isProcessInstanceInState(session.getProcessInstanceKey(), TERMINAL_STATES)) {
                 session.setExpired(true);
                 throw new SessionExpiredException(session.getSessionId());
@@ -142,24 +162,21 @@ public class CamundaChatService implements ChatService {
 
     private ChatResponseDTO lastKnownOrProcessing(SessionState session) {
         if (!session.isAwaitingResponse() && session.getLastResponseText() != null) {
-            return new ChatResponseDTO("ready", session.getLastResponseText());
+            return new ChatResponseDTO("ready", session.getLastResponseText(), session.getLastHandledBy());
         }
-        return new ChatResponseDTO("processing", null);
+        return new ChatResponseDTO("processing", null, null);
     }
 
     private String findProcessInstanceKey(String sessionId) {
         List<Map<String, String>> sort = List.of(Map.of("field", "startDate", "order", "DESC"));
 
-        for (int attempt = 1; attempt <= MAX_PI_SEARCH_ATTEMPTS; attempt++) {
+        for (int attempt = 1; attempt <= maxPiSearchAttempts; attempt++) {
             try {
                 Map<String, Object> filter = new HashMap<>();
                 filter.put("processDefinitionId", processId);
                 filter.put("state", "ACTIVE");
 
-                List<JsonNode> items = restClient.searchProcessInstances(filter, 5, sort);
-                log.debug("Attempt {}/{} for session {}: found {} active instance(s)",
-                        attempt, MAX_PI_SEARCH_ATTEMPTS, sessionId, items.size());
-
+                List<JsonNode> items = restClient.searchProcessInstances(filter, 20, sort);
                 for (JsonNode piNode : items) {
                     String piKey = piNode.path("processInstanceKey").isTextual()
                             ? piNode.path("processInstanceKey").asText()
@@ -174,16 +191,33 @@ public class CamundaChatService implements ChatService {
                 }
             } catch (Exception e) {
                 log.warn("Attempt {}/{} to find PI for session {} failed: {}",
-                        attempt, MAX_PI_SEARCH_ATTEMPTS, sessionId, e.getMessage());
+                        attempt, maxPiSearchAttempts, sessionId, e.getMessage());
             }
 
-            sleep(PI_SEARCH_DELAY_MS);
+            sleep(piSearchDelayMs);
         }
 
         throw new ProcessStartException(
                 "Could not find process instance for session " + sessionId
-                        + " after " + MAX_PI_SEARCH_ATTEMPTS + " attempts. "
+                        + " after " + maxPiSearchAttempts + " attempts. "
                         + "Ensure the BPMN process is deployed to the cluster.");
+    }
+
+    private String extractRouteCategory(Map<String, Object> variables) {
+        Object rc = variables.get("routeCategory");
+        return rc != null ? rc.toString() : null;
+    }
+
+    private static final Map<String, String> AGENT_LABELS = Map.of(
+            "user_data", "User Data Agent",
+            "content", "Content & Entertainment Agent",
+            "utility", "Utility & Web Agent",
+            "general", "General Agent");
+
+    private String resolveAgentLabel(String routeCategory) {
+        if (routeCategory == null)
+            return null;
+        return AGENT_LABELS.getOrDefault(routeCategory, routeCategory);
     }
 
     private String extractResponseText(Object agentVar) {

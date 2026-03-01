@@ -5,6 +5,7 @@ import com.example.aichat.exception.SessionNotFoundException;
 import com.example.aichat.model.SessionState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Repository;
 
@@ -22,9 +23,13 @@ import java.util.concurrent.ConcurrentHashMap;
 public class SessionRepository {
 
     private static final Logger log = LoggerFactory.getLogger(SessionRepository.class);
-    private static final Duration SESSION_MAX_AGE = Duration.ofMinutes(35);
 
+    private final Duration sessionMaxAge;
     private final Map<String, SessionState> sessions = new ConcurrentHashMap<>();
+
+    public SessionRepository(@Value("${app.session.max-age-minutes}") int maxAgeMinutes) {
+        this.sessionMaxAge = Duration.ofMinutes(maxAgeMinutes);
+    }
 
     public void save(SessionState session) {
         sessions.put(session.getSessionId(), session);
@@ -45,13 +50,15 @@ public class SessionRepository {
         return session;
     }
 
-    @Scheduled(fixedDelay = 300_000)
+    @Scheduled(fixedDelayString = "${app.session.cleanup-interval-ms}")
     public void cleanupExpiredSessions() {
-        Instant cutoff = Instant.now().minus(SESSION_MAX_AGE);
+        Instant cutoff = Instant.now().minus(sessionMaxAge);
         int removed = 0;
         Iterator<Map.Entry<String, SessionState>> it = sessions.entrySet().iterator();
         while (it.hasNext()) {
-            if (it.next().getValue().getCreatedAt().isBefore(cutoff)) {
+            SessionState session = it.next().getValue();
+            // Remove if explicitly expired (HTTP 410 path) OR aged out past max-age
+            if (session.isExpired() || session.getCreatedAt().isBefore(cutoff)) {
                 it.remove();
                 removed++;
             }
