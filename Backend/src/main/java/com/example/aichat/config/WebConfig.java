@@ -13,10 +13,15 @@ public class WebConfig implements WebMvcConfigurer {
 
     @Override
     public void addCorsMappings(CorsRegistry registry) {
+        String[] origins = java.util.Arrays.stream(allowedOrigins.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toArray(String[]::new);
+
         registry.addMapping("/api/**")
-                .allowedOrigins(allowedOrigins.split(","))
-                .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
-                .allowedHeaders("*")
-                .allowCredentials(true);
+                .allowedOrigins(origins)
+                .allowedMethods("GET", "POST", "OPTIONS")
+                .allowedHeaders("Content-Type", "Accept", "X-Requested-With")
+                .allowCredentials(false);
     }
 }
