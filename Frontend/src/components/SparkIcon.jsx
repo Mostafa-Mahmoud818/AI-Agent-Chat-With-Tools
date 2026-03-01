@@ -1,3 +1,5 @@
+import PropTypes from 'prop-types'
+
 const SPARK_PATH =
     'M20 12.1C18.49 10.59 17.16 8.11 16.18 6.01C16.15 6 16.12 6 16.08 6' +
     'C16.04 6 16.01 6 15.98 6.01C15 8.11 13.67 10.59 12.15 12.1C10.63 13.61' +
@@ -8,7 +10,7 @@ const SPARK_PATH =
     ' 26 16.03 26 16C26 15.97 26 15.94 25.99 15.92C23.95 14.93 21.53 13.6' +
     ' 20 12.1Z'
 
-export default function SparkIcon({
+function SparkIcon({
     size = 14,
     fill = '#A56EFF',
     withCircle = false,
@@ -21,3 +23,12 @@ export default function SparkIcon({
         </svg>
     )
 }
+
+SparkIcon.propTypes = {
+    size: PropTypes.number,
+    fill: PropTypes.string,
+    withCircle: PropTypes.bool,
+    circleFill: PropTypes.string,
+}
+
+export default SparkIcon

@@ -1,27 +1,53 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useCallback, forwardRef, useImperativeHandle } from 'react'
+import PropTypes from 'prop-types'
 import './ChatInput.css'
 
-export default function ChatInput({ onSend, placeholder, disabled }) {
+/**
+ * Chat text input component.
+ * Exposes a `focus()` method via forwardRef so parents can programmatically
+ * focus the textarea without resorting to document.querySelector.
+ */
+const ChatInput = forwardRef(function ChatInput({ onSend, placeholder, disabled }, ref) {
     const [text, setText] = useState('')
     const inputRef = useRef(null)
 
+    // Expose focus() to parent via ref
+    useImperativeHandle(ref, () => ({
+        focus() {
+            inputRef.current?.focus()
+        }
+    }), [])
+
     const canSend = text.trim() && !disabled
 
-    const handleSubmit = (e) => {
-        e.preventDefault()
+    const handleInput = useCallback((e) => {
+        setText(e.target.value)
+        e.target.style.height = 'auto'
+        e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px'
+    }, [])
+
+    const submit = useCallback(() => {
         const trimmed = text.trim()
         if (!trimmed || disabled) return
         onSend(trimmed)
         setText('')
-        inputRef.current?.focus()
-    }
+        if (inputRef.current) {
+            inputRef.current.style.height = 'auto'
+            inputRef.current.focus()
+        }
+    }, [text, disabled, onSend])
 
-    const handleKeyDown = (e) => {
+    const handleSubmit = useCallback((e) => {
+        e.preventDefault()
+        submit()
+    }, [submit])
+
+    const handleKeyDown = useCallback((e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault()
-            handleSubmit(e)
+            submit()
         }
-    }
+    }, [submit])
 
     return (
         <form className="chat-input-form" onSubmit={handleSubmit}>
@@ -30,7 +56,7 @@ export default function ChatInput({ onSend, placeholder, disabled }) {
                     ref={inputRef}
                     className="chat-input"
                     value={text}
-                    onChange={(e) => setText(e.target.value)}
+                    onChange={handleInput}
                     onKeyDown={handleKeyDown}
                     placeholder={placeholder}
                     rows={1}
@@ -51,4 +77,12 @@ export default function ChatInput({ onSend, placeholder, disabled }) {
             </div>
         </form>
     )
+})
+
+ChatInput.propTypes = {
+    onSend: PropTypes.func.isRequired,
+    placeholder: PropTypes.string,
+    disabled: PropTypes.bool,
 }
+
+export default ChatInput

@@ -170,6 +170,29 @@
     animation: fadeInUp 0.3s ease;
 }
 
+.error-banner span {
+    flex: 1;
+}
+
+.error-dismiss {
+    background: none;
+    border: none;
+    color: var(--error);
+    cursor: pointer;
+    padding: 2px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.7;
+    transition: opacity var(--transition-fast);
+    flex-shrink: 0;
+}
+
+.error-dismiss:hover {
+    opacity: 1;
+}
+
 /* Bottom */
 .chat-bottom {
     padding: 12px 20px 16px;

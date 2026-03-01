@@ -34,7 +34,12 @@ export default function ChatWindow() {
     const [error, setError] = useState(null)
     const [sending, setSending] = useState(false)
     const messagesEndRef = useRef(null)
-    const pollRef = useRef(null)
+    // Ref to the ChatInput for programmatic focus
+    const chatInputRef = useRef(null)
+    // Timeout handle for the self-scheduling poller
+    const pollTimeoutRef = useRef(null)
+    // Cancellation flag: set to true to stop any in-flight poll cycle
+    const pollCancelledRef = useRef(false)
     const pollCountRef = useRef(0)
 
     const scrollToBottom = useCallback(() => {
@@ -45,20 +50,23 @@ export default function ChatWindow() {
         scrollToBottom()
     }, [messages, phase, scrollToBottom])
 
+    // Cleanup on unmount
     useEffect(() => {
         return () => {
-            if (pollRef.current) clearInterval(pollRef.current)
+            pollCancelledRef.current = true
+            if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current)
         }
     }, [])
 
-    const addMessage = useCallback((role, text) => {
-        setMessages(prev => [...prev, { id: Date.now() + Math.random(), role, text, timestamp: new Date() }])
+    const addMessage = useCallback((role, text, handledBy = null) => {
+        setMessages(prev => [...prev, { id: crypto.randomUUID(), role, text, timestamp: new Date(), handledBy }])
     }, [])
 
     const stopPolling = useCallback(() => {
-        if (pollRef.current) {
-            clearInterval(pollRef.current)
-            pollRef.current = null
+        pollCancelledRef.current = true
+        if (pollTimeoutRef.current) {
+            clearTimeout(pollTimeoutRef.current)
+            pollTimeoutRef.current = null
         }
         pollCountRef.current = 0
     }, [])
@@ -69,29 +77,55 @@ export default function ChatWindow() {
         addMessage('system', 'Session has expired due to inactivity. Please start a new conversation.')
     }, [stopPolling, addMessage])
 
-    const startPolling = useCallback((sid) => {
-        stopPolling()
-        pollCountRef.current = 0
+    /**
+     * Self-scheduling poll function using setTimeout instead of setInterval.
+     * This ensures a new poll only starts after the previous one completes,
+     * preventing concurrent in-flight requests from building up.
+     */
+    const schedulePoll = useCallback((sid) => {
+        // Guard: if polling was cancelled between schedule and execution, do nothing
+        if (pollCancelledRef.current) return
 
-        pollRef.current = setInterval(async () => {
-            pollCountRef.current++
+        pollCountRef.current++
 
-            if (pollCountRef.current > MAX_POLL_ATTEMPTS) {
-                stopPolling()
-                setError('The agent is taking too long to respond. Please try starting a new chat.')
-                setPhase('ready')
-                return
-            }
+        if (pollCountRef.current > MAX_POLL_ATTEMPTS) {
+            stopPolling()
+            setError('The agent is taking too long to respond. Please try starting a new chat.')
+            setPhase('ready')
+            return
+        }
+
+        const runPoll = async () => {
+            // Double-check cancellation right before the async call
+            if (pollCancelledRef.current) return
 
             try {
                 const data = await getResponse(sid)
+
+                // Ignore stale results if polling was cancelled while the request was in-flight
+                if (pollCancelledRef.current) return
+
                 if (data.status === 'ready' && data.responseText) {
                     stopPolling()
-                    addMessage('ai', data.responseText)
+                    addMessage('ai', data.responseText, data.handledBy)
                     setPhase('ready')
                     setError(null)
+                    // Focus the input via ref — no DOM query needed
+                    setTimeout(() => chatInputRef.current?.focus(), 100)
+                    return
                 }
+
+                if (data.status === 'error') {
+                    stopPolling()
+                    setError(data.responseText || 'An error occurred while processing your request.')
+                    setPhase('ready')
+                    setTimeout(() => chatInputRef.current?.focus(), 100)
+                    return
+                }
+
             } catch (err) {
+                if (pollCancelledRef.current) return
+
                 if (isSessionGone(err)) {
                     handleSessionExpired()
                     return
@@ -105,8 +139,23 @@ export default function ChatWindow() {
                 }
                 console.error('Polling error:', err)
             }
-        }, POLL_INTERVAL)
+
+            // Schedule the next poll only after this one completes (self-scheduling pattern)
+            if (!pollCancelledRef.current) {
+                pollTimeoutRef.current = setTimeout(() => schedulePoll(sid), POLL_INTERVAL)
+            }
+        }
+
+        runPoll()
     }, [addMessage, stopPolling, handleSessionExpired])
+
+    const startPolling = useCallback((sid) => {
+        stopPolling()
+        pollCancelledRef.current = false
+        pollCountRef.current = 0
+        // Kick off the first poll immediately via a 0-delay timeout
+        pollTimeoutRef.current = setTimeout(() => schedulePoll(sid), 0)
+    }, [stopPolling, schedulePoll])
 
     const handleSendMessage = useCallback(async (text) => {
         if (sending) return
@@ -170,7 +219,7 @@ export default function ChatWindow() {
                     </div>
                 </div>
                 {messages.length > 0 && (
-                    <button className="new-chat-btn" onClick={handleNewChat} title="New conversation">
+                    <button className="new-chat-btn" onClick={handleNewChat} title="New conversation" aria-label="Start new conversation">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
                         </svg>
@@ -179,7 +228,7 @@ export default function ChatWindow() {
                 )}
             </div>
 
-            <div className="chat-messages">
+            <div className="chat-messages" role="list" aria-label="Chat messages">
                 {messages.length === 0 && phase === 'idle' && (
                     <div className="empty-state">
                         <div className="empty-icon">
@@ -201,14 +250,23 @@ export default function ChatWindow() {
                     <MessageBubble key={msg.id} message={msg} />
                 ))}
 
-                {phase === 'thinking' && <ThinkingIndicator />}
+                {phase === 'thinking' && (
+                    <div aria-live="polite" aria-label="Agent is thinking">
+                        <ThinkingIndicator />
+                    </div>
+                )}
 
                 {error && (
-                    <div className="error-banner">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <div className="error-banner" role="alert" aria-live="assertive">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                             <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
                         </svg>
-                        {error}
+                        <span>{error}</span>
+                        <button className="error-dismiss" onClick={() => setError(null)} aria-label="Dismiss error">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                            </svg>
+                        </button>
                     </div>
                 )}
 
@@ -218,6 +276,7 @@ export default function ChatWindow() {
             <div className="chat-bottom">
                 {(phase === 'idle' || phase === 'ready') && (
                     <ChatInput
+                        ref={chatInputRef}
                         onSend={handleSendMessage}
                         disabled={sending}
                         placeholder={phase === 'idle' ? 'Type your message...' : 'Type a follow-up...'}

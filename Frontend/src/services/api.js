@@ -1,4 +1,5 @@
-const API_BASE = 'http://localhost:8081/api/chat';
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8081/api/chat';
+const REQUEST_TIMEOUT_MS = 15_000;
 
 class ApiError extends Error {
     constructor(status, errorCode, message) {
@@ -27,8 +28,22 @@ async function handleResponse(res) {
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
+function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    return fetch(url, { ...options, signal: controller.signal })
+        .catch(err => {
+            if (err.name === 'AbortError') {
+                throw new ApiError(0, 'timeout', 'Request timed out. Please check your connection.');
+            }
+            throw new ApiError(0, 'network_error', 'Network error. Is the backend running?');
+        })
+        .finally(() => clearTimeout(timer));
+}
+
 async function post(path, body) {
-    const res = await fetch(`${API_BASE}${path}`, {
+    const res = await fetchWithTimeout(`${API_BASE}${path}`, {
         method: 'POST',
         headers: JSON_HEADERS,
         body: JSON.stringify(body),
@@ -37,7 +52,7 @@ async function post(path, body) {
 }
 
 async function get(path) {
-    const res = await fetch(`${API_BASE}${path}`);
+    const res = await fetchWithTimeout(`${API_BASE}${path}`);
     return handleResponse(res);
 }
 
