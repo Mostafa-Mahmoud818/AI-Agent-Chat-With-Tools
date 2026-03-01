@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 
+import java.time.Duration;
 import java.util.*;
 
 /**
@@ -51,7 +52,7 @@ public class CamundaRestClient {
                     .bodyValue(searchRequest)
                     .retrieve()
                     .bodyToMono(String.class)
-                    .block();
+                    .block(Duration.ofSeconds(10));
 
             return parseItems(responseBody);
         } catch (WebClientResponseException e) {
@@ -73,7 +74,7 @@ public class CamundaRestClient {
                     .bodyValue(searchRequest)
                     .retrieve()
                     .bodyToMono(String.class)
-                    .block();
+                    .block(Duration.ofSeconds(10));
 
             List<JsonNode> items = parseItems(responseBody);
             Map<String, Object> variables = new HashMap<>();
@@ -92,12 +93,10 @@ public class CamundaRestClient {
                 }
             }
 
-            log.debug("Fetched {} variable(s) for PI {}: {}", variables.size(), processInstanceKey, variables.keySet());
             return variables;
 
         } catch (WebClientResponseException e) {
             if (e.getStatusCode().value() == 404) {
-                log.debug("Variables not found for PI {} (likely completed)", processInstanceKey);
                 return Collections.emptyMap();
             }
             log.error("Error fetching variables for PI {}: {} - Response: {}",
@@ -122,7 +121,6 @@ public class CamundaRestClient {
                 log.warn("Variable '{}' is truncated but has no variableKey; skipping full-value fetch", varName);
                 return varNode.path("value").asText(null);
             }
-            log.debug("Variable '{}' is truncated (key={}); fetching full value", varName, variableKey);
             return fetchFullVariableValue(variableKey, varName);
         }
 
@@ -141,7 +139,7 @@ public class CamundaRestClient {
                     .uri("/v2/variables/{variableKey}", variableKey)
                     .retrieve()
                     .bodyToMono(String.class)
-                    .block();
+                    .block(Duration.ofSeconds(10));
 
             JsonNode root = objectMapper.readTree(responseBody);
             if (root.has("fullValue") && !root.path("fullValue").isNull()) {
@@ -170,7 +168,6 @@ public class CamundaRestClient {
                         "state", state
                 );
                 if (!searchProcessInstances(filter, 1).isEmpty()) {
-                    log.info("Process instance {} is {}", processInstanceKey, state);
                     return true;
                 }
             }

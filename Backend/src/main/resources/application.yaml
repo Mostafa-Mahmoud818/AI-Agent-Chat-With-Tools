@@ -25,8 +25,21 @@ app:
     # Orchestration Cluster REST API (v2) base URL
     cluster-api-url: https://${camunda.client.cloud.region}.zeebe.camunda.io/${camunda.client.cloud.cluster-id}
     process-id: ai-agent-chat-with-tools
+    messages:
+      start: ai-chat-start
+      reply: ai-chat-user-reply
+      ttl-seconds: 30
+  polling:
+    pi-search-max-attempts: 20
+    pi-search-delay-ms: 1500
+    empty-polls-before-expiry-check: 60
+  session:
+    max-age-minutes: 30
+    cleanup-interval-ms: 300000
 
 logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level [%X{requestId:-}] [%X{sessionId:-}] %logger{36} - %msg%n"
   level:
-    com.example.aichat: DEBUG
+    com.example.aichat: INFO
     io.camunda: INFO
