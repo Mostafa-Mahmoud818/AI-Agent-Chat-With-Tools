@@ -1,0 +1,440 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bioc="http://bpmn.io/schema/bpmn/biocolor/1.0" xmlns:color="http://www.omg.org/spec/BPMN/non-normative/color/1.0" xmlns:modeler="http://camunda.org/schema/modeler/1.0" id="Definitions_main_router" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Web Modeler" exporterVersion="dd55451" modeler:executionPlatform="Camunda Cloud" modeler:executionPlatformVersion="8.8.0">
+  <bpmn:process id="ai-agent-chat-router" name="AI Agent Chat Router (Main)" isExecutable="true">
+    <bpmn:extensionElements>
+      <zeebe:versionTag value="1.0" />
+    </bpmn:extensionElements>
+    <bpmn:startEvent id="StartEvent_ChatSessionStarted" name="Chat session started">
+      <bpmn:outgoing>Flow_start_to_config</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="MsgDef_Start" messageRef="Message_ChatStart" />
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_start_to_config" sourceRef="StartEvent_ChatSessionStarted" targetRef="SetProviderConfig" />
+    <bpmn:scriptTask id="SetProviderConfig" name="Set Provider Config">
+      <bpmn:extensionElements>
+        <zeebe:script expression="={&#10;  type:     &#34;bedrock&#34;,&#10;  region:   &#34;us-east-1&#34;,&#10;  authType: &#34;credentials&#34;,&#10;  model:    &#34;us.anthropic.claude-3-5-haiku-20241022-v1:0&#34;&#10;}" resultVariable="providerConfig" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_start_to_config</bpmn:incoming>
+      <bpmn:outgoing>Flow_config_to_gw</bpmn:outgoing>
+    </bpmn:scriptTask>
+    <bpmn:sequenceFlow id="Flow_config_to_gw" sourceRef="SetProviderConfig" targetRef="Gateway_StartOrContinue" />
+    <bpmn:exclusiveGateway id="Gateway_StartOrContinue" name="Start / continue">
+      <bpmn:incoming>Flow_config_to_gw</bpmn:incoming>
+      <bpmn:incoming>Flow_from_reply</bpmn:incoming>
+      <bpmn:outgoing>Flow_to_classifier</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_to_classifier" sourceRef="Gateway_StartOrContinue" targetRef="ClassifyRequest" />
+    <bpmn:scriptTask id="ClassifyRequest" name="Classify Request">
+      <bpmn:documentation>Classifies the user request into a category (user_data, content, utility, general) for routing to the appropriate specialised agent.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <zeebe:ioMapping>
+          <zeebe:input source="=replace(replace(lower case(if (is defined(followUpInput) and followUpInput != null) then followUpInput else (if (is defined(inputText) and inputText != null) then inputText else &#34;&#34;)), &#34;[^a-z0-9 ]&#34;, &#34; &#34;), &#34;\s+&#34;, &#34; &#34;)" target="currentInput" />
+          <zeebe:output source="=routeCategory" target="routeCategory" />
+        </zeebe:ioMapping>
+        <zeebe:script expression="=if (some kw in [&#34;user&#34;,&#34;users&#34;,&#34;person&#34;,&#34;contact&#34;,&#34;people&#34;,&#34;email&#34;,&#34;phone&#34;,&#34;member&#34;,&#34;customer&#34;,&#34;profile&#34;,&#34;account&#34;] satisfies contains(&#34; &#34; + currentInput + &#34; &#34;, &#34; &#34; + kw + &#34; &#34;)) then &#34;user_data&#34; else if (some kw in [&#34;recipe&#34;,&#34;cook&#34;,&#34;dish&#34;,&#34;cuisine&#34;,&#34;joke&#34;,&#34;funny&#34;,&#34;humor&#34;,&#34;laugh&#34;,&#34;food&#34;,&#34;meal&#34;,&#34;ingredient&#34;] satisfies contains(&#34; &#34; + currentInput + &#34; &#34;, &#34; &#34; + kw + &#34; &#34;)) then &#34;content&#34; else if (some kw in [&#34;time&#34;,&#34;date&#34;,&#34;clock&#34;,&#34;calculate&#34;,&#34;superflux&#34;,&#34;math&#34;,&#34;url&#34;,&#34;fetch&#34;,&#34;http&#34;,&#34;website&#34;,&#34;now&#34;,&#34;today&#34;,&#34;convert&#34;] satisfies contains(&#34; &#34; + currentInput + &#34; &#34;, &#34; &#34; + kw + &#34; &#34;)) then &#34;utility&#34; else &#34;general&#34;" resultVariable="routeCategory" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_to_classifier</bpmn:incoming>
+      <bpmn:outgoing>Flow_to_route</bpmn:outgoing>
+    </bpmn:scriptTask>
+    <bpmn:sequenceFlow id="Flow_to_route" sourceRef="ClassifyRequest" targetRef="Gateway_RouteByCategory" />
+    <bpmn:exclusiveGateway id="Gateway_RouteByCategory" name="Route by category" default="Flow_to_general">
+      <bpmn:incoming>Flow_to_route</bpmn:incoming>
+      <bpmn:outgoing>Flow_to_user_data</bpmn:outgoing>
+      <bpmn:outgoing>Flow_to_content</bpmn:outgoing>
+      <bpmn:outgoing>Flow_to_utility</bpmn:outgoing>
+      <bpmn:outgoing>Flow_to_general</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_to_user_data" name="user_data" sourceRef="Gateway_RouteByCategory" targetRef="Call_UserData">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=routeCategory = "user_data"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_to_content" name="content" sourceRef="Gateway_RouteByCategory" targetRef="Call_Content">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=routeCategory = "content"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_to_utility" name="utility" sourceRef="Gateway_RouteByCategory" targetRef="Call_Utility">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=routeCategory = "utility"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_to_general" name="general" sourceRef="Gateway_RouteByCategory" targetRef="Call_General" />
+    <bpmn:callActivity id="Call_UserData" name="User Data Agent">
+      <bpmn:extensionElements>
+        <zeebe:calledElement processId="ai-agent-user-data" propagateAllChildVariables="false" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=inputText" target="inputText" />
+          <zeebe:input source="=if (is defined(followUpInput) and followUpInput != null) then followUpInput else null" target="followUpInput" />
+          <zeebe:input source="=if (is defined(inputDocuments) and inputDocuments != null) then inputDocuments else []" target="inputDocuments" />
+          <zeebe:input source="=if (is defined(followUpDocuments) and followUpDocuments != null) then followUpDocuments else []" target="followUpDocuments" />
+          <zeebe:input source="=if (is defined(userDataAgentCtx) and userDataAgentCtx != null) then userDataAgentCtx else null" target="agentContext" />
+          <zeebe:input source="=providerConfig" target="providerConfig" />
+          <zeebe:output source="=agent" target="agent" />
+          <zeebe:output source="=agentContext" target="userDataAgentCtx" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_to_user_data</bpmn:incoming>
+      <bpmn:outgoing>Flow_ud_to_merge</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:callActivity id="Call_Content" name="Content &#38; Entertainment Agent">
+      <bpmn:extensionElements>
+        <zeebe:calledElement processId="ai-agent-content" propagateAllChildVariables="false" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=inputText" target="inputText" />
+          <zeebe:input source="=if (is defined(followUpInput) and followUpInput != null) then followUpInput else null" target="followUpInput" />
+          <zeebe:input source="=if (is defined(inputDocuments) and inputDocuments != null) then inputDocuments else []" target="inputDocuments" />
+          <zeebe:input source="=if (is defined(followUpDocuments) and followUpDocuments != null) then followUpDocuments else []" target="followUpDocuments" />
+          <zeebe:input source="=if (is defined(contentAgentCtx) and contentAgentCtx != null) then contentAgentCtx else null" target="agentContext" />
+          <zeebe:input source="=providerConfig" target="providerConfig" />
+          <zeebe:output source="=agent" target="agent" />
+          <zeebe:output source="=agentContext" target="contentAgentCtx" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_to_content</bpmn:incoming>
+      <bpmn:outgoing>Flow_ct_to_merge</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:callActivity id="Call_Utility" name="Utility &#38; Web Agent">
+      <bpmn:extensionElements>
+        <zeebe:calledElement processId="ai-agent-utility" propagateAllChildVariables="false" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=inputText" target="inputText" />
+          <zeebe:input source="=if (is defined(followUpInput) and followUpInput != null) then followUpInput else null" target="followUpInput" />
+          <zeebe:input source="=if (is defined(inputDocuments) and inputDocuments != null) then inputDocuments else []" target="inputDocuments" />
+          <zeebe:input source="=if (is defined(followUpDocuments) and followUpDocuments != null) then followUpDocuments else []" target="followUpDocuments" />
+          <zeebe:input source="=if (is defined(utilityAgentCtx) and utilityAgentCtx != null) then utilityAgentCtx else null" target="agentContext" />
+          <zeebe:input source="=providerConfig" target="providerConfig" />
+          <zeebe:output source="=agent" target="agent" />
+          <zeebe:output source="=agentContext" target="utilityAgentCtx" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_to_utility</bpmn:incoming>
+      <bpmn:outgoing>Flow_ut_to_merge</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:callActivity id="Call_General" name="General Agent">
+      <bpmn:extensionElements>
+        <zeebe:calledElement processId="ai-agent-general" propagateAllChildVariables="false" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=inputText" target="inputText" />
+          <zeebe:input source="=if (is defined(followUpInput) and followUpInput != null) then followUpInput else null" target="followUpInput" />
+          <zeebe:input source="=if (is defined(inputDocuments) and inputDocuments != null) then inputDocuments else []" target="inputDocuments" />
+          <zeebe:input source="=if (is defined(followUpDocuments) and followUpDocuments != null) then followUpDocuments else []" target="followUpDocuments" />
+          <zeebe:input source="=if (is defined(generalAgentCtx) and generalAgentCtx != null) then generalAgentCtx else null" target="agentContext" />
+          <zeebe:input source="=providerConfig" target="providerConfig" />
+          <zeebe:output source="=agent" target="agent" />
+          <zeebe:output source="=agentContext" target="generalAgentCtx" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_to_general</bpmn:incoming>
+      <bpmn:outgoing>Flow_gn_to_merge</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:boundaryEvent id="Error_UserData" name="Agent error" attachedToRef="Call_UserData">
+      <bpmn:outgoing>Flow_err_ud</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="ErrorDef_UserData" />
+    </bpmn:boundaryEvent>
+    <bpmn:boundaryEvent id="Error_Content" name="Agent error" attachedToRef="Call_Content">
+      <bpmn:outgoing>Flow_err_ct</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="ErrorDef_Content" />
+    </bpmn:boundaryEvent>
+    <bpmn:boundaryEvent id="Error_Utility" name="Agent error" attachedToRef="Call_Utility">
+      <bpmn:outgoing>Flow_err_ut</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="ErrorDef_Utility" />
+    </bpmn:boundaryEvent>
+    <bpmn:boundaryEvent id="Error_General" name="Agent error" attachedToRef="Call_General">
+      <bpmn:outgoing>Flow_err_gn</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="ErrorDef_General" />
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="Flow_err_ud" sourceRef="Error_UserData" targetRef="Gateway_MergeErrors" />
+    <bpmn:sequenceFlow id="Flow_err_ct" sourceRef="Error_Content" targetRef="Gateway_MergeErrors" />
+    <bpmn:sequenceFlow id="Flow_err_ut" sourceRef="Error_Utility" targetRef="Gateway_MergeErrors" />
+    <bpmn:sequenceFlow id="Flow_err_gn" sourceRef="Error_General" targetRef="Gateway_MergeErrors" />
+    <bpmn:exclusiveGateway id="Gateway_MergeErrors" name="Merge errors">
+      <bpmn:incoming>Flow_err_ud</bpmn:incoming>
+      <bpmn:incoming>Flow_err_ct</bpmn:incoming>
+      <bpmn:incoming>Flow_err_ut</bpmn:incoming>
+      <bpmn:incoming>Flow_err_gn</bpmn:incoming>
+      <bpmn:outgoing>Flow_errors_to_handler</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_errors_to_handler" sourceRef="Gateway_MergeErrors" targetRef="HandleAgentError" />
+    <bpmn:scriptTask id="HandleAgentError" name="Handle Agent Error">
+      <bpmn:documentation>Sets a user-friendly error response when an agent subprocess fails.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <zeebe:script expression="={responseText: &#34;I encountered an error while processing your request. Please try rephrasing your question or starting a new chat.&#34;, context: null}" resultVariable="agent" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_errors_to_handler</bpmn:incoming>
+      <bpmn:outgoing>Flow_error_to_merge</bpmn:outgoing>
+    </bpmn:scriptTask>
+    <bpmn:sequenceFlow id="Flow_ud_to_merge" sourceRef="Call_UserData" targetRef="Gateway_MergeResults" />
+    <bpmn:sequenceFlow id="Flow_ct_to_merge" sourceRef="Call_Content" targetRef="Gateway_MergeResults" />
+    <bpmn:sequenceFlow id="Flow_ut_to_merge" sourceRef="Call_Utility" targetRef="Gateway_MergeResults" />
+    <bpmn:sequenceFlow id="Flow_gn_to_merge" sourceRef="Call_General" targetRef="Gateway_MergeResults" />
+    <bpmn:sequenceFlow id="Flow_error_to_merge" sourceRef="HandleAgentError" targetRef="Gateway_MergeResults" />
+    <bpmn:exclusiveGateway id="Gateway_MergeResults" name="Merge results">
+      <bpmn:incoming>Flow_ud_to_merge</bpmn:incoming>
+      <bpmn:incoming>Flow_ct_to_merge</bpmn:incoming>
+      <bpmn:incoming>Flow_ut_to_merge</bpmn:incoming>
+      <bpmn:incoming>Flow_gn_to_merge</bpmn:incoming>
+      <bpmn:incoming>Flow_error_to_merge</bpmn:incoming>
+      <bpmn:outgoing>Flow_merge_to_wait</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_merge_to_wait" sourceRef="Gateway_MergeResults" targetRef="EventGateway_Wait" />
+    <bpmn:eventBasedGateway id="EventGateway_Wait" name="Wait for user or timeout">
+      <bpmn:incoming>Flow_merge_to_wait</bpmn:incoming>
+      <bpmn:outgoing>Flow_to_msg</bpmn:outgoing>
+      <bpmn:outgoing>Flow_to_timer</bpmn:outgoing>
+    </bpmn:eventBasedGateway>
+    <bpmn:sequenceFlow id="Flow_to_msg" sourceRef="EventGateway_Wait" targetRef="MessageCatchEvent_UserReply" />
+    <bpmn:sequenceFlow id="Flow_to_timer" sourceRef="EventGateway_Wait" targetRef="TimerEvent_Timeout" />
+    <bpmn:intermediateCatchEvent id="MessageCatchEvent_UserReply" name="User sends next message">
+      <bpmn:incoming>Flow_to_msg</bpmn:incoming>
+      <bpmn:outgoing>Flow_from_reply</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="MsgDef_Reply" messageRef="Message_UserReply" />
+    </bpmn:intermediateCatchEvent>
+    <bpmn:intermediateCatchEvent id="TimerEvent_Timeout" name="30 min inactivity">
+      <bpmn:incoming>Flow_to_timer</bpmn:incoming>
+      <bpmn:outgoing>Flow_timeout_end</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="TimerDef_1">
+        <bpmn:timeDuration xsi:type="bpmn:tFormalExpression">PT30M</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:intermediateCatchEvent>
+    <bpmn:sequenceFlow id="Flow_from_reply" sourceRef="MessageCatchEvent_UserReply" targetRef="Gateway_StartOrContinue" />
+    <bpmn:sequenceFlow id="Flow_timeout_end" sourceRef="TimerEvent_Timeout" targetRef="EndEvent_Timeout" />
+    <bpmn:endEvent id="EndEvent_Timeout" name="Session ended (inactivity)">
+      <bpmn:incoming>Flow_timeout_end</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmn:message id="Message_ChatStart" name="ai-chat-start" />
+  <bpmn:message id="Message_UserReply" name="ai-chat-user-reply">
+    <bpmn:extensionElements>
+      <zeebe:subscription correlationKey="=sessionId" />
+    </bpmn:extensionElements>
+  </bpmn:message>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="ai-agent-chat-router">
+      <bpmndi:BPMNShape id="GW_RouteByCategory_di" bpmnElement="Gateway_RouteByCategory" isMarkerVisible="true">
+        <dc:Bounds x="595" y="335" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="515" y="323" width="90" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Call_UserData_di" bpmnElement="Call_UserData" bioc:stroke="#0d4372" bioc:fill="#e3f2fd" color:background-color="#e3f2fd" color:border-color="#0d4372">
+        <dc:Bounds x="760" y="80" width="200" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Call_Content_di" bpmnElement="Call_Content" bioc:stroke="#205022" bioc:fill="#e8f5e9" color:background-color="#e8f5e9" color:border-color="#205022">
+        <dc:Bounds x="760" y="220" width="200" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Call_Utility_di" bpmnElement="Call_Utility" bioc:stroke="#4a148c" bioc:fill="#f3e5f5" color:background-color="#f3e5f5" color:border-color="#4a148c">
+        <dc:Bounds x="760" y="360" width="200" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Call_General_di" bpmnElement="Call_General" bioc:stroke="#424242" bioc:fill="#f5f5f5" color:background-color="#f5f5f5" color:border-color="#424242">
+        <dc:Bounds x="760" y="500" width="200" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_MergeErrors_di" bpmnElement="Gateway_MergeErrors" isMarkerVisible="true" bioc:stroke="#b71c1c" bioc:fill="#ffcdd2" color:background-color="#ffcdd2" color:border-color="#b71c1c">
+        <dc:Bounds x="1055" y="635" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1045" y="692" width="70" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Msg_UserReply_di" bpmnElement="MessageCatchEvent_UserReply" bioc:stroke="#205022" bioc:fill="#c8e6c9" color:background-color="#c8e6c9" color:border-color="#205022">
+        <dc:Bounds x="1447" y="232" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1357" y="237" width="81" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Timer_Timeout_di" bpmnElement="TimerEvent_Timeout" bioc:stroke="#6b3c00" bioc:fill="#ffe0b2" color:background-color="#ffe0b2" color:border-color="#6b3c00">
+        <dc:Bounds x="1447" y="452" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1425" y="495" width="79" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_Timeout_di" bpmnElement="EndEvent_Timeout">
+        <dc:Bounds x="1562" y="452" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1540" y="495" width="80" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EventGateway_Wait_di" bpmnElement="EventGateway_Wait">
+        <dc:Bounds x="1440" y="335" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1500" y="346" width="76" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_MergeResults_di" bpmnElement="Gateway_MergeResults" isMarkerVisible="true">
+        <dc:Bounds x="1285" y="335" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1325" y="323" width="68" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="HandleAgentError_di" bpmnElement="HandleAgentError" bioc:stroke="#b71c1c" bioc:fill="#ffcdd2" color:background-color="#ffcdd2" color:border-color="#b71c1c">
+        <dc:Bounds x="1260" y="620" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ClassifyRequest_di" bpmnElement="ClassifyRequest" bioc:stroke="#e65100" bioc:fill="#fff3e0" color:background-color="#fff3e0" color:border-color="#e65100">
+        <dc:Bounds x="370" y="320" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="StartEvent_di" bpmnElement="StartEvent_ChatSessionStarted">
+        <dc:Bounds x="-8" y="342" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="-21" y="385" width="64" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="SetProviderConfig_di" bpmnElement="SetProviderConfig" bioc:stroke="#e65100" bioc:fill="#fff3e0" color:background-color="#fff3e0" color:border-color="#e65100">
+        <dc:Bounds x="80" y="320" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_StartOrContinue_di" bpmnElement="Gateway_StartOrContinue" isMarkerVisible="true">
+        <dc:Bounds x="245" y="335" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="233" y="392" width="74" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Error_General_di" bpmnElement="Error_General" bioc:stroke="#b71c1c" bioc:fill="#ffcdd2" color:background-color="#ffcdd2" color:border-color="#b71c1c">
+        <dc:Bounds x="942" y="562" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="980" y="588" width="56" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Error_Utility_di" bpmnElement="Error_Utility" bioc:stroke="#b71c1c" bioc:fill="#ffcdd2" color:background-color="#ffcdd2" color:border-color="#b71c1c">
+        <dc:Bounds x="942" y="422" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="980" y="448" width="56" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Error_Content_di" bpmnElement="Error_Content" bioc:stroke="#b71c1c" bioc:fill="#ffcdd2" color:background-color="#ffcdd2" color:border-color="#b71c1c">
+        <dc:Bounds x="942" y="282" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="980" y="308" width="56" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Error_UserData_di" bpmnElement="Error_UserData" bioc:stroke="#b71c1c" bioc:fill="#ffcdd2" color:background-color="#ffcdd2" color:border-color="#b71c1c">
+        <dc:Bounds x="942" y="142" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="980" y="168" width="56" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_config_to_gw_di" bpmnElement="Flow_config_to_gw">
+        <di:waypoint x="180" y="360" />
+        <di:waypoint x="245" y="360" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_to_classifier_di" bpmnElement="Flow_to_classifier">
+        <di:waypoint x="295" y="360" />
+        <di:waypoint x="370" y="360" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_to_route_di" bpmnElement="Flow_to_route">
+        <di:waypoint x="470" y="360" />
+        <di:waypoint x="595" y="360" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_to_user_data_di" bpmnElement="Flow_to_user_data">
+        <di:waypoint x="620" y="335" />
+        <di:waypoint x="620" y="120" />
+        <di:waypoint x="760" y="120" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="665" y="133" width="49" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_to_content_di" bpmnElement="Flow_to_content">
+        <di:waypoint x="620" y="335" />
+        <di:waypoint x="620" y="260" />
+        <di:waypoint x="760" y="260" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="671" y="273" width="38" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_to_utility_di" bpmnElement="Flow_to_utility">
+        <di:waypoint x="620" y="385" />
+        <di:waypoint x="620" y="410" />
+        <di:waypoint x="760" y="410" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="677" y="423" width="26" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_to_general_di" bpmnElement="Flow_to_general">
+        <di:waypoint x="620" y="385" />
+        <di:waypoint x="620" y="540" />
+        <di:waypoint x="760" y="540" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="671" y="553" width="38" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_err_ud_di" bpmnElement="Flow_err_ud">
+        <di:waypoint x="960" y="178" />
+        <di:waypoint x="960" y="200" />
+        <di:waypoint x="1080" y="200" />
+        <di:waypoint x="1080" y="635" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_err_ct_di" bpmnElement="Flow_err_ct">
+        <di:waypoint x="960" y="318" />
+        <di:waypoint x="960" y="340" />
+        <di:waypoint x="1080" y="340" />
+        <di:waypoint x="1080" y="635" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_err_ut_di" bpmnElement="Flow_err_ut">
+        <di:waypoint x="960" y="458" />
+        <di:waypoint x="960" y="480" />
+        <di:waypoint x="1080" y="480" />
+        <di:waypoint x="1080" y="635" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_err_gn_di" bpmnElement="Flow_err_gn">
+        <di:waypoint x="960" y="598" />
+        <di:waypoint x="960" y="660" />
+        <di:waypoint x="1055" y="660" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_errors_to_handler_di" bpmnElement="Flow_errors_to_handler">
+        <di:waypoint x="1105" y="660" />
+        <di:waypoint x="1260" y="660" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ud_to_merge_di" bpmnElement="Flow_ud_to_merge">
+        <di:waypoint x="960" y="120" />
+        <di:waypoint x="1230" y="120" />
+        <di:waypoint x="1230" y="360" />
+        <di:waypoint x="1285" y="360" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ct_to_merge_di" bpmnElement="Flow_ct_to_merge">
+        <di:waypoint x="960" y="260" />
+        <di:waypoint x="1230" y="260" />
+        <di:waypoint x="1230" y="360" />
+        <di:waypoint x="1285" y="360" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ut_to_merge_di" bpmnElement="Flow_ut_to_merge">
+        <di:waypoint x="960" y="400" />
+        <di:waypoint x="1230" y="400" />
+        <di:waypoint x="1230" y="360" />
+        <di:waypoint x="1285" y="360" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_gn_to_merge_di" bpmnElement="Flow_gn_to_merge">
+        <di:waypoint x="960" y="540" />
+        <di:waypoint x="1230" y="540" />
+        <di:waypoint x="1230" y="360" />
+        <di:waypoint x="1285" y="360" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_error_to_merge_di" bpmnElement="Flow_error_to_merge">
+        <di:waypoint x="1310" y="620" />
+        <di:waypoint x="1310" y="385" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_merge_to_wait_di" bpmnElement="Flow_merge_to_wait">
+        <di:waypoint x="1335" y="360" />
+        <di:waypoint x="1440" y="360" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_to_msg_di" bpmnElement="Flow_to_msg">
+        <di:waypoint x="1465" y="335" />
+        <di:waypoint x="1465" y="268" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_to_timer_di" bpmnElement="Flow_to_timer">
+        <di:waypoint x="1465" y="385" />
+        <di:waypoint x="1465" y="452" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_from_reply_di" bpmnElement="Flow_from_reply">
+        <di:waypoint x="1465" y="232" />
+        <di:waypoint x="1465" y="40" />
+        <di:waypoint x="270" y="40" />
+        <di:waypoint x="270" y="335" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_timeout_end_di" bpmnElement="Flow_timeout_end">
+        <di:waypoint x="1483" y="470" />
+        <di:waypoint x="1562" y="470" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_start_to_config_di" bpmnElement="Flow_start_to_config">
+        <di:waypoint x="28" y="360" />
+        <di:waypoint x="80" y="360" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
