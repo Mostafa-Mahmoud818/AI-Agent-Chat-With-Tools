@@ -20,7 +20,6 @@ public class StartupConfigLogger implements CommandLineRunner {
     private final String corsOrigins;
     private final String clusterApiUrl;
     private final String authTokenUrl;
-    private final String processId;
     private final String startMessage;
     private final String replyMessage;
     private final int messageTtl;
@@ -36,7 +35,6 @@ public class StartupConfigLogger implements CommandLineRunner {
             @Value("${app.cors.allowed-origins:NOT_SET}") String corsOrigins,
             @Value("${app.camunda.cluster-api-url:NOT_SET}") String clusterApiUrl,
             @Value("${camunda.client.auth.token-url}") String authTokenUrl,
-            @Value("${app.camunda.process-id:NOT_SET}") String processId,
             @Value("${app.camunda.messages.start:NOT_SET}") String startMessage,
             @Value("${app.camunda.messages.reply:NOT_SET}") String replyMessage,
             @Value("${app.camunda.messages.ttl-seconds:0}") int messageTtl,
@@ -50,7 +48,6 @@ public class StartupConfigLogger implements CommandLineRunner {
         this.corsOrigins = corsOrigins;
         this.clusterApiUrl = clusterApiUrl;
         this.authTokenUrl = authTokenUrl;
-        this.processId = processId;
         this.startMessage = startMessage;
         this.replyMessage = replyMessage;
         this.messageTtl = messageTtl;
@@ -73,7 +70,6 @@ public class StartupConfigLogger implements CommandLineRunner {
         log.info("  Client Secret      : {}", maskedSecret);
         log.info("  Cluster API URL    : {}", clusterApiUrl);
         log.info("  Auth Token URL     : {}", authTokenUrl);
-        log.info("  Process ID         : {}", processId);
         log.info("  Start Message      : {}", startMessage);
         log.info("  Reply Message      : {}", replyMessage);
         log.info("  Message TTL        : {}s", messageTtl);

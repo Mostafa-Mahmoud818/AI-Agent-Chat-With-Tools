@@ -6,49 +6,54 @@ import com.example.aichat.exception.ProcessStartException;
 import com.example.aichat.exception.SessionExpiredException;
 import com.example.aichat.model.SessionState;
 import com.example.aichat.repository.SessionRepository;
-import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.util.*;
+import java.io.IOException;
+import java.util.Collections;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 @Service
 public class CamundaChatService implements ChatService {
 
     private static final Logger log = LoggerFactory.getLogger(CamundaChatService.class);
 
-    private static final String[] TERMINAL_STATES = { "COMPLETED", "CANCELED" };
+    private static final String[] TERMINAL_STATES = {"COMPLETED", "CANCELED"};
+
+    /**
+     * One thread per processor; handles all active SSE poll loops.
+     */
+    private final ScheduledExecutorService streamScheduler =
+            new ScheduledThreadPoolExecutor(Runtime.getRuntime().availableProcessors());
 
     private final CamundaRestClient restClient;
     private final MessagePublisher messagePublisher;
     private final SessionRepository sessionRepository;
-    private final String processId;
     private final String startMessageName;
     private final String replyMessageName;
-    private final int maxPiSearchAttempts;
-    private final long piSearchDelayMs;
     private final int emptyPollsBeforeExpiryCheck;
 
     public CamundaChatService(
             CamundaRestClient restClient,
             MessagePublisher messagePublisher,
             SessionRepository sessionRepository,
-            @Value("${app.camunda.process-id}") String processId,
             @Value("${app.camunda.messages.start}") String startMessageName,
             @Value("${app.camunda.messages.reply}") String replyMessageName,
-            @Value("${app.polling.pi-search-max-attempts}") int maxPiSearchAttempts,
-            @Value("${app.polling.pi-search-delay-ms}") long piSearchDelayMs,
             @Value("${app.polling.empty-polls-before-expiry-check}") int emptyPollsBeforeExpiryCheck) {
         this.restClient = restClient;
         this.messagePublisher = messagePublisher;
         this.sessionRepository = sessionRepository;
-        this.processId = processId;
         this.startMessageName = startMessageName;
         this.replyMessageName = replyMessageName;
-        this.maxPiSearchAttempts = maxPiSearchAttempts;
-        this.piSearchDelayMs = piSearchDelayMs;
         this.emptyPollsBeforeExpiryCheck = emptyPollsBeforeExpiryCheck;
     }
 
@@ -61,16 +66,17 @@ public class CamundaChatService implements ChatService {
                 "inputText", inputText,
                 "inputDocuments", Collections.emptyList());
 
+        long processInstanceKey;
         try {
-            messagePublisher.publish(startMessageName, "", variables);
+            processInstanceKey = messagePublisher.correlate(startMessageName, "", variables);
         } catch (Exception e) {
-            throw new ProcessStartException("Failed to publish start message: " + e.getMessage(), e);
+            throw new ProcessStartException("Failed to correlate start message: " + e.getMessage(), e);
         }
 
-        log.info("Published {} message for session {}", startMessageName, sessionId);
+        log.info("Correlated {} message for session {}, processInstanceKey: {}",
+                startMessageName, sessionId, processInstanceKey);
 
-        String processInstanceKey = findProcessInstanceKey(sessionId);
-        SessionState session = new SessionState(sessionId, processInstanceKey);
+        SessionState session = new SessionState(sessionId, String.valueOf(processInstanceKey));
         sessionRepository.save(session);
 
         return session;
@@ -139,6 +145,55 @@ public class CamundaChatService implements ChatService {
         log.info("Published {} for session {}", replyMessageName, sessionId);
     }
 
+    @Override
+    public SseEmitter streamResponse(String sessionId) {
+        // Validate session exists and is active before opening the stream
+        sessionRepository.getActiveSession(sessionId);
+
+        // 10-minute emitter timeout -- matches session max-age
+        SseEmitter emitter = new SseEmitter(600_000L);
+
+        ScheduledFuture<?>[] futureHolder = new ScheduledFuture<?>[1];
+
+        Runnable cancelFuture = () -> {
+            if (futureHolder[0] != null) futureHolder[0].cancel(false);
+        };
+        emitter.onCompletion(cancelFuture);
+        emitter.onTimeout(cancelFuture);
+        emitter.onError(t -> cancelFuture.run());
+
+        futureHolder[0] = streamScheduler.scheduleWithFixedDelay(() -> {
+            try {
+                ChatResponseDTO dto = getResponse(sessionId);
+                emitter.send(SseEmitter.event()
+                        .data(dto, MediaType.APPLICATION_JSON));
+
+                if ("ready".equals(dto.status()) || "error".equals(dto.status())) {
+                    emitter.complete();
+                }
+            } catch (SessionExpiredException e) {
+                sendSilently(emitter, new ChatResponseDTO("expired",
+                        "Session expired.", null));
+                emitter.complete();
+            } catch (IOException e) {
+                // Client disconnected -- stop polling quietly
+                emitter.completeWithError(e);
+            } catch (Exception e) {
+                log.warn("SSE poll error for session {}: {}", sessionId, e.getMessage());
+                emitter.completeWithError(e);
+            }
+        }, 0, 1, TimeUnit.SECONDS);
+
+        return emitter;
+    }
+
+    private void sendSilently(SseEmitter emitter, ChatResponseDTO dto) {
+        try {
+            emitter.send(SseEmitter.event().data(dto, MediaType.APPLICATION_JSON));
+        } catch (IOException ignored) {
+        }
+    }
+
     private ChatResponseDTO handleEmptyVariables(SessionState session) {
         session.incrementEmptyPolls();
 
@@ -167,42 +222,6 @@ public class CamundaChatService implements ChatService {
         return new ChatResponseDTO("processing", null, null);
     }
 
-    private String findProcessInstanceKey(String sessionId) {
-        List<Map<String, String>> sort = List.of(Map.of("field", "startDate", "order", "DESC"));
-
-        for (int attempt = 1; attempt <= maxPiSearchAttempts; attempt++) {
-            try {
-                Map<String, Object> filter = new HashMap<>();
-                filter.put("processDefinitionId", processId);
-                filter.put("state", "ACTIVE");
-
-                List<JsonNode> items = restClient.searchProcessInstances(filter, 20, sort);
-                for (JsonNode piNode : items) {
-                    String piKey = piNode.path("processInstanceKey").isTextual()
-                            ? piNode.path("processInstanceKey").asText()
-                            : String.valueOf(piNode.path("processInstanceKey").asLong());
-
-                    Map<String, Object> piVars = restClient.fetchProcessInstanceVariables(piKey);
-                    if (sessionId.equals(piVars.get("sessionId"))) {
-                        log.info("Found process instance {} for session {} on attempt {}",
-                                piKey, sessionId, attempt);
-                        return piKey;
-                    }
-                }
-            } catch (Exception e) {
-                log.warn("Attempt {}/{} to find PI for session {} failed: {}",
-                        attempt, maxPiSearchAttempts, sessionId, e.getMessage());
-            }
-
-            sleep(piSearchDelayMs);
-        }
-
-        throw new ProcessStartException(
-                "Could not find process instance for session " + sessionId
-                        + " after " + maxPiSearchAttempts + " attempts. "
-                        + "Ensure the BPMN process is deployed to the cluster.");
-    }
-
     private String extractRouteCategory(Map<String, Object> variables) {
         Object rc = variables.get("routeCategory");
         return rc != null ? rc.toString() : null;
@@ -228,11 +247,4 @@ public class CamundaChatService implements ChatService {
         return null;
     }
 
-    private void sleep(long millis) {
-        try {
-            Thread.sleep(millis);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-    }
 }

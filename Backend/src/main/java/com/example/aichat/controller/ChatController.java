@@ -8,9 +8,11 @@ import com.example.aichat.model.SessionState;
 import com.example.aichat.service.ChatService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @Validated
 @RestController
@@ -41,5 +43,11 @@ public class ChatController {
             @Valid @RequestBody ReplyRequest request) {
         chatService.sendReply(sessionId, request.followUpInput().trim());
         return ResponseEntity.ok().build();
+    }
+
+    @GetMapping(value = "/{sessionId}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter streamResponse(
+            @PathVariable @NotBlank(message = "sessionId is required") String sessionId) {
+        return chatService.streamResponse(sessionId);
     }
 }
