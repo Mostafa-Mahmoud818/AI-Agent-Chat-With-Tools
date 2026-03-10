@@ -70,4 +70,13 @@ export async function sendReply(sessionId, followUpInput) {
     await post(`/${sessionId}/reply`, { followUpInput });
 }
 
+/**
+ * Opens a Server-Sent Events stream for the given session.
+ * The backend pushes a ChatResponseDTO JSON payload as each event's data.
+ * Close the returned EventSource when done to prevent automatic reconnection.
+ */
+export function createResponseStream(sessionId) {
+    return new EventSource(`${API_BASE}/${sessionId}/stream`);
+}
+
 export { ApiError };
