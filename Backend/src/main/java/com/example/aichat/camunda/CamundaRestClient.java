@@ -1,4 +1,4 @@
-package com.example.aichat.client;
+package com.example.aichat.camunda;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -37,7 +37,7 @@ public class CamundaRestClient {
     }
 
     public List<JsonNode> searchProcessInstances(Map<String, Object> filter, int limit,
-                                                 List<Map<String, String>> sort) {
+            List<Map<String, String>> sort) {
         Map<String, Object> searchRequest = new HashMap<>();
         searchRequest.put("filter", filter);
         searchRequest.put("page", Map.of("limit", limit));
@@ -61,12 +61,30 @@ public class CamundaRestClient {
         }
     }
 
+    /**
+     * Fetches the process variables needed to determine the current agent response.
+     * Only "agent" and "routeCategory" are retrieved — targeted single-variable
+     * queries avoid pulling the large agent context blob unnecessarily and prevent
+     * spurious truncation-fetch round trips on every poll.
+     */
     public Map<String, Object> fetchProcessInstanceVariables(String processInstanceKey) {
+        Map<String, Object> variables = new HashMap<>();
+        for (String varName : List.of("agent", "routeCategory")) {
+            fetchSingleVariable(processInstanceKey, varName, variables);
+        }
+        if (log.isDebugEnabled()) {
+            log.debug("Fetched {} variable(s) for PI {}: {}", variables.size(), processInstanceKey, variables.keySet());
+        }
+        return variables;
+    }
+
+    private void fetchSingleVariable(String processInstanceKey, String varName,
+            Map<String, Object> target) {
         try {
             Map<String, Object> searchRequest = Map.of(
-                    "filter", Map.of("processInstanceKey", processInstanceKey),
-                    "page", Map.of("limit", 100)
-            );
+                    "filter", Map.of("processInstanceKey", processInstanceKey,
+                            "name", varName),
+                    "page", Map.of("limit", 1));
 
             String responseBody = clusterClient.post()
                     .uri("/v2/variables/search")
@@ -77,40 +95,36 @@ public class CamundaRestClient {
                     .block(Duration.ofSeconds(10));
 
             List<JsonNode> items = parseItems(responseBody);
-            Map<String, Object> variables = new HashMap<>();
-
-            for (JsonNode varNode : items) {
-                String varName = varNode.path("name").asText();
-                String varValue = resolveVariableValue(varNode, varName);
-                if (varValue == null) {
-                    continue;
-                }
-                try {
-                    JsonNode parsed = objectMapper.readTree(varValue);
-                    variables.put(varName, objectMapper.convertValue(parsed, Object.class));
-                } catch (Exception ex) {
-                    variables.put(varName, varValue);
-                }
+            if (items.isEmpty()) {
+                return;
             }
 
-            return variables;
-
+            JsonNode varNode = items.get(0);
+            String varValue = resolveVariableValue(varNode, varName);
+            if (varValue == null) {
+                log.debug("Variable '{}' resolved to null for PI {}, skipping", varName, processInstanceKey);
+                return;
+            }
+            try {
+                JsonNode parsed = objectMapper.readTree(varValue);
+                target.put(varName, objectMapper.convertValue(parsed, Object.class));
+            } catch (Exception ex) {
+                target.put(varName, varValue);
+            }
         } catch (WebClientResponseException e) {
-            if (e.getStatusCode().value() == 404) {
-                return Collections.emptyMap();
+            if (e.getStatusCode().value() != 404) {
+                log.error("Error fetching variable '{}' for PI {}: {} - Response: {}",
+                        varName, processInstanceKey, e.getMessage(), e.getResponseBodyAsString());
             }
-            log.error("Error fetching variables for PI {}: {} - Response: {}",
-                    processInstanceKey, e.getMessage(), e.getResponseBodyAsString());
-            return Collections.emptyMap();
         } catch (Exception e) {
-            log.error("Error fetching variables for PI {}: {}", processInstanceKey, e.getMessage());
-            return Collections.emptyMap();
+            log.error("Error fetching variable '{}' for PI {}: {}", varName, processInstanceKey, e.getMessage());
         }
     }
 
     /**
      * Resolves the string value for a variable node.
-     * When the value is truncated, fetches the full value from the individual variable endpoint.
+     * When the value is truncated, fetches the full value from the individual
+     * variable endpoint.
      */
     private String resolveVariableValue(JsonNode varNode, String varName) {
         boolean isTruncated = varNode.path("isTruncated").asBoolean(false);
@@ -131,7 +145,8 @@ public class CamundaRestClient {
     }
 
     /**
-     * Fetches the complete (non-truncated) value of a variable via the individual variable endpoint.
+     * Fetches the complete (non-truncated) value of a variable via the individual
+     * variable endpoint.
      */
     private String fetchFullVariableValue(String variableKey, String varName) {
         try {
@@ -165,8 +180,7 @@ public class CamundaRestClient {
             for (String state : states) {
                 Map<String, Object> filter = Map.of(
                         "processInstanceKey", processInstanceKey,
-                        "state", state
-                );
+                        "state", state);
                 if (!searchProcessInstances(filter, 1).isEmpty()) {
                     return true;
                 }
@@ -174,6 +188,34 @@ public class CamundaRestClient {
             return false;
         } catch (Exception e) {
             log.warn("Failed to check PI state for {}: {}", processInstanceKey, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Returns true if the given flow node is currently ACTIVE within the process instance.
+     * Used to detect when the process has reached the event-based gateway (agent completed).
+     */
+    public boolean isFlowNodeActive(String processInstanceKey, String flowNodeId) {
+        try {
+            Map<String, Object> searchRequest = Map.of(
+                    "filter", Map.of(
+                            "processInstanceKey", processInstanceKey,
+                            "flowNodeId", flowNodeId,
+                            "state", "ACTIVE"),
+                    "page", Map.of("limit", 1));
+
+            String responseBody = clusterClient.post()
+                    .uri("/v2/flow-node-instances/search")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(searchRequest)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block(Duration.ofSeconds(10));
+
+            return !parseItems(responseBody).isEmpty();
+        } catch (Exception e) {
+            log.warn("Failed to check flow node state for PI {} / {}: {}", processInstanceKey, flowNodeId, e.getMessage());
             return false;
         }
     }

@@ -1,4 +1,4 @@
-package com.example.aichat.config;
+package com.example.aichat.camunda;
 
 import io.netty.channel.ChannelOption;
 import org.slf4j.Logger;
@@ -85,8 +85,7 @@ public class ClusterWebClientConfig {
                 "grant_type", "client_credentials",
                 "client_id", clientId,
                 "client_secret", clientSecret,
-                "audience", "zeebe.camunda.io"
-        ));
+                "audience", "zeebe.camunda.io"));
 
         Map<?, ?> response = authClient.post()
                 .uri(authTokenUrl)

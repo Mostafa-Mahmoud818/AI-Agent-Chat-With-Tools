@@ -4,6 +4,8 @@ import com.example.aichat.dto.ChatResponseDTO;
 import com.example.aichat.dto.ReplyRequest;
 import com.example.aichat.dto.StartChatRequest;
 import com.example.aichat.dto.StartChatResponse;
+import com.example.aichat.exception.SessionExpiredException;
+import com.example.aichat.exception.SessionNotFoundException;
 import com.example.aichat.model.SessionState;
 import com.example.aichat.service.ChatService;
 import jakarta.validation.Valid;
@@ -48,6 +50,16 @@ public class ChatController {
     @GetMapping(value = "/{sessionId}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamResponse(
             @PathVariable @NotBlank(message = "sessionId is required") String sessionId) {
-        return chatService.streamResponse(sessionId);
+        try {
+            return chatService.streamResponse(sessionId);
+        } catch (SessionNotFoundException | SessionExpiredException ex) {
+            SseEmitter emitter = new SseEmitter();
+            try {
+                emitter.send(SseEmitter.event().name("error").data(ex.getMessage()));
+            } catch (Exception ignored) {
+            }
+            emitter.complete();
+            return emitter;
+        }
     }
 }

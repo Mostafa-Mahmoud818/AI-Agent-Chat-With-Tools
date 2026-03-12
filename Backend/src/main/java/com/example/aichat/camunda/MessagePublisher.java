@@ -1,4 +1,4 @@
-package com.example.aichat.service;
+package com.example.aichat.camunda;
 
 import io.camunda.client.CamundaClient;
 import io.camunda.client.api.response.CorrelateMessageResponse;
@@ -10,10 +10,13 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Wraps Zeebe message operations so the publish/correlate patterns live in one place.
+ * Wraps Zeebe message operations so the publish/correlate patterns live in one
+ * place.
  * <p>
- * publish()   - buffered fire-and-forget; used for intermediate catch events (replies)
- * correlate() - strongly-consistent; used for message start events; returns processInstanceKey
+ * publish() - buffered fire-and-forget; used for intermediate catch events
+ * (replies)
+ * correlate() - strongly-consistent; used for message start events; returns
+ * processInstanceKey
  */
 @Component
 public class MessagePublisher {
@@ -29,6 +32,7 @@ public class MessagePublisher {
     }
 
     public void publish(String messageName, String correlationKey, Map<String, Object> variables) {
+
         camundaClient.newPublishMessageCommand()
                 .messageName(messageName)
                 .correlationKey(correlationKey)
@@ -39,9 +43,12 @@ public class MessagePublisher {
     }
 
     /**
-     * Correlates a message to an existing subscription and returns the key of the first
-     * process instance the message was correlated with. Unlike publish(), this call is
-     * strongly consistent and non-buffered -- if no subscription exists (e.g. process not
+     * Correlates a message to an existing subscription and returns the key of the
+     * first
+     * process instance the message was correlated with. Unlike publish(), this call
+     * is
+     * strongly consistent and non-buffered -- if no subscription exists (e.g.
+     * process not
      * deployed) it fails immediately with a clear error rather than timing out.
      */
     public long correlate(String messageName, String correlationKey, Map<String, Object> variables) {

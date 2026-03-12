@@ -1,6 +1,7 @@
 package com.example.aichat.service;
 
-import com.example.aichat.client.CamundaRestClient;
+import com.example.aichat.camunda.CamundaRestClient;
+import com.example.aichat.camunda.MessagePublisher;
 import com.example.aichat.dto.ChatResponseDTO;
 import com.example.aichat.exception.ProcessStartException;
 import com.example.aichat.exception.SessionExpiredException;
@@ -17,6 +18,7 @@ import java.io.IOException;
 import java.util.Collections;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
@@ -27,13 +29,16 @@ public class CamundaChatService implements ChatService {
 
     private static final Logger log = LoggerFactory.getLogger(CamundaChatService.class);
 
-    private static final String[] TERMINAL_STATES = {"COMPLETED", "CANCELED"};
+    private static final String[] TERMINAL_STATES = { "COMPLETED", "CANCELED" };
+    private static final String REPLY_CATCH_EVENT_ID = "MessageCatchEvent_UserReply";
 
     /**
      * One thread per processor; handles all active SSE poll loops.
      */
-    private final ScheduledExecutorService streamScheduler =
-            new ScheduledThreadPoolExecutor(Runtime.getRuntime().availableProcessors());
+    private final ScheduledExecutorService streamScheduler = new ScheduledThreadPoolExecutor(
+            Runtime.getRuntime().availableProcessors());
+
+    private final Map<String, SseEmitter> activeEmitters = new ConcurrentHashMap<>();
 
     private final CamundaRestClient restClient;
     private final MessagePublisher messagePublisher;
@@ -41,6 +46,7 @@ public class CamundaChatService implements ChatService {
     private final String startMessageName;
     private final String replyMessageName;
     private final int emptyPollsBeforeExpiryCheck;
+    private final int stalePollsBeforeGatewayCheck;
 
     public CamundaChatService(
             CamundaRestClient restClient,
@@ -48,13 +54,15 @@ public class CamundaChatService implements ChatService {
             SessionRepository sessionRepository,
             @Value("${app.camunda.messages.start}") String startMessageName,
             @Value("${app.camunda.messages.reply}") String replyMessageName,
-            @Value("${app.polling.empty-polls-before-expiry-check}") int emptyPollsBeforeExpiryCheck) {
+            @Value("${app.polling.empty-polls-before-expiry-check}") int emptyPollsBeforeExpiryCheck,
+            @Value("${app.polling.stale-polls-before-gateway-check:30}") int stalePollsBeforeGatewayCheck) {
         this.restClient = restClient;
         this.messagePublisher = messagePublisher;
         this.sessionRepository = sessionRepository;
         this.startMessageName = startMessageName;
         this.replyMessageName = replyMessageName;
         this.emptyPollsBeforeExpiryCheck = emptyPollsBeforeExpiryCheck;
+        this.stalePollsBeforeGatewayCheck = stalePollsBeforeGatewayCheck;
     }
 
     @Override
@@ -97,12 +105,28 @@ public class CamundaChatService implements ChatService {
             session.resetEmptyPolls();
             session.resetConsecutiveErrors();
 
+            Object agentVar = variables.get("agent");
             String routeCategory = extractRouteCategory(variables);
-            String responseText = extractResponseText(variables.get("agent"));
+            String responseText = extractResponseText(agentVar);
             String handledBy = resolveAgentLabel(routeCategory);
-            String accepted = session.checkAndAcceptNewResponse(responseText, handledBy);
+            int agentHash = agentVar != null ? agentVar.hashCode() : 0;
+
+            if (log.isDebugEnabled()) {
+                log.debug("Session {} — vars={}, routeCategory={}, agentVar class={}, responseText={}, agentHash={}",
+                        sessionId, variables.keySet(), routeCategory,
+                        agentVar != null ? agentVar.getClass().getSimpleName() : "null",
+                        responseText != null ? responseText.substring(0, Math.min(80, responseText.length())) : "null",
+                        agentHash);
+            }
+
+            String accepted = session.checkAndAcceptNewResponse(responseText, handledBy, agentHash);
             if (accepted != null) {
                 return new ChatResponseDTO("ready", accepted, handledBy);
+            }
+
+            if (responseText != null
+                    && session.getConsecutiveStalePollsWhileAwaiting() >= stalePollsBeforeGatewayCheck) {
+                return handleStaleResponse(session, responseText, handledBy, agentHash);
             }
 
             return lastKnownOrProcessing(session);
@@ -147,22 +171,39 @@ public class CamundaChatService implements ChatService {
 
     @Override
     public SseEmitter streamResponse(String sessionId) {
-        // Validate session exists and is active before opening the stream
         sessionRepository.getActiveSession(sessionId);
 
-        // 10-minute emitter timeout -- matches session max-age
         SseEmitter emitter = new SseEmitter(600_000L);
 
         ScheduledFuture<?>[] futureHolder = new ScheduledFuture<?>[1];
 
-        Runnable cancelFuture = () -> {
-            if (futureHolder[0] != null) futureHolder[0].cancel(false);
+        Runnable cleanup = () -> {
+            if (futureHolder[0] != null)
+                futureHolder[0].cancel(false);
+            activeEmitters.remove(sessionId, emitter);
         };
-        emitter.onCompletion(cancelFuture);
-        emitter.onTimeout(cancelFuture);
-        emitter.onError(t -> cancelFuture.run());
+        emitter.onCompletion(cleanup);
+        emitter.onTimeout(cleanup);
+        emitter.onError(t -> cleanup.run());
 
-        futureHolder[0] = streamScheduler.scheduleWithFixedDelay(() -> {
+        SseEmitter previous = activeEmitters.put(sessionId, emitter);
+        if (previous != null) {
+            previous.complete();
+        }
+
+        futureHolder[0] = streamScheduler.scheduleAtFixedRate(() -> {
+            SessionState sess;
+            try {
+                sess = sessionRepository.getActiveSession(sessionId);
+            } catch (SessionExpiredException e) {
+                sendSilently(emitter, new ChatResponseDTO("expired", "Session expired.", null));
+                emitter.complete();
+                return;
+            } catch (Exception e) {
+                return;
+            }
+
+            if (!sess.tryStartPoll()) return;
             try {
                 ChatResponseDTO dto = getResponse(sessionId);
                 emitter.send(SseEmitter.event()
@@ -176,11 +217,12 @@ public class CamundaChatService implements ChatService {
                         "Session expired.", null));
                 emitter.complete();
             } catch (IOException e) {
-                // Client disconnected -- stop polling quietly
                 emitter.completeWithError(e);
             } catch (Exception e) {
                 log.warn("SSE poll error for session {}: {}", sessionId, e.getMessage());
                 emitter.completeWithError(e);
+            } finally {
+                sess.endPoll();
             }
         }, 0, 1, TimeUnit.SECONDS);
 
@@ -194,6 +236,34 @@ public class CamundaChatService implements ChatService {
         }
     }
 
+    /**
+     * After many stale polls with unchanged agent data, check if the process has
+     * reached the event-based gateway (meaning the agent DID complete, but the
+     * variable hash/text happened to remain unchanged). If the message catch event
+     * is active, force-accept the response. If the process terminated, expire.
+     */
+    private ChatResponseDTO handleStaleResponse(SessionState session, String responseText,
+            String handledBy, int agentHash) {
+        String piKey = session.getProcessInstanceKey();
+        log.info("Session {} has {} stale polls — checking gateway state for PI {}",
+                session.getSessionId(), session.getConsecutiveStalePollsWhileAwaiting(), piKey);
+
+        if (restClient.isFlowNodeActive(piKey, REPLY_CATCH_EVENT_ID)) {
+            log.info("Session {} — message catch event is active; force-accepting current response",
+                    session.getSessionId());
+            session.forceAcceptCurrentResponse(responseText, handledBy, agentHash);
+            return new ChatResponseDTO("ready", responseText, handledBy);
+        }
+
+        if (restClient.isProcessInstanceInState(piKey, TERMINAL_STATES)) {
+            session.setExpired(true);
+            throw new SessionExpiredException(session.getSessionId());
+        }
+
+        session.resetStalePollsWhileAwaiting();
+        return lastKnownOrProcessing(session);
+    }
+
     private ChatResponseDTO handleEmptyVariables(SessionState session) {
         session.incrementEmptyPolls();
 
@@ -203,6 +273,11 @@ public class CamundaChatService implements ChatService {
             log.warn("Session {} has had {} consecutive empty variable polls — possible Camunda API connectivity issue",
                     session.getSessionId(), session.getConsecutiveEmptyPolls());
         }
+
+        // Reaching here means the API call succeeded (returned an empty map).
+        // Reset the error counter so prior transient exceptions don't falsely trip
+        // the persistent-error threshold once variables start flowing again.
+        session.resetConsecutiveErrors();
 
         if (session.getConsecutiveEmptyPolls() >= emptyPollsBeforeExpiryCheck) {
             if (restClient.isProcessInstanceInState(session.getProcessInstanceKey(), TERMINAL_STATES)) {
@@ -236,7 +311,8 @@ public class CamundaChatService implements ChatService {
     private String resolveAgentLabel(String routeCategory) {
         if (routeCategory == null)
             return null;
-        return AGENT_LABELS.getOrDefault(routeCategory, routeCategory);
+        String normalized = routeCategory.trim();
+        return AGENT_LABELS.getOrDefault(normalized, normalized);
     }
 
     private String extractResponseText(Object agentVar) {

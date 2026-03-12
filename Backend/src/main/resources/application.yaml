@@ -4,6 +4,7 @@
 camunda:
   client:
     mode: saas
+    prefer-rest-over-grpc: false
     auth:
       client-id: ${CAMUNDA_CLIENT_ID}
       client-secret: ${CAMUNDA_CLIENT_SECRET}
@@ -30,6 +31,7 @@ app:
       ttl-seconds: 30
   polling:
     empty-polls-before-expiry-check: 60
+    stale-polls-before-gateway-check: 30
   session:
     max-age-minutes: 30
     cleanup-interval-ms: 300000
