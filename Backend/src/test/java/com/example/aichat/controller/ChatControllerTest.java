@@ -2,7 +2,7 @@ package com.example.aichat.controller;
 
 import com.example.aichat.dto.ChatResponseDTO;
 import com.example.aichat.model.SessionState;
-import com.example.aichat.service.ChatService;
+import com.example.aichat.service.CamundaChatService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -24,7 +24,7 @@ class ChatControllerTest {
     private MockMvc mockMvc;
 
     @MockitoBean
-    private ChatService chatService;
+    private CamundaChatService chatService;
 
     @Test
     void startChat_withValidBody_returns200() throws Exception {

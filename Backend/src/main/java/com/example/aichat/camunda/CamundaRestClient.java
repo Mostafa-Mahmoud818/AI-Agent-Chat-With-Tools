@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -24,12 +25,15 @@ public class CamundaRestClient {
 
     private final WebClient clusterClient;
     private final ObjectMapper objectMapper;
+    private final Duration apiTimeout;
 
     public CamundaRestClient(
             @Qualifier("clusterWebClient") WebClient clusterClient,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            @Value("${app.camunda.cluster-api-timeout-seconds:30}") int apiTimeoutSeconds) {
         this.clusterClient = clusterClient;
         this.objectMapper = objectMapper;
+        this.apiTimeout = Duration.ofSeconds(apiTimeoutSeconds);
     }
 
     public List<JsonNode> searchProcessInstances(Map<String, Object> filter, int size) {
@@ -52,7 +56,7 @@ public class CamundaRestClient {
                     .bodyValue(searchRequest)
                     .retrieve()
                     .bodyToMono(String.class)
-                    .block(Duration.ofSeconds(10));
+                    .block(apiTimeout);
 
             return parseItems(responseBody);
         } catch (WebClientResponseException e) {
@@ -92,7 +96,7 @@ public class CamundaRestClient {
                     .bodyValue(searchRequest)
                     .retrieve()
                     .bodyToMono(String.class)
-                    .block(Duration.ofSeconds(10));
+                    .block(apiTimeout);
 
             List<JsonNode> items = parseItems(responseBody);
             if (items.isEmpty()) {
@@ -154,7 +158,7 @@ public class CamundaRestClient {
                     .uri("/v2/variables/{variableKey}", variableKey)
                     .retrieve()
                     .bodyToMono(String.class)
-                    .block(Duration.ofSeconds(10));
+                    .block(apiTimeout);
 
             JsonNode root = objectMapper.readTree(responseBody);
             if (root.has("fullValue") && !root.path("fullValue").isNull()) {
@@ -211,7 +215,7 @@ public class CamundaRestClient {
                     .bodyValue(searchRequest)
                     .retrieve()
                     .bodyToMono(String.class)
-                    .block(Duration.ofSeconds(10));
+                    .block(apiTimeout);
 
             return !parseItems(responseBody).isEmpty();
         } catch (Exception e) {

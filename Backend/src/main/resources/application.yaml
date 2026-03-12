@@ -20,25 +20,38 @@ server:
 
 app:
   cors:
-    # Allow both localhost and 127.0.0.1 (browsers treat them as different origins)
     allowed-origins: http://localhost:5173,http://127.0.0.1:5173
+  sse:
+    # SSE emitter timeout (ms); 600000 = 10 minutes
+    emitter-timeout-ms: 600000
   camunda:
     # Orchestration Cluster REST API (v2) base URL
     cluster-api-url: https://${camunda.client.cloud.region}.zeebe.camunda.io/${camunda.client.cloud.cluster-id}
+    # Timeout for Cluster REST API calls (variable fetch, search); increase if agent runs are slow
+    cluster-api-timeout-seconds: 30
+    # BPMN intermediate catch event id for user reply (main-chat-router.bpmn); used for stale-poll resolution
+    reply-catch-event-id: MessageCatchEvent_UserReply
     messages:
       start: ai-chat-start
       reply: ai-chat-user-reply
       ttl-seconds: 30
   polling:
+    # SSE polling interval - balanced for Camunda API load vs responsiveness
+    # 1000ms (1 sec) = 1 API call/sec per active session; good default
+    # Increase to 2000ms for higher load scenarios
+    interval-ms: 1000
+    # Increase polling interval when idle (no new data) to reduce API pressure
+    idle-interval-multiplier: 2.0
     empty-polls-before-expiry-check: 60
     stale-polls-before-gateway-check: 30
+    max-consecutive-errors: 3
   session:
     max-age-minutes: 30
     cleanup-interval-ms: 300000
 
 logging:
   pattern:
-    console: "%d{HH:mm:ss.SSS} [%thread] %-5level [%X{requestId:-}] [%X{sessionId:-}] %logger{36} - %msg%n"
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
   level:
     com.example.aichat: INFO
     io.camunda: INFO

@@ -10,69 +10,71 @@ import com.example.aichat.repository.SessionRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.io.IOException;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.ScheduledThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 
 @Service
-public class CamundaChatService implements ChatService {
+public class CamundaChatService {
 
     private static final Logger log = LoggerFactory.getLogger(CamundaChatService.class);
-
     private static final String[] TERMINAL_STATES = { "COMPLETED", "CANCELED" };
-    private static final String REPLY_CATCH_EVENT_ID = "MessageCatchEvent_UserReply";
 
-    /**
-     * One thread per processor; handles all active SSE poll loops.
-     */
-    private final ScheduledExecutorService streamScheduler = new ScheduledThreadPoolExecutor(
-            Runtime.getRuntime().availableProcessors());
+    private static final String VAR_SESSION_ID = "sessionId";
+    private static final String VAR_INPUT_TEXT = "inputText";
+    private static final String VAR_INPUT_DOCUMENTS = "inputDocuments";
+    private static final String VAR_FOLLOW_UP_INPUT = "followUpInput";
+    private static final String VAR_FOLLOW_UP_DOCUMENTS = "followUpDocuments";
 
-    private final Map<String, SseEmitter> activeEmitters = new ConcurrentHashMap<>();
+    private static final Map<String, String> AGENT_LABELS = Map.of(
+            "user_data", "User Data Agent",
+            "utility", "Utility & Web Agent",
+            "general", "General Agent");
 
-    private final CamundaRestClient restClient;
+    private final CamundaRestClient camundaRestClient;
     private final MessagePublisher messagePublisher;
-    private final SessionRepository sessionRepository;
+    private final SessionRepository sessionStore;
+    private final SseStreamOrchestrator sseStreamOrchestrator;
     private final String startMessageName;
     private final String replyMessageName;
-    private final int emptyPollsBeforeExpiryCheck;
     private final int stalePollsBeforeGatewayCheck;
+    private final int maxConsecutiveErrors;
+    private final int emptyPollsBeforeExpiryCheck;
+    private final String replyCatchEventId;
 
     public CamundaChatService(
-            CamundaRestClient restClient,
+            CamundaRestClient camundaRestClient,
             MessagePublisher messagePublisher,
-            SessionRepository sessionRepository,
+            SessionRepository sessionStore,
+            SseStreamOrchestrator sseStreamOrchestrator,
             @Value("${app.camunda.messages.start}") String startMessageName,
             @Value("${app.camunda.messages.reply}") String replyMessageName,
+            @Value("${app.polling.stale-polls-before-gateway-check:30}") int stalePollsBeforeGatewayCheck,
+            @Value("${app.polling.max-consecutive-errors:3}") int maxConsecutiveErrors,
             @Value("${app.polling.empty-polls-before-expiry-check}") int emptyPollsBeforeExpiryCheck,
-            @Value("${app.polling.stale-polls-before-gateway-check:30}") int stalePollsBeforeGatewayCheck) {
-        this.restClient = restClient;
+            @Value("${app.camunda.reply-catch-event-id:MessageCatchEvent_UserReply}") String replyCatchEventId) {
+        this.camundaRestClient = camundaRestClient;
         this.messagePublisher = messagePublisher;
-        this.sessionRepository = sessionRepository;
+        this.sessionStore = sessionStore;
+        this.sseStreamOrchestrator = sseStreamOrchestrator;
         this.startMessageName = startMessageName;
         this.replyMessageName = replyMessageName;
-        this.emptyPollsBeforeExpiryCheck = emptyPollsBeforeExpiryCheck;
         this.stalePollsBeforeGatewayCheck = stalePollsBeforeGatewayCheck;
+        this.maxConsecutiveErrors = maxConsecutiveErrors;
+        this.emptyPollsBeforeExpiryCheck = emptyPollsBeforeExpiryCheck;
+        this.replyCatchEventId = replyCatchEventId;
     }
 
-    @Override
     public SessionState startSession(String inputText) {
         String sessionId = UUID.randomUUID().toString();
-
         Map<String, Object> variables = Map.of(
-                "sessionId", sessionId,
-                "inputText", inputText,
-                "inputDocuments", Collections.emptyList());
+                VAR_SESSION_ID, sessionId,
+                VAR_INPUT_TEXT, inputText,
+                VAR_INPUT_DOCUMENTS, Collections.emptyList());
 
         long processInstanceKey;
         try {
@@ -81,21 +83,16 @@ public class CamundaChatService implements ChatService {
             throw new ProcessStartException("Failed to correlate start message: " + e.getMessage(), e);
         }
 
-        log.info("Correlated {} message for session {}, processInstanceKey: {}",
-                startMessageName, sessionId, processInstanceKey);
-
         SessionState session = new SessionState(sessionId, String.valueOf(processInstanceKey));
-        sessionRepository.save(session);
-
+        sessionStore.save(session);
         return session;
     }
 
-    @Override
     public ChatResponseDTO getResponse(String sessionId) {
-        SessionState session = sessionRepository.getActiveSession(sessionId);
+        SessionState session = sessionStore.getActiveSession(sessionId);
 
         try {
-            Map<String, Object> variables = restClient.fetchProcessInstanceVariables(
+            Map<String, Object> variables = camundaRestClient.fetchProcessInstanceVariables(
                     session.getProcessInstanceKey());
 
             if (variables.isEmpty()) {
@@ -112,9 +109,8 @@ public class CamundaChatService implements ChatService {
             int agentHash = agentVar != null ? agentVar.hashCode() : 0;
 
             if (log.isDebugEnabled()) {
-                log.debug("Session {} — vars={}, routeCategory={}, agentVar class={}, responseText={}, agentHash={}",
-                        sessionId, variables.keySet(), routeCategory,
-                        agentVar != null ? agentVar.getClass().getSimpleName() : "null",
+                log.debug("Session {} — routeCategory={}, responseText={}, agentHash={}",
+                        sessionId, routeCategory,
                         responseText != null ? responseText.substring(0, Math.min(80, responseText.length())) : "null",
                         agentHash);
             }
@@ -124,18 +120,16 @@ public class CamundaChatService implements ChatService {
                 return new ChatResponseDTO("ready", accepted, handledBy);
             }
 
-            if (responseText != null
-                    && session.getConsecutiveStalePollsWhileAwaiting() >= stalePollsBeforeGatewayCheck) {
+            if (responseText != null && session.getConsecutiveStalePollsWhileAwaiting() >= stalePollsBeforeGatewayCheck) {
                 return handleStaleResponse(session, responseText, handledBy, agentHash);
             }
 
             return lastKnownOrProcessing(session);
 
-        } catch (SessionExpiredException e) {
-            throw e;
         } catch (Exception e) {
+            if (e instanceof SessionExpiredException) throw (SessionExpiredException) e;
             session.incrementConsecutiveErrors();
-            if (session.getConsecutiveErrors() >= 3) {
+            if (session.getConsecutiveErrors() >= maxConsecutiveErrors) {
                 log.error("Persistent error getting response for session {} ({} consecutive): {}",
                         sessionId, session.getConsecutiveErrors(), e.getMessage());
                 return new ChatResponseDTO("error",
@@ -146,19 +140,18 @@ public class CamundaChatService implements ChatService {
         }
     }
 
-    @Override
     public void sendReply(String sessionId, String followUpInput) {
-        SessionState session = sessionRepository.getActiveSession(sessionId);
+        SessionState session = sessionStore.getActiveSession(sessionId);
 
         Map<String, Object> variables = Map.of(
-                "followUpInput", followUpInput,
-                "followUpDocuments", Collections.emptyList());
+                VAR_FOLLOW_UP_INPUT, followUpInput,
+                VAR_FOLLOW_UP_DOCUMENTS, Collections.emptyList());
 
         try {
             messagePublisher.publish(replyMessageName, sessionId, variables);
         } catch (Exception e) {
             log.error("Failed to publish reply for session {}: {}", sessionId, e.getMessage());
-            if (restClient.isProcessInstanceInState(session.getProcessInstanceKey(), TERMINAL_STATES)) {
+            if (camundaRestClient.isProcessInstanceInState(session.getProcessInstanceKey(), TERMINAL_STATES)) {
                 session.setExpired(true);
                 throw new SessionExpiredException(sessionId);
             }
@@ -169,124 +162,51 @@ public class CamundaChatService implements ChatService {
         log.info("Published {} for session {}", replyMessageName, sessionId);
     }
 
-    @Override
     public SseEmitter streamResponse(String sessionId) {
-        sessionRepository.getActiveSession(sessionId);
-
-        SseEmitter emitter = new SseEmitter(600_000L);
-
-        ScheduledFuture<?>[] futureHolder = new ScheduledFuture<?>[1];
-
-        Runnable cleanup = () -> {
-            if (futureHolder[0] != null)
-                futureHolder[0].cancel(false);
-            activeEmitters.remove(sessionId, emitter);
-        };
-        emitter.onCompletion(cleanup);
-        emitter.onTimeout(cleanup);
-        emitter.onError(t -> cleanup.run());
-
-        SseEmitter previous = activeEmitters.put(sessionId, emitter);
-        if (previous != null) {
-            previous.complete();
-        }
-
-        futureHolder[0] = streamScheduler.scheduleAtFixedRate(() -> {
-            SessionState sess;
-            try {
-                sess = sessionRepository.getActiveSession(sessionId);
-            } catch (SessionExpiredException e) {
-                sendSilently(emitter, new ChatResponseDTO("expired", "Session expired.", null));
-                emitter.complete();
-                return;
-            } catch (Exception e) {
-                return;
-            }
-
-            if (!sess.tryStartPoll()) return;
-            try {
-                ChatResponseDTO dto = getResponse(sessionId);
-                emitter.send(SseEmitter.event()
-                        .data(dto, MediaType.APPLICATION_JSON));
-
-                if ("ready".equals(dto.status()) || "error".equals(dto.status())) {
-                    emitter.complete();
-                }
-            } catch (SessionExpiredException e) {
-                sendSilently(emitter, new ChatResponseDTO("expired",
-                        "Session expired.", null));
-                emitter.complete();
-            } catch (IOException e) {
-                emitter.completeWithError(e);
-            } catch (Exception e) {
-                log.warn("SSE poll error for session {}: {}", sessionId, e.getMessage());
-                emitter.completeWithError(e);
-            } finally {
-                sess.endPoll();
-            }
-        }, 0, 1, TimeUnit.SECONDS);
-
-        return emitter;
+        return sseStreamOrchestrator.streamResponse(sessionId);
     }
 
-    private void sendSilently(SseEmitter emitter, ChatResponseDTO dto) {
-        try {
-            emitter.send(SseEmitter.event().data(dto, MediaType.APPLICATION_JSON));
-        } catch (IOException ignored) {
-        }
-    }
-
-    /**
-     * After many stale polls with unchanged agent data, check if the process has
-     * reached the event-based gateway (meaning the agent DID complete, but the
-     * variable hash/text happened to remain unchanged). If the message catch event
-     * is active, force-accept the response. If the process terminated, expire.
-     */
-    private ChatResponseDTO handleStaleResponse(SessionState session, String responseText,
-            String handledBy, int agentHash) {
-        String piKey = session.getProcessInstanceKey();
-        log.info("Session {} has {} stale polls — checking gateway state for PI {}",
-                session.getSessionId(), session.getConsecutiveStalePollsWhileAwaiting(), piKey);
-
-        if (restClient.isFlowNodeActive(piKey, REPLY_CATCH_EVENT_ID)) {
-            log.info("Session {} — message catch event is active; force-accepting current response",
-                    session.getSessionId());
-            session.forceAcceptCurrentResponse(responseText, handledBy, agentHash);
-            return new ChatResponseDTO("ready", responseText, handledBy);
-        }
-
-        if (restClient.isProcessInstanceInState(piKey, TERMINAL_STATES)) {
-            session.setExpired(true);
-            throw new SessionExpiredException(session.getSessionId());
-        }
-
-        session.resetStalePollsWhileAwaiting();
-        return lastKnownOrProcessing(session);
-    }
+    // --- Response resolution ---
 
     private ChatResponseDTO handleEmptyVariables(SessionState session) {
         session.incrementEmptyPolls();
 
-        // Early warning: surface potential API connectivity issues before the expiry
-        // threshold
         if (session.getConsecutiveEmptyPolls() == 5 && session.isAwaitingResponse()) {
-            log.warn("Session {} has had {} consecutive empty variable polls — possible Camunda API connectivity issue",
+            log.warn("Session {} — {} consecutive empty polls, possible Camunda API issue",
                     session.getSessionId(), session.getConsecutiveEmptyPolls());
         }
 
-        // Reaching here means the API call succeeded (returned an empty map).
-        // Reset the error counter so prior transient exceptions don't falsely trip
-        // the persistent-error threshold once variables start flowing again.
         session.resetConsecutiveErrors();
 
         if (session.getConsecutiveEmptyPolls() >= emptyPollsBeforeExpiryCheck) {
-            if (restClient.isProcessInstanceInState(session.getProcessInstanceKey(), TERMINAL_STATES)) {
+            if (camundaRestClient.isProcessInstanceInState(session.getProcessInstanceKey(), TERMINAL_STATES)) {
                 session.setExpired(true);
                 throw new SessionExpiredException(session.getSessionId());
             }
             session.resetEmptyPolls();
         }
 
+        return lastKnownOrProcessing(session);
+    }
+
+    private ChatResponseDTO handleStaleResponse(SessionState session, String responseText,
+            String handledBy, int agentHash) {
+        String piKey = session.getProcessInstanceKey();
+        log.info("Session {} — {} stale polls, checking gateway state for PI {}",
+                session.getSessionId(), session.getConsecutiveStalePollsWhileAwaiting(), piKey);
+
+        if (camundaRestClient.isFlowNodeActive(piKey, replyCatchEventId)) {
+            log.info("Session {} — catch event active, force-accepting response", session.getSessionId());
+            session.forceAcceptCurrentResponse(responseText, handledBy, agentHash);
+            return new ChatResponseDTO("ready", responseText, handledBy);
+        }
+
+        if (camundaRestClient.isProcessInstanceInState(piKey, TERMINAL_STATES)) {
+            session.setExpired(true);
+            throw new SessionExpiredException(session.getSessionId());
+        }
+
+        session.resetStalePollsWhileAwaiting();
         return lastKnownOrProcessing(session);
     }
 
@@ -297,30 +217,83 @@ public class CamundaChatService implements ChatService {
         return new ChatResponseDTO("processing", null, null);
     }
 
-    private String extractRouteCategory(Map<String, Object> variables) {
+    // --- Variable mapping ---
+
+    private static String extractRouteCategory(Map<String, Object> variables) {
         Object rc = variables.get("routeCategory");
         return rc != null ? rc.toString() : null;
     }
 
-    private static final Map<String, String> AGENT_LABELS = Map.of(
-            "user_data", "User Data Agent",
-            "content", "Content & Entertainment Agent",
-            "utility", "Utility & Web Agent",
-            "general", "General Agent");
+    private static String extractResponseText(Object agentVar) {
+        if (!(agentVar instanceof Map<?, ?> agentMap)) return null;
 
-    private String resolveAgentLabel(String routeCategory) {
-        if (routeCategory == null)
-            return null;
-        String normalized = routeCategory.trim();
-        return AGENT_LABELS.getOrDefault(normalized, normalized);
+        // Primary: agent.responseText (set by connector when model produces a final text response)
+        Object rt = agentMap.get("responseText");
+        if (rt != null && !rt.toString().isBlank()) {
+            return rt.toString();
+        }
+
+        // Fallback: extract from conversation messages when the model's final response is empty
+        // (e.g. model returned STOP with no content after a tool call result)
+        return extractFromConversation(agentMap);
     }
 
-    private String extractResponseText(Object agentVar) {
-        if (agentVar instanceof Map<?, ?> agentMap) {
-            Object rt = agentMap.get("responseText");
-            return rt != null ? rt.toString() : null;
+    @SuppressWarnings("unchecked")
+    private static String extractFromConversation(Map<?, ?> agentMap) {
+        Object conv = agentMap.get("conversation");
+        if (!(conv instanceof Map<?, ?> convMap)) return null;
+
+        Object msgs = convMap.get("messages");
+        if (!(msgs instanceof List<?> msgList) || msgList.isEmpty()) return null;
+
+        // Walk messages in reverse: find last assistant content or tool_call_result content
+        for (int i = msgList.size() - 1; i >= 0; i--) {
+            if (!(msgList.get(i) instanceof Map<?, ?> msg)) continue;
+            String role = String.valueOf(msg.get("role"));
+
+            if ("assistant".equals(role)) {
+                String text = extractMessageContent(msg);
+                if (text != null && !text.isBlank()) return text;
+                continue; // empty assistant message — check earlier messages
+            }
+
+            if ("tool_call_result".equals(role)) {
+                Object results = msg.get("results");
+                if (results instanceof List<?> resultList) {
+                    for (Object r : resultList) {
+                        if (r instanceof Map<?, ?> resultMap) {
+                            Object content = resultMap.get("content");
+                            if (content != null && !content.toString().isBlank()) {
+                                return content.toString();
+                            }
+                        }
+                    }
+                }
+            }
+
+            if ("user".equals(role)) break; // don't go past the user's message
         }
         return null;
     }
 
+    private static String extractMessageContent(Map<?, ?> msg) {
+        Object content = msg.get("content");
+        if (content instanceof String s) return s;
+        if (content instanceof List<?> contentList) {
+            StringBuilder sb = new StringBuilder();
+            for (Object item : contentList) {
+                if (item instanceof Map<?, ?> itemMap && "text".equals(itemMap.get("type"))) {
+                    Object text = itemMap.get("text");
+                    if (text != null) sb.append(text);
+                }
+            }
+            return sb.isEmpty() ? null : sb.toString();
+        }
+        return null;
+    }
+
+    private static String resolveAgentLabel(String routeCategory) {
+        if (routeCategory == null) return null;
+        return AGENT_LABELS.getOrDefault(routeCategory.trim(), routeCategory.trim());
+    }
 }

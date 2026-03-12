@@ -21,23 +21,15 @@ public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
-    @ExceptionHandler(SessionNotFoundException.class)
-    public ResponseEntity<ErrorResponse> handleSessionNotFound(SessionNotFoundException ex) {
-        return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(new ErrorResponse("session_not_found", ex.getMessage()));
-    }
-
-    @ExceptionHandler(SessionExpiredException.class)
-    public ResponseEntity<ErrorResponse> handleSessionExpired(SessionExpiredException ex) {
-        return ResponseEntity.status(HttpStatus.GONE)
-                .body(new ErrorResponse("session_expired", ex.getMessage()));
-    }
-
-    @ExceptionHandler(ProcessStartException.class)
-    public ResponseEntity<ErrorResponse> handleProcessStart(ProcessStartException ex) {
-        log.error("Process start failure: {}", ex.getMessage());
-        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                .body(new ErrorResponse("process_start_failed", ex.getMessage()));
+    @ExceptionHandler(ApiException.class)
+    public ResponseEntity<ErrorResponse> handleApiException(ApiException ex) {
+        if (ex.getHttpStatus().is5xxServerError()) {
+            log.error("API error [{}]: {}", ex.getErrorCode(), ex.getMessage());
+        } else {
+            log.warn("API error [{}]: {}", ex.getErrorCode(), ex.getMessage());
+        }
+        return ResponseEntity.status(ex.getHttpStatus())
+                .body(new ErrorResponse(ex.getErrorCode(), ex.getMessage()));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -45,6 +37,7 @@ public class GlobalExceptionHandler {
         String message = ex.getBindingResult().getFieldErrors().stream()
                 .map(fe -> fe.getDefaultMessage())
                 .collect(Collectors.joining("; "));
+        log.warn("Validation error: {}", message);
         return ResponseEntity.badRequest()
                 .body(new ErrorResponse("validation_error", message));
     }
@@ -54,24 +47,28 @@ public class GlobalExceptionHandler {
         String message = ex.getConstraintViolations().stream()
                 .map(ConstraintViolation::getMessage)
                 .collect(Collectors.joining("; "));
+        log.warn("Constraint violation: {}", message);
         return ResponseEntity.badRequest()
                 .body(new ErrorResponse("validation_error", message));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ErrorResponse> handleIllegalArgument(IllegalArgumentException ex) {
+        log.warn("Invalid request: {}", ex.getMessage());
         return ResponseEntity.badRequest()
                 .body(new ErrorResponse("invalid_request", ex.getMessage()));
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ErrorResponse> handleUnreadable(HttpMessageNotReadableException ex) {
+        log.warn("Unreadable request body: {}", ex.getMessage());
         return ResponseEntity.badRequest()
                 .body(new ErrorResponse("invalid_request", "Request body is missing or malformed"));
     }
 
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     public ResponseEntity<ErrorResponse> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        log.warn("Parameter type mismatch: {} = {}", ex.getName(), ex.getValue());
         return ResponseEntity.badRequest()
                 .body(new ErrorResponse("invalid_request", "Invalid parameter: " + ex.getName()));
     }

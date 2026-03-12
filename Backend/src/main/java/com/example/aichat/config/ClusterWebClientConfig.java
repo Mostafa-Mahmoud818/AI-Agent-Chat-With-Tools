@@ -1,4 +1,4 @@
-package com.example.aichat.camunda;
+package com.example.aichat.config;
 
 import io.netty.channel.ChannelOption;
 import org.slf4j.Logger;
@@ -52,9 +52,10 @@ public class ClusterWebClientConfig {
     }
 
     @Bean("clusterWebClient")
-    public WebClient clusterWebClient() {
+    public WebClient clusterWebClient(
+            @Value("${app.camunda.cluster-api-timeout-seconds:30}") int apiTimeoutSeconds) {
         HttpClient httpClient = HttpClient.create()
-                .responseTimeout(Duration.ofSeconds(10))
+                .responseTimeout(Duration.ofSeconds(apiTimeoutSeconds))
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 5000);
 
         return WebClient.builder()

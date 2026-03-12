@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8081/api/chat';
+const API_BASE = (import.meta.env.VITE_API_BASE || 'http://localhost:8081/api/chat').replace(/\/$/, '');
 const REQUEST_TIMEOUT_MS = 15_000;
 
 class ApiError extends Error {

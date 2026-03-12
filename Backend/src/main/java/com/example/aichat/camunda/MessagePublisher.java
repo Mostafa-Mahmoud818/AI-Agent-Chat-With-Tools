@@ -32,7 +32,6 @@ public class MessagePublisher {
     }
 
     public void publish(String messageName, String correlationKey, Map<String, Object> variables) {
-
         camundaClient.newPublishMessageCommand()
                 .messageName(messageName)
                 .correlationKey(correlationKey)
