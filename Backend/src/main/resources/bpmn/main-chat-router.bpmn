@@ -1,41 +1,68 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bioc="http://bpmn.io/schema/bpmn/biocolor/1.0" xmlns:color="http://www.omg.org/spec/BPMN/non-normative/color/1.0" xmlns:modeler="http://camunda.org/schema/modeler/1.0" id="Definitions_main_router" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Web Modeler" exporterVersion="dd55451" modeler:executionPlatform="Camunda Cloud" modeler:executionPlatformVersion="8.8.0">
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bioc="http://bpmn.io/schema/bpmn/biocolor/1.0" xmlns:color="http://www.omg.org/spec/BPMN/non-normative/color/1.0" xmlns:modeler="http://camunda.org/schema/modeler/1.0" id="Definitions_main_router" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Web Modeler" exporterVersion="8fb91b5" modeler:executionPlatform="Camunda Cloud" modeler:executionPlatformVersion="8.8.0">
   <bpmn:process id="ai-agent-chat-router" name="AI Agent Chat Router (Main)" isExecutable="true">
     <bpmn:extensionElements>
-      <zeebe:versionTag value="1.0" />
+      <zeebe:versionTag value="2.1" />
     </bpmn:extensionElements>
     <bpmn:startEvent id="StartEvent_ChatSessionStarted" name="Chat session started">
       <bpmn:outgoing>Flow_start_to_config</bpmn:outgoing>
       <bpmn:messageEventDefinition id="MsgDef_Start" messageRef="Message_ChatStart" />
     </bpmn:startEvent>
-    <bpmn:sequenceFlow id="Flow_start_to_config" sourceRef="StartEvent_ChatSessionStarted" targetRef="SetProviderConfig" />
+    <bpmn:sequenceFlow id="Flow_start_to_config" sourceRef="StartEvent_ChatSessionStarted" targetRef="Gateway_StartOrContinue" />
+    <bpmn:exclusiveGateway id="Gateway_StartOrContinue" name="Start / continue">
+      <bpmn:incoming>Flow_start_to_config</bpmn:incoming>
+      <bpmn:incoming>Flow_from_reply</bpmn:incoming>
+      <bpmn:outgoing>Flow_config_to_task</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_config_to_task" sourceRef="Gateway_StartOrContinue" targetRef="SetProviderConfig" />
     <bpmn:scriptTask id="SetProviderConfig" name="Set Provider Config">
       <bpmn:extensionElements>
-        <zeebe:script expression="={&#10;  type:     &#34;bedrock&#34;,&#10;  region:   &#34;us-east-1&#34;,&#10;  authType: &#34;credentials&#34;,&#10;  model:    &#34;us.anthropic.claude-3-5-haiku-20241022-v1:0&#34;&#10;}" resultVariable="providerConfig" />
-      </bpmn:extensionElements>
-      <bpmn:incoming>Flow_start_to_config</bpmn:incoming>
-      <bpmn:outgoing>Flow_config_to_gw</bpmn:outgoing>
-    </bpmn:scriptTask>
-    <bpmn:sequenceFlow id="Flow_config_to_gw" sourceRef="SetProviderConfig" targetRef="Gateway_StartOrContinue" />
-    <bpmn:exclusiveGateway id="Gateway_StartOrContinue" name="Start / continue">
-      <bpmn:incoming>Flow_config_to_gw</bpmn:incoming>
-      <bpmn:incoming>Flow_from_reply</bpmn:incoming>
-      <bpmn:outgoing>Flow_to_classifier</bpmn:outgoing>
-    </bpmn:exclusiveGateway>
-    <bpmn:sequenceFlow id="Flow_to_classifier" sourceRef="Gateway_StartOrContinue" targetRef="ClassifyRequest" />
-    <bpmn:scriptTask id="ClassifyRequest" name="Classify Request">
-      <bpmn:documentation>Classifies the user request into a category (user_data, content, utility, general) for routing to the appropriate specialised agent.</bpmn:documentation>
-      <bpmn:extensionElements>
+        <zeebe:script expression="={&#10;  providerConfig: {&#10;    type:     &#34;bedrock&#34;,&#10;    region:   &#34;us-east-1&#34;,&#10;    authType: &#34;credentials&#34;,&#10;    model:    &#34;us.anthropic.claude-3-5-haiku-20241022-v1:0&#34;&#10;  },&#10;  currentInput: if (is defined(followUpInput) and followUpInput != null) then followUpInput else inputText&#10;}" resultVariable="turnSetup" />
         <zeebe:ioMapping>
-          <zeebe:input source="=replace(replace(lower case(if (is defined(followUpInput) and followUpInput != null) then followUpInput else (if (is defined(inputText) and inputText != null) then inputText else &#34;&#34;)), &#34;[^a-z0-9 ]&#34;, &#34; &#34;), &#34;\s+&#34;, &#34; &#34;)" target="currentInput" />
-          <zeebe:output source="=routeCategory" target="routeCategory" />
+          <zeebe:output source="=turnSetup.providerConfig" target="providerConfig" />
+          <zeebe:output source="=turnSetup.currentInput" target="currentInput" />
+          <zeebe:output source="=null" target="agent" />
+          <zeebe:output source="=null" target="routeCategory" />
         </zeebe:ioMapping>
-        <zeebe:script expression="=if (some kw in [&#34;user&#34;,&#34;users&#34;,&#34;person&#34;,&#34;contact&#34;,&#34;people&#34;,&#34;email&#34;,&#34;phone&#34;,&#34;member&#34;,&#34;customer&#34;,&#34;profile&#34;,&#34;account&#34;] satisfies contains(&#34; &#34; + currentInput + &#34; &#34;, &#34; &#34; + kw + &#34; &#34;)) then &#34;user_data&#34; else if (some kw in [&#34;recipe&#34;,&#34;cook&#34;,&#34;dish&#34;,&#34;cuisine&#34;,&#34;joke&#34;,&#34;funny&#34;,&#34;humor&#34;,&#34;laugh&#34;,&#34;food&#34;,&#34;meal&#34;,&#34;ingredient&#34;] satisfies contains(&#34; &#34; + currentInput + &#34; &#34;, &#34; &#34; + kw + &#34; &#34;)) then &#34;content&#34; else if (some kw in [&#34;time&#34;,&#34;date&#34;,&#34;clock&#34;,&#34;calculate&#34;,&#34;superflux&#34;,&#34;math&#34;,&#34;url&#34;,&#34;fetch&#34;,&#34;http&#34;,&#34;website&#34;,&#34;now&#34;,&#34;today&#34;,&#34;convert&#34;] satisfies contains(&#34; &#34; + currentInput + &#34; &#34;, &#34; &#34; + kw + &#34; &#34;)) then &#34;utility&#34; else &#34;general&#34;" resultVariable="routeCategory" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_config_to_task</bpmn:incoming>
+      <bpmn:outgoing>Flow_to_classifier</bpmn:outgoing>
+    </bpmn:scriptTask>
+    <bpmn:sequenceFlow id="Flow_to_classifier" sourceRef="SetProviderConfig" targetRef="ClassifyRequestIntent" />
+    <bpmn:serviceTask id="ClassifyRequestIntent" name="Classify Request Intent" zeebe:modelerTemplate="io.camunda.connectors.agenticai.aiagent.v1" zeebe:modelerTemplateVersion="5" zeebe:modelerTemplateIcon="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iMTYiIGZpbGw9IiNBNTZFRkYiLz4KPG1hc2sgaWQ9InBhdGgtMi1vdXRzaWRlLTFfMTg1XzYiIG1hc2tVbml0cz0idXNlclNwYWNlT25Vc2UiIHg9IjQiIHk9IjQiIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgZmlsbD0iYmxhY2siPgo8cmVjdCBmaWxsPSJ3aGl0ZSIgeD0iNCIgeT0iNCIgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0Ii8+CjxwYXRoIGZpbGwtcnVsZT0iZXZlbm9kZCIgY2xpcC1ydWxlPSJldmVub2RkIiBkPSJNMjAuMDEwNSAxMi4wOTg3QzE4LjQ5IDEwLjU4OTQgMTcuMTU5NCA4LjEwODE0IDE2LjE3OTkgNi4wMTEwM0MxNi4xNTIgNi4wMDQ1MSAxNi4xMTc2IDYgMTYuMDc5NCA2QzE2LjA0MTEgNiAxNi4wMDY2IDYuMDA0NTEgMTUuOTc4OCA2LjAxMTA0QzE0Ljk5OTQgOC4xMDgxNCAxMy42Njk3IDEwLjU4ODkgMTIuMTQ4MSAxMi4wOTgxQzEwLjYyNjkgMTMuNjA3MSA4LjEyNTY4IDE0LjkyNjQgNi4wMTE1NyAxNS44OTgxQzYuMDA0NzQgMTUuOTI2MSA2IDE1Ljk2MTEgNiAxNkM2IDE2LjAzODcgNi4wMDQ2OCAxNi4wNzM2IDYuMDExNDQgMTYuMTAxNEM4LjEyNTE5IDE3LjA3MjkgMTAuNjI2MiAxOC4zOTE5IDEyLjE0NzcgMTkuOTAxNkMxMy42Njk3IDIxLjQxMDcgMTQuOTk5NiAyMy44OTIgMTUuOTc5MSAyNS45ODlDMTYuMDA2OCAyNS45OTU2IDE2LjA0MTEgMjYgMTYuMDc5MyAyNkMxNi4xMTc1IDI2IDE2LjE1MTkgMjUuOTk1NCAxNi4xNzk2IDI1Ljk4OUMxNy4xNTkxIDIzLjg5MiAxOC40ODg4IDIxLjQxMSAyMC4wMDk5IDE5LjkwMjFNMjAuMDA5OSAxOS45MDIxQzIxLjUyNTMgMTguMzk4NyAyMy45NDY1IDE3LjA2NjkgMjUuOTkxNSAxNi4wODI0QzI1Ljk5NjUgMTYuMDU5MyAyNiAxNi4wMzEgMjYgMTUuOTk5N0MyNiAxNS45Njg0IDI1Ljk5NjUgMTUuOTQwMyAyNS45OTE1IDE1LjkxNzFDMjMuOTQ3NCAxNC45MzI3IDIxLjUyNTkgMTMuNjAxIDIwLjAxMDUgMTIuMDk4NyIvPgo8L21hc2s+CjxwYXRoIGZpbGwtcnVsZT0iZXZlbm9kZCIgY2xpcC1ydWxlPSJldmVub2RkIiBkPSJNMjAuMDEwNSAxMi4wOTg3QzE4LjQ5IDEwLjU4OTQgMTcuMTU5NCA4LjEwODE0IDE2LjE3OTkgNi4wMTEwM0MxNi4xNTIgNi4wMDQ1MSAxNi4xMTc2IDYgMTYuMDc5NCA2QzE2LjA0MTEgNiAxNi4wMDY2IDYuMDA0NTEgMTUuOTc4OCA2LjAxMTA0QzE0Ljk5OTQgOC4xMDgxNCAxMy42Njk3IDEwLjU4ODkgMTIuMTQ4MSAxMi4wOTgxQzEwLjYyNjkgMTMuNjA3MSA4LjEyNTY4IDE0LjkyNjQgNi4wMTE1NyAxNS44OTgxQzYuMDA0NzQgMTUuOTI2MSA2IDE1Ljk2MTEgNiAxNkM2IDE2LjAzODcgNi4wMDQ2OCAxNi4wNzM2IDYuMDExNDQgMTYuMTAxNEM4LjEyNTE5IDE3LjA3MjkgMTAuNjI2MiAxOC4zOTE5IDEyLjE0NzcgMTkuOTAxNkMxMy42Njk3IDIxLjQxMDcgMTQuOTk5NiAyMy44OTIgMTUuOTc5MSAyNS45ODlDMTYuMDA2OCAyNS45OTU2IDE2LjA0MTEgMjYgMTYuMDc5MyAyNkMxNi4xMTc1IDI2IDE2LjE1MTkgMjUuOTk1NCAxNi4xNzk2IDI1Ljk4OUMxNy4xNTkxIDIzLjg5MiAxOC40ODg4IDIxLjQxMSAyMC4wMDk5IDE5LjkwMjFNMjAuMDA5OSAxOS45MDIxQzIxLjUyNTMgMTguMzk4NyAyMy45NDY1IDE3LjA2NjkgMjUuOTkxNSAxNi4wODI0QzI1Ljk5NjUgMTYuMDU5MyAyNiAxNi4wMzEgMjYgMTUuOTk5N0MyNiAxNS45Njg0IDI1Ljk5NjUgMTUuOTQwMyAyNS45OTE1IDE1LjkxNzFDMjMuOTQ3NCAxNC45MzI3IDIxLjUyNTkgMTMuNjAxIDIwLjAxMDUgMTIuMDk4NyIgZmlsbD0id2hpdGUiLz4KPHBhdGggZmlsbC1ydWxlPSJldmVub2RkIiBjbGlwLXJ1bGU9ImV2ZW5vZGQiIGQ9Ik0yMC4wMTA1IDEyLjA5ODdDMTguNDkgMTAuNTg5NCAxNy4xNTk0IDguMTA4MTQgMTYuMTc5OSA2LjAxMTAzQzE2LjE1MiA2LjAwNDUxIDE2LjExNzYgNiAxNi4wNzk0IDZDMTYuMDQxMSA2IDE2LjAwNjYgNi4wMDQ1MSAxNS45Nzg4IDYuMDExMDRDMTQuOTk5NCA4LjEwODE0IDEzLjY2OTcgMTAuNTg4OSAxMi4xNDgxIDEyLjA5ODFDMTAuNjI2OSAxMy42MDcxIDguMTI1NjggMTQuOTI2NCA2LjAxMTU3IDE1Ljg5ODFDNi4wMDQ3NCAxNS45MjYxIDYgMTUuOTYxMSA2IDE2QzYgMTYuMDM4NyA2LjAwNDY4IDE2LjA3MzYgNi4wMTE0NCAxNi4xMDE0QzguMTI1MTkgMTcuMDcyOSAxMC42MjYyIDE4LjM5MTkgMTIuMTQ3NyAxOS45MDE2QzEzLjY2OTcgMjEuNDEwNyAxNC45OTk2IDIzLjg5MiAxNS45NzkxIDI1Ljk4OUMxNi4wMDY4IDI1Ljk5NTYgMTYuMDQxMSAyNiAxNi4wNzkzIDI2QzE2LjExNzUgMjYgMTYuMTUxOSAyNS45OTU0IDE2LjE3OTYgMjUuOTg5QzE3LjE1OTEgMjMuODkyIDE4LjQ4ODggMjEuNDExIDIwLjAwOTkgMTkuOTAyMU0yMC4wMDk5IDE5LjkwMjFDMjEuNTI1MyAxOC4zOTg3IDIzLjk0NjUgMTcuMDY2OSAyNS45OTE1IDE2LjA4MjRDMjUuOTk2NSAxNi4wNTkzIDI2IDE2LjAzMSAyNiAxNS45OTk3QzI2IDE1Ljk2ODQgMjUuOTk2NSAxNS45NDAzIDI1Ljk5MTUgMTUuOTE3MUMyMy45NDc0IDE0LjkzMjcgMjEuNTI1OSAxMy42MDEgMjAuMDEwNSAxMi4wOTg3IiBzdHJva2U9IiM0OTFEOEIiIHN0cm9rZS13aWR0aD0iNCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgbWFzaz0idXJsKCNwYXRoLTItb3V0c2lkZS0xXzE4NV82KSIvPgo8L3N2Zz4K">
+      <bpmn:documentation>AI-powered intent classifier. Analyses the user request and returns routeCategory as one of: user_data, content, utility, general.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="io.camunda.agenticai:aiagent:1" retries="3" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=providerConfig.region" target="provider.bedrock.region" />
+          <zeebe:input source="=providerConfig.authType" target="provider.bedrock.authentication.type" />
+          <zeebe:input source="{{secrets.AWS_BEDROCK_ACCESS_KEY}}" target="provider.bedrock.authentication.accessKey" />
+          <zeebe:input source="{{secrets.AWS_BEDROCK_SECRET_KEY}}" target="provider.bedrock.authentication.secretKey" />
+          <zeebe:input source="=providerConfig.model" target="provider.bedrock.model.model" />
+          <zeebe:input source="=providerConfig.type" target="provider.type" />
+          <zeebe:input source="=&#34;You are a request classifier. Analyse the user&#39;s request and respond with ONLY one of these exact category names: user_data, content, utility, or general.&#10;&#10;Categories:&#10;- user_data: users, people, contacts, profiles, emails, phones, accounts, members, customers&#10;- content: recipes, cooking, food, ingredients, dishes, cuisine, jokes, humour, entertainment&#10;- utility: current date/time, superflux calculations, math operations, URLs, websites, web content&#10;- general: everything else (math, science, history, geography, coding, explanations, creative writing, etc.)&#10;&#10;Rules:&#10;1. Respond with ONLY the category name, nothing else.&#10;2. If ambiguous or spans multiple domains, choose the MOST relevant. When unclear, prefer general.&#10;3. Do not answer the user&#39;s question. Only output the category.&#10;4. For brief conversational follow-ups (e.g. &#39;yes&#39;, &#39;no&#39;, &#39;more&#39;, &#39;another one&#39;, &#39;ok&#39;, &#39;sure&#39;, &#39;continue&#39;, &#39;thanks&#39;), classify them in the SAME category as your most recent classification.&#34;" target="data.systemPrompt.prompt" />
+          <zeebe:input source="=currentInput" target="data.userPrompt.prompt" />
+          <zeebe:input source="=if (is defined(classifierAgentCtx) and classifierAgentCtx != null) then classifierAgentCtx else null" target="data.context" />
+          <zeebe:input source="in-process" target="data.memory.storage.type" />
+          <zeebe:input source="=5" target="data.memory.contextWindowSize" />
+          <zeebe:input source="=9999" target="data.limits.maxModelCalls" />
+          <zeebe:input source="text" target="data.response.format.type" />
+          <zeebe:input source="=false" target="data.response.format.parseJson" />
+          <zeebe:input source="=false" target="data.response.includeAssistantMessage" />
+          <zeebe:output source="=lower case(trim(classifierResult.responseText))" target="routeCategory" />
+          <zeebe:output source="=classifierResult.context" target="classifierAgentCtx" />
+        </zeebe:ioMapping>
+        <zeebe:taskHeaders>
+          <zeebe:header key="elementTemplateVersion" value="5" />
+          <zeebe:header key="elementTemplateId" value="io.camunda.connectors.agenticai.aiagent.v1" />
+          <zeebe:header key="resultVariable" value="classifierResult" />
+          <zeebe:header key="retryBackoff" value="PT0S" />
+        </zeebe:taskHeaders>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_to_classifier</bpmn:incoming>
       <bpmn:outgoing>Flow_to_route</bpmn:outgoing>
-    </bpmn:scriptTask>
-    <bpmn:sequenceFlow id="Flow_to_route" sourceRef="ClassifyRequest" targetRef="Gateway_RouteByCategory" />
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_to_route" sourceRef="ClassifyRequestIntent" targetRef="Gateway_RouteByCategory" />
     <bpmn:exclusiveGateway id="Gateway_RouteByCategory" name="Route by category" default="Flow_to_general">
       <bpmn:incoming>Flow_to_route</bpmn:incoming>
       <bpmn:outgoing>Flow_to_user_data</bpmn:outgoing>
@@ -57,8 +84,8 @@
       <bpmn:extensionElements>
         <zeebe:calledElement processId="ai-agent-user-data" propagateAllChildVariables="false" />
         <zeebe:ioMapping>
-          <zeebe:input source="=inputText" target="inputText" />
-          <zeebe:input source="=if (is defined(followUpInput) and followUpInput != null) then followUpInput else null" target="followUpInput" />
+          <zeebe:input source="=currentInput" target="currentInput" />
+          <zeebe:input source="=if (is defined(conversationHistory) and conversationHistory != null) then conversationHistory else null" target="conversationHistory" />
           <zeebe:input source="=if (is defined(inputDocuments) and inputDocuments != null) then inputDocuments else []" target="inputDocuments" />
           <zeebe:input source="=if (is defined(followUpDocuments) and followUpDocuments != null) then followUpDocuments else []" target="followUpDocuments" />
           <zeebe:input source="=if (is defined(userDataAgentCtx) and userDataAgentCtx != null) then userDataAgentCtx else null" target="agentContext" />
@@ -74,8 +101,8 @@
       <bpmn:extensionElements>
         <zeebe:calledElement processId="ai-agent-content" propagateAllChildVariables="false" />
         <zeebe:ioMapping>
-          <zeebe:input source="=inputText" target="inputText" />
-          <zeebe:input source="=if (is defined(followUpInput) and followUpInput != null) then followUpInput else null" target="followUpInput" />
+          <zeebe:input source="=currentInput" target="currentInput" />
+          <zeebe:input source="=if (is defined(conversationHistory) and conversationHistory != null) then conversationHistory else null" target="conversationHistory" />
           <zeebe:input source="=if (is defined(inputDocuments) and inputDocuments != null) then inputDocuments else []" target="inputDocuments" />
           <zeebe:input source="=if (is defined(followUpDocuments) and followUpDocuments != null) then followUpDocuments else []" target="followUpDocuments" />
           <zeebe:input source="=if (is defined(contentAgentCtx) and contentAgentCtx != null) then contentAgentCtx else null" target="agentContext" />
@@ -91,8 +118,8 @@
       <bpmn:extensionElements>
         <zeebe:calledElement processId="ai-agent-utility" propagateAllChildVariables="false" />
         <zeebe:ioMapping>
-          <zeebe:input source="=inputText" target="inputText" />
-          <zeebe:input source="=if (is defined(followUpInput) and followUpInput != null) then followUpInput else null" target="followUpInput" />
+          <zeebe:input source="=currentInput" target="currentInput" />
+          <zeebe:input source="=if (is defined(conversationHistory) and conversationHistory != null) then conversationHistory else null" target="conversationHistory" />
           <zeebe:input source="=if (is defined(inputDocuments) and inputDocuments != null) then inputDocuments else []" target="inputDocuments" />
           <zeebe:input source="=if (is defined(followUpDocuments) and followUpDocuments != null) then followUpDocuments else []" target="followUpDocuments" />
           <zeebe:input source="=if (is defined(utilityAgentCtx) and utilityAgentCtx != null) then utilityAgentCtx else null" target="agentContext" />
@@ -108,8 +135,8 @@
       <bpmn:extensionElements>
         <zeebe:calledElement processId="ai-agent-general" propagateAllChildVariables="false" />
         <zeebe:ioMapping>
-          <zeebe:input source="=inputText" target="inputText" />
-          <zeebe:input source="=if (is defined(followUpInput) and followUpInput != null) then followUpInput else null" target="followUpInput" />
+          <zeebe:input source="=currentInput" target="currentInput" />
+          <zeebe:input source="=if (is defined(conversationHistory) and conversationHistory != null) then conversationHistory else null" target="conversationHistory" />
           <zeebe:input source="=if (is defined(inputDocuments) and inputDocuments != null) then inputDocuments else []" target="inputDocuments" />
           <zeebe:input source="=if (is defined(followUpDocuments) and followUpDocuments != null) then followUpDocuments else []" target="followUpDocuments" />
           <zeebe:input source="=if (is defined(generalAgentCtx) and generalAgentCtx != null) then generalAgentCtx else null" target="agentContext" />
@@ -152,7 +179,11 @@
     <bpmn:scriptTask id="HandleAgentError" name="Handle Agent Error">
       <bpmn:documentation>Sets a user-friendly error response when an agent subprocess fails.</bpmn:documentation>
       <bpmn:extensionElements>
-        <zeebe:script expression="={responseText: &#34;I encountered an error while processing your request. Please try rephrasing your question or starting a new chat.&#34;, context: null}" resultVariable="agent" />
+        <zeebe:script expression="={responseText: &#34;I encountered an error while processing your request. Please try rephrasing your question or starting a new chat.&#34;, context: null}" resultVariable="agentErrorResult" />
+        <zeebe:ioMapping>
+          <zeebe:output source="=agentErrorResult" target="agent" />
+          <zeebe:output source="=&#34;error&#34;" target="routeCategory" />
+        </zeebe:ioMapping>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_errors_to_handler</bpmn:incoming>
       <bpmn:outgoing>Flow_error_to_merge</bpmn:outgoing>
@@ -168,11 +199,20 @@
       <bpmn:incoming>Flow_ut_to_merge</bpmn:incoming>
       <bpmn:incoming>Flow_gn_to_merge</bpmn:incoming>
       <bpmn:incoming>Flow_error_to_merge</bpmn:incoming>
-      <bpmn:outgoing>Flow_merge_to_wait</bpmn:outgoing>
+      <bpmn:outgoing>Flow_merge_to_history</bpmn:outgoing>
     </bpmn:exclusiveGateway>
-    <bpmn:sequenceFlow id="Flow_merge_to_wait" sourceRef="Gateway_MergeResults" targetRef="EventGateway_Wait" />
+    <bpmn:sequenceFlow id="Flow_merge_to_history" sourceRef="Gateway_MergeResults" targetRef="StoreConversationHistory" />
+    <bpmn:scriptTask id="StoreConversationHistory" name="Store Conversation History">
+      <bpmn:documentation>Appends the current turn (user message + agent response) to conversationHistory, keeping the last 6 entries (3 exchanges). This cross-agent history is passed to every agent so they have full session awareness.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <zeebe:script expression="=if count((if (is defined(conversationHistory) and conversationHistory != null) then conversationHistory else []) + [&#34;User: &#34; + currentInput + &#34; | &#34; + string(routeCategory) + &#34; agent: &#34; + (if agent != null and agent.responseText != null then (if string-length(string(agent.responseText)) &gt; 200 then substring(string(agent.responseText), 1, 200) + &#34;...&#34; else string(agent.responseText)) else &#34;&#34;)]) &gt; 6 then sublist((if (is defined(conversationHistory) and conversationHistory != null) then conversationHistory else []) + [&#34;User: &#34; + currentInput + &#34; | &#34; + string(routeCategory) + &#34; agent: &#34; + (if agent != null and agent.responseText != null then (if string-length(string(agent.responseText)) &gt; 200 then substring(string(agent.responseText), 1, 200) + &#34;...&#34; else string(agent.responseText)) else &#34;&#34;)], count((if (is defined(conversationHistory) and conversationHistory != null) then conversationHistory else []) + [&#34;User: &#34; + currentInput + &#34; | &#34; + string(routeCategory) + &#34; agent: &#34; + (if agent != null and agent.responseText != null then (if string-length(string(agent.responseText)) &gt; 200 then substring(string(agent.responseText), 1, 200) + &#34;...&#34; else string(agent.responseText)) else &#34;&#34;)]) - 5) else (if (is defined(conversationHistory) and conversationHistory != null) then conversationHistory else []) + [&#34;User: &#34; + currentInput + &#34; | &#34; + string(routeCategory) + &#34; agent: &#34; + (if agent != null and agent.responseText != null then (if string-length(string(agent.responseText)) &gt; 200 then substring(string(agent.responseText), 1, 200) + &#34;...&#34; else string(agent.responseText)) else &#34;&#34;)]" resultVariable="conversationHistory" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_merge_to_history</bpmn:incoming>
+      <bpmn:outgoing>Flow_history_to_wait</bpmn:outgoing>
+    </bpmn:scriptTask>
+    <bpmn:sequenceFlow id="Flow_history_to_wait" sourceRef="StoreConversationHistory" targetRef="EventGateway_Wait" />
     <bpmn:eventBasedGateway id="EventGateway_Wait" name="Wait for user or timeout">
-      <bpmn:incoming>Flow_merge_to_wait</bpmn:incoming>
+      <bpmn:incoming>Flow_history_to_wait</bpmn:incoming>
       <bpmn:outgoing>Flow_to_msg</bpmn:outgoing>
       <bpmn:outgoing>Flow_to_timer</bpmn:outgoing>
     </bpmn:eventBasedGateway>
@@ -204,6 +244,26 @@
   </bpmn:message>
   <bpmndi:BPMNDiagram id="BPMNDiagram_1">
     <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="ai-agent-chat-router">
+      <bpmndi:BPMNShape id="StartEvent_di" bpmnElement="StartEvent_ChatSessionStarted">
+        <dc:Bounds x="-8" y="342" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="-21" y="385" width="64" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_StartOrContinue_di" bpmnElement="Gateway_StartOrContinue" isMarkerVisible="true">
+        <dc:Bounds x="80" y="335" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="68" y="392" width="74" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="SetProviderConfig_di" bpmnElement="SetProviderConfig" bioc:stroke="#e65100" bioc:fill="#fff3e0" color:background-color="#fff3e0" color:border-color="#e65100">
+        <dc:Bounds x="200" y="320" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ClassifyRequestIntent_di" bpmnElement="ClassifyRequestIntent" bioc:stroke="#e65100" bioc:fill="#fff3e0" color:background-color="#fff3e0" color:border-color="#e65100">
+        <dc:Bounds x="370" y="320" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="GW_RouteByCategory_di" bpmnElement="Gateway_RouteByCategory" isMarkerVisible="true">
         <dc:Bounds x="595" y="335" width="50" height="50" />
         <bpmndi:BPMNLabel>
@@ -232,29 +292,9 @@
           <dc:Bounds x="1045" y="692" width="70" height="14" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Msg_UserReply_di" bpmnElement="MessageCatchEvent_UserReply" bioc:stroke="#205022" bioc:fill="#c8e6c9" color:background-color="#c8e6c9" color:border-color="#205022">
-        <dc:Bounds x="1447" y="232" width="36" height="36" />
-        <bpmndi:BPMNLabel>
-          <dc:Bounds x="1357" y="237" width="81" height="27" />
-        </bpmndi:BPMNLabel>
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Timer_Timeout_di" bpmnElement="TimerEvent_Timeout" bioc:stroke="#6b3c00" bioc:fill="#ffe0b2" color:background-color="#ffe0b2" color:border-color="#6b3c00">
-        <dc:Bounds x="1447" y="452" width="36" height="36" />
-        <bpmndi:BPMNLabel>
-          <dc:Bounds x="1425" y="495" width="79" height="14" />
-        </bpmndi:BPMNLabel>
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="EndEvent_Timeout_di" bpmnElement="EndEvent_Timeout">
-        <dc:Bounds x="1562" y="452" width="36" height="36" />
-        <bpmndi:BPMNLabel>
-          <dc:Bounds x="1540" y="495" width="80" height="27" />
-        </bpmndi:BPMNLabel>
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="EventGateway_Wait_di" bpmnElement="EventGateway_Wait">
-        <dc:Bounds x="1440" y="335" width="50" height="50" />
-        <bpmndi:BPMNLabel>
-          <dc:Bounds x="1500" y="346" width="76" height="27" />
-        </bpmndi:BPMNLabel>
+      <bpmndi:BPMNShape id="HandleAgentError_di" bpmnElement="HandleAgentError" bioc:stroke="#b71c1c" bioc:fill="#ffcdd2" color:background-color="#ffcdd2" color:border-color="#b71c1c">
+        <dc:Bounds x="1260" y="620" width="100" height="80" />
+        <bpmndi:BPMNLabel />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="GW_MergeResults_di" bpmnElement="Gateway_MergeResults" isMarkerVisible="true">
         <dc:Bounds x="1285" y="335" width="50" height="50" />
@@ -262,28 +302,32 @@
           <dc:Bounds x="1325" y="323" width="68" height="14" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="HandleAgentError_di" bpmnElement="HandleAgentError" bioc:stroke="#b71c1c" bioc:fill="#ffcdd2" color:background-color="#ffcdd2" color:border-color="#b71c1c">
-        <dc:Bounds x="1260" y="620" width="100" height="80" />
+      <bpmndi:BPMNShape id="StoreConversationHistory_di" bpmnElement="StoreConversationHistory">
+        <dc:Bounds x="1350" y="320" width="100" height="80" />
         <bpmndi:BPMNLabel />
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="ClassifyRequest_di" bpmnElement="ClassifyRequest" bioc:stroke="#e65100" bioc:fill="#fff3e0" color:background-color="#fff3e0" color:border-color="#e65100">
-        <dc:Bounds x="370" y="320" width="100" height="80" />
-        <bpmndi:BPMNLabel />
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="StartEvent_di" bpmnElement="StartEvent_ChatSessionStarted">
-        <dc:Bounds x="-8" y="342" width="36" height="36" />
+      <bpmndi:BPMNShape id="EventGateway_Wait_di" bpmnElement="EventGateway_Wait">
+        <dc:Bounds x="1510" y="335" width="50" height="50" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="-21" y="385" width="64" height="27" />
+          <dc:Bounds x="1570" y="346" width="76" height="27" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="SetProviderConfig_di" bpmnElement="SetProviderConfig" bioc:stroke="#e65100" bioc:fill="#fff3e0" color:background-color="#fff3e0" color:border-color="#e65100">
-        <dc:Bounds x="80" y="320" width="100" height="80" />
-        <bpmndi:BPMNLabel />
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="GW_StartOrContinue_di" bpmnElement="Gateway_StartOrContinue" isMarkerVisible="true">
-        <dc:Bounds x="245" y="335" width="50" height="50" />
+      <bpmndi:BPMNShape id="Msg_UserReply_di" bpmnElement="MessageCatchEvent_UserReply" bioc:stroke="#205022" bioc:fill="#c8e6c9" color:background-color="#c8e6c9" color:border-color="#205022">
+        <dc:Bounds x="1517" y="232" width="36" height="36" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="233" y="392" width="74" height="14" />
+          <dc:Bounds x="1427" y="237" width="81" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Timer_Timeout_di" bpmnElement="TimerEvent_Timeout" bioc:stroke="#6b3c00" bioc:fill="#ffe0b2" color:background-color="#ffe0b2" color:border-color="#6b3c00">
+        <dc:Bounds x="1517" y="452" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1495" y="495" width="79" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_Timeout_di" bpmnElement="EndEvent_Timeout">
+        <dc:Bounds x="1632" y="452" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1610" y="495" width="80" height="27" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="Error_General_di" bpmnElement="Error_General" bioc:stroke="#b71c1c" bioc:fill="#ffcdd2" color:background-color="#ffcdd2" color:border-color="#b71c1c">
@@ -310,12 +354,16 @@
           <dc:Bounds x="980" y="168" width="56" height="14" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNEdge id="Flow_config_to_gw_di" bpmnElement="Flow_config_to_gw">
-        <di:waypoint x="180" y="360" />
-        <di:waypoint x="245" y="360" />
+      <bpmndi:BPMNEdge id="Flow_start_to_config_di" bpmnElement="Flow_start_to_config">
+        <di:waypoint x="28" y="360" />
+        <di:waypoint x="80" y="360" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_config_to_task_di" bpmnElement="Flow_config_to_task">
+        <di:waypoint x="130" y="360" />
+        <di:waypoint x="200" y="360" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_to_classifier_di" bpmnElement="Flow_to_classifier">
-        <di:waypoint x="295" y="360" />
+        <di:waypoint x="300" y="360" />
         <di:waypoint x="370" y="360" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_to_route_di" bpmnElement="Flow_to_route">
@@ -409,31 +457,31 @@
         <di:waypoint x="1310" y="620" />
         <di:waypoint x="1310" y="385" />
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Flow_merge_to_wait_di" bpmnElement="Flow_merge_to_wait">
+      <bpmndi:BPMNEdge id="Flow_merge_to_history_di" bpmnElement="Flow_merge_to_history">
         <di:waypoint x="1335" y="360" />
-        <di:waypoint x="1440" y="360" />
+        <di:waypoint x="1350" y="360" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_history_to_wait_di" bpmnElement="Flow_history_to_wait">
+        <di:waypoint x="1450" y="360" />
+        <di:waypoint x="1510" y="360" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_to_msg_di" bpmnElement="Flow_to_msg">
-        <di:waypoint x="1465" y="335" />
-        <di:waypoint x="1465" y="268" />
+        <di:waypoint x="1535" y="335" />
+        <di:waypoint x="1535" y="268" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_to_timer_di" bpmnElement="Flow_to_timer">
-        <di:waypoint x="1465" y="385" />
-        <di:waypoint x="1465" y="452" />
+        <di:waypoint x="1535" y="385" />
+        <di:waypoint x="1535" y="452" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_from_reply_di" bpmnElement="Flow_from_reply">
-        <di:waypoint x="1465" y="232" />
-        <di:waypoint x="1465" y="40" />
-        <di:waypoint x="270" y="40" />
-        <di:waypoint x="270" y="335" />
+        <di:waypoint x="1535" y="232" />
+        <di:waypoint x="1535" y="40" />
+        <di:waypoint x="105" y="40" />
+        <di:waypoint x="105" y="335" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_timeout_end_di" bpmnElement="Flow_timeout_end">
-        <di:waypoint x="1483" y="470" />
-        <di:waypoint x="1562" y="470" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Flow_start_to_config_di" bpmnElement="Flow_start_to_config">
-        <di:waypoint x="28" y="360" />
-        <di:waypoint x="80" y="360" />
+        <di:waypoint x="1553" y="470" />
+        <di:waypoint x="1632" y="470" />
       </bpmndi:BPMNEdge>
     </bpmndi:BPMNPlane>
   </bpmndi:BPMNDiagram>
