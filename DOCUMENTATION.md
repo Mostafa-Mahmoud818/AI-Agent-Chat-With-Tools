@@ -102,9 +102,9 @@ All four AI agent subprocesses are embedded as **Ad-Hoc SubProcesses** directly 
 - **Process ID:** `ai-agent-chat-with-tools`
 - **Version Tag:** 3.2
 
-#### Architecture B — Modular (`files/main-chat-router.bpmn` + 4 child processes)
+#### Architecture B — Modular (`Backend/src/main/resources/bpmn/`)
 
-The main router delegates to four separate deployed processes via **Call Activities**. Each agent is an independent process definition that can be versioned, deployed, and tested in isolation.
+The main router delegates to four separate deployed processes via **Call Activities**. Each agent is an independent process definition that can be versioned, deployed, and tested in isolation. BPMN files are under `Backend/src/main/resources/bpmn/`: `main-chat-router.bpmn`, `agent-user-data.bpmn`, `agent-content.bpmn`, `agent-utility.bpmn`, `agent-general.bpmn`, and `agent-structured-response.bpmn`. Processes can be deployed to the cluster via Camunda Web Modeler, CI/CD, or Zeebe classpath deployment.
 
 - **Router Process ID:** `ai-agent-chat-router`
 - **Version Tag:** 1.0
@@ -116,7 +116,7 @@ The main router delegates to four separate deployed processes via **Call Activit
 flowchart TD
     Start(["Message Start Event\nai-chat-start"])
     GwStartCont{"Start or\nContinue?"}
-    Classify["Script Task\nClassify Request\nrouteCategory = FEEL"]
+    Classify["AI Agent Task\nClassify Request Intent\nrouteCategory = LLM"]
     GwRoute{"Route by\ncategory"}
     UserData["Agent Subprocess\nUser Data"]
     Content["Agent Subprocess\nContent & Entertainment"]
@@ -160,7 +160,7 @@ flowchart TD
 |------|------|----|---------|
 | Message Start Event | Chat session started | `StartEvent_ChatSessionStarted` | Triggered by `ai-chat-start` message |
 | Exclusive Gateway | Start / continue | `Gateway_StartOrContinue` | First turn vs follow-up routing |
-| Script Task | Classify Request | `ClassifyRequest` | FEEL expression sets `routeCategory` |
+| AI Agent Task (Service Task) | Classify Request Intent | `ClassifyRequestIntent` | AI-powered intent classification via LLM; returns `routeCategory` directly in `response.responseText` (no tools) |
 | Exclusive Gateway | Route by category | `Gateway_RouteByCategory` | Fan-out to agent |
 | Ad-Hoc SubProcess / Call Activity | User Data Agent | `UserData_Agent` / `Call_UserData` | Handles user data queries |
 | Ad-Hoc SubProcess / Call Activity | Content & Entertainment Agent | `Content_Agent` / `Call_Content` | Handles recipes, jokes |
@@ -190,7 +190,7 @@ flowchart TD
 
 | Task | Connector | Endpoint | Method | Purpose |
 |------|-----------|----------|--------|---------|
-| ListUsers | `io.camunda:http-json:1` | `https://jsonplaceholder.typicode.com/users` | GET | Fetch all users |
+| ListUsers | Zeebe job worker `list-users-worker` | Backend `ListUsersWorker` | — | Returns static user list as `toolCallResult` for AI Agent connector |
 | LoadUserByID | `io.camunda:http-json:1` | `https://jsonplaceholder.typicode.com/users/{id}` | GET | Fetch single user |
 
 #### Content & Entertainment Agent (`ai-agent-content`)
@@ -198,7 +198,7 @@ flowchart TD
 | Task | Connector | Endpoint | Method | Purpose |
 |------|-----------|----------|--------|---------|
 | Search_Recipe | `io.camunda:http-json:1` | `https://dummyjson.com/recipes/search?q={q}` | GET | Search recipes |
-| Jokes_API | `io.camunda:http-json:1` | `https://v2.jokeapi.dev/joke/Any?format=txt&safe-mode` | GET | Fetch a safe joke |
+| Jokes_API | Zeebe job worker `jokes-api-worker` | Backend `JokesApiWorker` | — | Returns static joke as `toolCallResult` for AI Agent connector |
 
 #### Utility & Web Agent (`ai-agent-utility`)
 
@@ -223,8 +223,8 @@ flowchart TD
 | `followUpInput` | Input | Backend (`sendReply`) | Subsequent user messages |
 | `inputDocuments` | Input | Backend | Document attachments (currently empty list) |
 | `followUpDocuments` | Input | Backend | Follow-up attachments (currently empty list) |
-| `currentInput` | Internal | ClassifyRequest script | Unified input for the current turn |
-| `routeCategory` | Internal | ClassifyRequest script | `user_data`, `content`, `utility`, or `general` |
+| `routeCategory` | Internal | ClassifyRequestIntent agent | `user_data`, `content`, `utility`, or `general` — set by AI classifier |
+| `classifierAgentCtx` | Internal | ClassifyRequestIntent agent | Classifier routing memory across turns |
 | `providerConfig` | Internal | SetProviderConfig script | AI model configuration (modular only) |
 | `agent` | Output | Agent subprocess | `{ responseText, ... }` — read by backend |
 | `toolCallResults` | Internal | Agent subprocess | Results from tool calls |
@@ -239,26 +239,26 @@ flowchart TD
 ```mermaid
 graph TD
     controller["controller\nChatController"]
-    service["service\nChatService\nCamundaChatService\nMessagePublisher"]
-    client["client\nCamundaRestClient"]
+    service["service\nChatService\nCamundaChatService"]
+    camunda["camunda\nCamundaRestClient\nMessagePublisher\nClusterWebClientConfig"]
     repository["repository\nSessionRepository"]
     model["model\nSessionState"]
     dto["dto\n5 records"]
     exception["exception\nGlobalExceptionHandler\n3 custom exceptions"]
-    config["config\nWebConfig\nClusterWebClientConfig\nMdcFilter\nStartupConfigLogger"]
+    config["config\nWebConfig\nMdcFilter\nStartupConfigLogger"]
+    worker["worker\nJokesApiWorker\nListUsersWorker"]
 
     controller --> service
     controller --> dto
     controller --> exception
-    service --> client
+    service --> camunda
     service --> repository
     service --> model
     service --> dto
     service --> exception
-    client --> config
+    camunda --> config
     repository --> model
     repository --> exception
-    config --> client
 ```
 
 ### 4.2 Package Responsibilities
@@ -267,13 +267,14 @@ graph TD
 |---------|---------|----------------|
 | `com.example.aichat` | `CamundaChatApplication` | Spring Boot entry point; enables scheduling |
 | `com.example.aichat.controller` | `ChatController` | HTTP entry points; input validation; delegates to `ChatService` |
-| `com.example.aichat.service` | `ChatService`, `CamundaChatService`, `MessagePublisher` | Business logic; Zeebe message operations; SSE streaming |
-| `com.example.aichat.client` | `CamundaRestClient` | Camunda Cluster REST API v2 calls; variable resolution |
+| `com.example.aichat.service` | `ChatService`, `CamundaChatService` | Business logic; session lifecycle; SSE streaming |
+| `com.example.aichat.camunda` | `CamundaRestClient`, `MessagePublisher`, `ClusterWebClientConfig` | Zeebe message correlate/publish; Cluster REST API v2; OAuth2 WebClient |
+| `com.example.aichat.worker` | `JokesApiWorker`, `ListUsersWorker` | Zeebe job workers for AI Agent tools (jokes, list users); return `toolCallResult` |
 | `com.example.aichat.repository` | `SessionRepository` | In-memory session store; scheduled expiry cleanup |
 | `com.example.aichat.model` | `SessionState` | Mutable, thread-safe chat session state |
 | `com.example.aichat.dto` | 5 records | Immutable request/response contracts |
 | `com.example.aichat.exception` | `GlobalExceptionHandler`, 3 custom exceptions | Centralized exception-to-HTTP mapping |
-| `com.example.aichat.config` | `WebConfig`, `ClusterWebClientConfig`, `MdcFilter`, `StartupConfigLogger` | Cross-cutting concerns: CORS, OAuth2, MDC, logging |
+| `com.example.aichat.config` | `WebConfig`, `MdcFilter`, `StartupConfigLogger` | CORS, MDC, request logging |
 
 ---
 
@@ -346,7 +347,7 @@ Reads current process state from Camunda and translates it to a `ChatResponseDTO
 
 ### 5.4 MessagePublisher
 
-`@Component` — single point for all Zeebe message operations.
+`@Component` in package `com.example.aichat.camunda` — single point for all Zeebe message operations.
 
 | Method | Zeebe Command | Correlation Key | TTL | Returns | Used For |
 |--------|---------------|-----------------|-----|---------|----------|
@@ -357,7 +358,7 @@ Reads current process state from Camunda and translates it to a `ChatResponseDTO
 
 ### 5.5 CamundaRestClient
 
-`@Component` — all Camunda Cluster REST API v2 HTTP calls.
+`@Component` in package `com.example.aichat.camunda` — all Camunda Cluster REST API v2 HTTP calls.
 
 #### Camunda API Calls
 
@@ -381,7 +382,7 @@ All requests use a 10-second block timeout via Reactor's `Mono.block()`.
 
 ### 5.6 ClusterWebClientConfig
 
-`@Configuration` — produces the `clusterWebClient` Spring bean.
+`@Configuration` in package `com.example.aichat.camunda` — produces the `clusterWebClient` Spring bean.
 
 - Builds a `WebClient` with `clusterApiUrl` as base URL and a Netty `HttpClient` with:
   - Response timeout: 10 seconds
@@ -418,7 +419,18 @@ Token caching is synchronized on the `ClusterWebClientConfig` instance. The 60-s
 
 Sessions are never evicted mid-stream; they age out naturally 30 minutes after creation or are explicitly marked expired by `CamundaChatService`.
 
-### 5.8 SessionState
+### 5.8 Zeebe Job Workers (AI Agent Tools)
+
+The backend registers Zeebe job workers that implement AI Agent tool tasks. When a BPMN agent subprocess invokes a tool (e.g. "List users" or "Jokes API"), Zeebe creates a job that these workers complete and return a `toolCallResult` for the AI Agent connector.
+
+| Worker | Job Type | Purpose |
+|--------|----------|---------|
+| `ListUsersWorker` | `list-users-worker` | Returns a static list of users (id, name, username, email) as `toolCallResult` for the User Data Agent |
+| `JokesApiWorker` | `jokes-api-worker` | Returns a static joke string as `toolCallResult` for the Content & Entertainment Agent |
+
+Both workers use `@JobWorker(type = "...", autoComplete = true, fetchAllVariables = false)` and return `Map.of("toolCallResult", ...)`. They are registered automatically by the Camunda Spring Boot starter.
+
+### 5.9 SessionState
 
 Mutable, thread-safe domain model. All state-mutating methods are `synchronized`.
 
@@ -443,7 +455,7 @@ This synchronized method prevents duplicate response delivery:
 3. Returns `currentResponseText` only if it differs from `lastResponseText` (new response detected).
 4. On detection: updates `lastResponseText`, `lastHandledBy`, sets `awaitingResponse = false`, resets `consecutiveEmptyPolls`.
 
-### 5.9 GlobalExceptionHandler
+### 5.10 GlobalExceptionHandler
 
 `@RestControllerAdvice` — maps all exceptions to structured JSON error responses.
 
@@ -463,7 +475,7 @@ This synchronized method prevents duplicate response delivery:
 
 All responses use `ErrorResponse(String error, String message)`.
 
-### 5.10 MdcFilter
+### 5.11 MdcFilter
 
 `@Component @Order(HIGHEST_PRECEDENCE)` extending `OncePerRequestFilter`.
 
@@ -475,7 +487,7 @@ For every HTTP request:
 
 MDC values appear in all log lines within the request thread, enabling easy log correlation by `requestId` and `sessionId`.
 
-### 5.11 DTOs
+### 5.12 DTOs
 
 All DTOs are Java records (immutable).
 
@@ -1187,17 +1199,6 @@ npm test
 ```
 AI Agent Chat With Tools/
 ├── DOCUMENTATION.md                    (this file)
-├── ai agent chat with tools.bpmn       (Architecture A: monolithic process)
-├── Webhook Message Start Event Connector.json
-├── AI Agent SubProcess Extended.json
-├── AI Agent SubProcess Extended - Final.json
-│
-├── files/                              (Architecture B: modular processes)
-│   ├── main-chat-router.bpmn
-│   ├── agent-user-data.bpmn
-│   ├── agent-content.bpmn
-│   ├── agent-utility.bpmn
-│   └── agent-general.bpmn
 │
 ├── Backend/
 │   ├── pom.xml
@@ -1205,10 +1206,11 @@ AI Agent Chat With Tools/
 │       ├── main/
 │       │   ├── java/com/example/aichat/
 │       │   │   ├── CamundaChatApplication.java
-│       │   │   ├── client/
-│       │   │   │   └── CamundaRestClient.java
-│       │   │   ├── config/
+│       │   │   ├── camunda/
+│       │   │   │   ├── CamundaRestClient.java
 │       │   │   │   ├── ClusterWebClientConfig.java
+│       │   │   │   └── MessagePublisher.java
+│       │   │   ├── config/
 │       │   │   │   ├── MdcFilter.java
 │       │   │   │   ├── StartupConfigLogger.java
 │       │   │   │   └── WebConfig.java
@@ -1229,12 +1231,22 @@ AI Agent Chat With Tools/
 │       │   │   │   └── SessionState.java
 │       │   │   ├── repository/
 │       │   │   │   └── SessionRepository.java
-│       │   │   └── service/
-│       │   │       ├── CamundaChatService.java
-│       │   │       ├── ChatService.java
-│       │   │       └── MessagePublisher.java
+│       │   │   ├── service/
+│       │   │   │   ├── CamundaChatService.java
+│       │   │   │   └── ChatService.java
+│       │   │   └── worker/
+│       │   │       ├── JokesApiWorker.java
+│       │   │       └── ListUsersWorker.java
 │       │   └── resources/
-│       │       └── application.yaml
+│       │       ├── application.yaml
+│       │       ├── application.yaml.template
+│       │       └── bpmn/
+│       │           ├── main-chat-router.bpmn
+│       │           ├── agent-user-data.bpmn
+│       │           ├── agent-content.bpmn
+│       │           ├── agent-utility.bpmn
+│       │           ├── agent-general.bpmn
+│       │           └── agent-structured-response.bpmn
 │       └── test/
 │           └── java/com/example/aichat/
 │               ├── controller/
