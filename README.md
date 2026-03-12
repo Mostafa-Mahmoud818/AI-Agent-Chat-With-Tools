@@ -20,7 +20,6 @@ The process uses an **AI Classifier Gateway** pattern:
 | Agent | Tools | Handles |
 |---|---|---|
 | **User Data Agent** | List Users, Load User by ID | User lookups, contact details |
-| **Content & Entertainment Agent** | Search Recipe, Jokes API | Recipes, jokes, fun content |
 | **Utility & Web Agent** | Get Date/Time, Superflux Product, Fetch URL | Date/time, calculations, web fetching |
 | **General Agent** | Knowledge Answer (placeholder) | General knowledge questions (fallback); answers from built-in knowledge |
 
@@ -73,7 +72,7 @@ cd Backend
 
 Runs by default on **http://localhost:8081**. Endpoints:
 
-- `POST /api/chat/start` — body `{ "inputText": "Tell me a joke" }` → returns `{ "sessionId": "...", "processInstanceKey": "..." }`.
+- `POST /api/chat/start` — body `{ "inputText": "What is the capital of France?" }` → returns `{ "sessionId": "...", "processInstanceKey": "..." }`.
 - `GET /api/chat/{sessionId}/response` — returns `{ "status": "processing"|"ready", "responseText": "...", "handledBy": "..." }`. The `handledBy` field indicates which specialized agent handled the request (e.g., "User Data Agent").
 - `POST /api/chat/{sessionId}/reply` — body `{ "followUpInput": "Follow up question..." }` → sends a follow-up message to the agent.
 

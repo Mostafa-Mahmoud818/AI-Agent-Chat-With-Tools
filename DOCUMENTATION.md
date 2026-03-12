@@ -52,8 +52,7 @@ graph TD
     subgraph external [External APIs]
         JP["JSONPlaceholder\njsonplaceholder.typicode.com"]
         DJ["DummyJSON\ndummyjson.com"]
-        JOKE["JokeAPI\nv2.jokeapi.dev"]
-        FETCH["Any URL\nFetch_URL tool"]
+                FETCH["Any URL\nFetch_URL tool"]
     end
 
     FE -->|"POST /start, POST /reply\nHTTP"| CTRL
@@ -72,7 +71,6 @@ graph TD
     ZEEBE --> AI
     ZEEBE -->|"HTTP Connector"| JP
     ZEEBE -->|"HTTP Connector"| DJ
-    ZEEBE -->|"HTTP Connector"| JOKE
     ZEEBE -->|"HTTP Connector"| FETCH
 ```
 
@@ -104,10 +102,10 @@ All four AI agent subprocesses are embedded as **Ad-Hoc SubProcesses** directly 
 
 #### Architecture B — Modular (`Backend/src/main/resources/bpmn/`)
 
-The main router delegates to four separate deployed processes via **Call Activities**. Each agent is an independent process definition that can be versioned, deployed, and tested in isolation. BPMN files are under `Backend/src/main/resources/bpmn/`: `main-chat-router.bpmn`, `agent-user-data.bpmn`, `agent-content.bpmn`, `agent-utility.bpmn`, `agent-general.bpmn`, and `agent-structured-response.bpmn`. Processes can be deployed to the cluster via Camunda Web Modeler, CI/CD, or Zeebe classpath deployment.
+The main router delegates to four separate deployed processes via **Call Activities**. Each agent is an independent process definition that can be versioned, deployed, and tested in isolation. BPMN files are under `Backend/src/main/resources/bpmn/`: `main-chat-router.bpmn`, `agent-user-data.bpmn`, `agent-content.bpmn`, `agent-utility.bpmn`, and `agent-general.bpmn`. Processes can be deployed to the cluster via Camunda Web Modeler, CI/CD, or Zeebe classpath deployment.
 
 - **Router Process ID:** `ai-agent-chat-router`
-- **Version Tag:** 1.0
+- **Version Tag:** 2.1
 - **Child processes:** `ai-agent-user-data`, `ai-agent-content`, `ai-agent-utility`, `ai-agent-general`
 
 ### 3.2 Main Process Flow
@@ -161,30 +159,54 @@ flowchart TD
 | Message Start Event | Chat session started | `StartEvent_ChatSessionStarted` | Triggered by `ai-chat-start` message |
 | Exclusive Gateway | Start / continue | `Gateway_StartOrContinue` | First turn vs follow-up routing |
 | AI Agent Task (Service Task) | Classify Request Intent | `ClassifyRequestIntent` | AI-powered intent classification via LLM; returns `routeCategory` directly in `response.responseText` (no tools) |
-| Exclusive Gateway | Route by category | `Gateway_RouteByCategory` | Fan-out to agent |
-| Ad-Hoc SubProcess / Call Activity | User Data Agent | `UserData_Agent` / `Call_UserData` | Handles user data queries |
-| Ad-Hoc SubProcess / Call Activity | Content & Entertainment Agent | `Content_Agent` / `Call_Content` | Handles recipes, jokes |
-| Ad-Hoc SubProcess / Call Activity | Utility & Web Agent | `Utility_Agent` / `Call_Utility` | Date/time, math, URL fetch |
-| Ad-Hoc SubProcess / Call Activity | General Agent | `General_Agent` / `Call_General` | Knowledge answers |
-| Boundary Error Event | Agent error | `Error_*` | Catches errors per agent |
+| Call Activity | User Data Agent | `Call_UserData` | Calls `ai-agent-user-data` process to handle user data queries |
+| Call Activity | Utility & Web Agent | `Call_Utility` | Calls `ai-agent-utility` process for date/time, math, URL fetch |
+| Call Activity | General Agent | `Call_General` | Calls `ai-agent-general` process for knowledge answers |
+| Boundary Error Event | Agent error | `Error_*` | Catches errors per agent call activity |
+| Exclusive Gateway | Merge errors | `Gateway_MergeErrors` | Collects all agent errors |
 | Script Task | Handle Agent Error | `HandleAgentError` | Formats error response in `agent` variable |
-| Exclusive Gateway | Merge results | `Gateway_MergeResults` | Re-joins all paths |
+| Exclusive Gateway | Merge results | `Gateway_MergeResults` | Re-joins all paths (success or error) |
+| Script Task | Store Conversation History | `StoreConversationHistory` | Appends current turn to conversation history; retains last 6 entries (3 exchanges) for cross-agent awareness |
 | Event-Based Gateway | Wait for user or timeout | `EventGateway_Wait` | Waits for reply or inactivity |
 | Intermediate Message Catch | User sends next message | `MessageCatchEvent_UserReply` | `ai-chat-user-reply`, key: `sessionId` |
 | Intermediate Timer Catch | 30 min inactivity | `TimerEvent_Timeout` | `PT30M` ISO duration |
 | End Event | Session ended (inactivity) | `EndEvent_Timeout` | Terminal state |
 
-#### Modular Architecture — Additional Elements
+#### Modular Architecture — Process List
 
-| Type | Name | Called Process |
-|------|------|----------------|
-| Script Task | Set Provider Config | Sets `providerConfig` (AI model, region, authType) |
-| Call Activity | User Data Agent | `ai-agent-user-data` |
-| Call Activity | Content & Entertainment Agent | `ai-agent-content` |
-| Call Activity | Utility & Web Agent | `ai-agent-utility` |
-| Call Activity | General Agent | `ai-agent-general` |
+| Process ID | Version | Purpose |
+|------------|---------|--------|
+| `ai-agent-chat-router` | 2.1 | Main orchestration process; routes requests to specialized agents |
+| `ai-agent-user-data` | 1.0 | User data lookups (list users, load user by ID) |
+| `ai-agent-content` | 1.0 | Content & entertainment (recipes, jokes) |
+| `ai-agent-utility` | 1.0 | Utility operations (date/time, math, URL fetch) |
+| `ai-agent-general` | 1.0 | General knowledge and conversational queries |
 
-### 3.4 Agent Tools
+
+### 3.4 AI Agent Architecture
+
+All specialized agent processes (`ai-agent-*`) use the **AI Agent Job Worker** connector (`io.camunda.agenticai:aiagent-job-worker:1`) from Camunda, configured with:
+
+- **Provider:** AWS Bedrock (Claude 3.5 Haiku)
+- **Memory:** In-process storage with 20-entry context window
+- **Tool Call Behavior:** `WAIT_FOR_TOOL_CALL_RESULTS` — agent can make multiple tool calls and receives results
+- **Response Formatting:** Markdown text with optional JSON parsing
+- **Context Retention:** Each agent maintains its own context variable for conversation awareness across turns
+
+Each agent receives:
+1. **User message** (`currentInput`) — current or follow-up user query
+2. **Conversation history** (`conversationHistory`) — last 6 entries (3 exchanges) from across all agents
+3. **Document attachments** (`inputDocuments`, `followUpDocuments`) — optional user uploads
+4. **Agent context** (`agentContext`) — prior state/memory for that agent
+5. **Provider config** (`providerConfig`) — Bedrock region, auth, model specification
+
+### 3.5 Agent Tools and Configuration
+
+#### Set Provider Config (Main Router)
+
+| Task | Type | Configuration |
+|------|------|-------|
+| SetProviderConfig | Script Task | Sets AWS Bedrock region (`us-east-1`), authentication type (`credentials`), and model (`us.anthropic.claude-3-5-haiku-20241022-v1:0`); determines `currentInput` from either `inputText` (first turn) or `followUpInput` (subsequent turns) |
 
 #### User Data Agent (`ai-agent-user-data`)
 
@@ -197,8 +219,6 @@ flowchart TD
 
 | Task | Connector | Endpoint | Method | Purpose |
 |------|-----------|----------|--------|---------|
-| Search_Recipe | `io.camunda:http-json:1` | `https://dummyjson.com/recipes/search?q={q}` | GET | Search recipes |
-| Jokes_API | Zeebe job worker `jokes-api-worker` | Backend `JokesApiWorker` | — | Returns static joke as `toolCallResult` for AI Agent connector |
 
 #### Utility & Web Agent (`ai-agent-utility`)
 
@@ -212,23 +232,58 @@ flowchart TD
 
 | Task | Type | Purpose |
 |------|------|---------|
-| KnowledgeAnswer | Script Task | Returns AI knowledge-only answer (no external tool call) |
+| KnowledgeAnswer | Script Task (placeholder) | Placeholder tool; General Agent answers from knowledge only (no external tools needed) |
 
-### 3.5 BPMN Variables
+### 3.6 BPMN Variables
 
 | Variable | Direction | Set By | Consumed By |
 |----------|-----------|--------|-------------|
-| `sessionId` | Input | Backend (`startSession`) | Message correlation key for replies |
-| `inputText` | Input | Backend (`startSession`) | First user message |
-| `followUpInput` | Input | Backend (`sendReply`) | Subsequent user messages |
-| `inputDocuments` | Input | Backend | Document attachments (currently empty list) |
-| `followUpDocuments` | Input | Backend | Follow-up attachments (currently empty list) |
-| `routeCategory` | Internal | ClassifyRequestIntent agent | `user_data`, `content`, `utility`, or `general` — set by AI classifier |
-| `classifierAgentCtx` | Internal | ClassifyRequestIntent agent | Classifier routing memory across turns |
-| `providerConfig` | Internal | SetProviderConfig script | AI model configuration (modular only) |
-| `agent` | Output | Agent subprocess | `{ responseText, ... }` — read by backend |
-| `toolCallResults` | Internal | Agent subprocess | Results from tool calls |
-| `agentContext` | Internal | Agent subprocess | Conversation history for multi-turn AI |
+| `sessionId` | Input | Backend (`startSession`) | Message correlation | Unique session identifier; correlation key for replies |
+| `inputText` | Input | Backend (`startSession`) | SetProviderConfig | Initial user message on first turn |
+| `followUpInput` | Input | Backend (`sendReply`) | SetProviderConfig | User's follow-up message on subsequent turns |
+| `currentInput` | Internal | SetProviderConfig script | ClassifyRequestIntent, all agents | Current message text (either `inputText` or `followUpInput`) |
+| `inputDocuments` | Input | Backend | All agents | Document attachments from initial message (currently empty list) |
+| `followUpDocuments` | Input | Backend | All agents | Document attachments from follow-up (currently empty list) |
+| `providerConfig` | Internal | SetProviderConfig script | ClassifyRequestIntent agent, all subprocesses | `{type, region, authType, model}` — Bedrock configuration |
+| `routeCategory` | Internal | ClassifyRequestIntent | Routing gateway | `user_data`, `content`, `utility`, or `general` — AI classifier result |
+| `classifierAgentCtx` | Internal | ClassifyRequestIntent | ClassifyRequestIntent (next turn) | Classifier's internal memory for context-aware classification across turns |
+| `conversationHistory` | Internal | StoreConversationHistory script | All agents | List of last 6 conversation entries (3 exchanges); format: `["User: ... | agent: ..."]` |
+| `userDataAgentCtx` | Internal | User Data Agent subprocess | User Data Agent (next turn) | User Data Agent's context memory |
+| `contentAgentCtx` | Internal | Content Agent subprocess | Content Agent (next turn) | Content Agent's context memory |
+| `utilityAgentCtx` | Internal | Utility Agent subprocess | Utility Agent (next turn) | Utility Agent's context memory |
+| `generalAgentCtx` | Internal | General Agent subprocess | General Agent (next turn) | General Agent's context memory |
+| `agent` | Output | Agent subprocess | Backend | `{responseText, context}` — final response text and agent state |
+| `toolCallResults` | Internal | Agent subprocess (ad-hoc) | Agent Connector | Collects tool call results within agent |
+| `agentContext` | Internal | Agent subprocess input | Agent Connector | Agent's context state for multi-turn awareness |
+
+### 3.7 Conversation History and Multi-Turn Context
+
+The **Store Conversation History** task maintains a shared conversation log across all agent calls within a single session. This enables:
+
+- **Cross-agent context:** Each agent receives the last 6 conversation entries (3 exchanges) so it understands previous decisions and responses from other agents
+- **Context window management:** Entries are truncated (max 200 chars per agent response) to stay within token limits
+- **Turn tracking:** Each entry is formatted as `"User: <message> | <agent_category> agent: <response_summary>"`
+- **Stateless classifier:** The intent classifier can use conversation history to make context-aware routing decisions on follow-up queries
+
+**Example conversation history after 2 exchanges:**
+
+```
+[
+  "User: List all users | user_data agent: Here are the users: [1] Bret, [2] Antonette, ...",
+  "User: Tell me about user 1 | user_data agent: Bret is a software engineer with email bret@gmail.com",
+    "User: What time is it? | utility agent: It is currently 15:30."
+]
+```
+
+Each agent also maintains its own context variable (`userDataAgentCtx`, `contentAgentCtx`, etc.) for internal state that persists across turns of the same category.
+
+### 3.8 FEEL expression rules in BPMN
+
+All `zeebe:input` and `zeebe:script` expressions use **Camunda FEEL**. To keep prompts and expressions valid and XML-safe:
+
+- **XML escaping:** In attribute values, escape `<` as `&#60;` and `>` as `&#62;` (e.g. `count(list) &#62; 0`, or literal “&lt;thinking&gt;” in prompt text). This avoids the XML parser misreading comparison operators or angle brackets.
+- **FEEL string literals:** Strings are double-quoted in FEEL. Inside a string, a literal double-quote must be escaped as `\"`. Apostrophes in prompt text can stay as `'` or be written as `&#39;` in the XML. Newlines in prompts use `&#10;`.
+- **Consistency:** User-prompt and system-prompt expressions (e.g. conversation history + `currentInput`) use the same pattern: `(if (is defined(conversationHistory) and conversationHistory != null and count(conversationHistory) &#62; 0) then "..." + string join(...) + "..." else "") + currentInput`, with inner quotes as `&quot;` or `&#34;` in the XML so the FEEL engine receives valid string concatenation.
 
 ---
 
@@ -246,7 +301,7 @@ graph TD
     dto["dto\n5 records"]
     exception["exception\nGlobalExceptionHandler\n3 custom exceptions"]
     config["config\nWebConfig\nMdcFilter\nStartupConfigLogger"]
-    worker["worker\nJokesApiWorker\nListUsersWorker"]
+    worker["worker\nListUsersWorker"]
 
     controller --> service
     controller --> dto
@@ -267,10 +322,10 @@ graph TD
 |---------|---------|----------------|
 | `com.example.aichat` | `CamundaChatApplication` | Spring Boot entry point; enables scheduling |
 | `com.example.aichat.controller` | `ChatController` | HTTP entry points; input validation; delegates to `ChatService` |
-| `com.example.aichat.service` | `ChatService`, `CamundaChatService` | Business logic; session lifecycle; SSE streaming |
-| `com.example.aichat.camunda` | `CamundaRestClient`, `MessagePublisher`, `ClusterWebClientConfig` | Zeebe message correlate/publish; Cluster REST API v2; OAuth2 WebClient |
-| `com.example.aichat.worker` | `JokesApiWorker`, `ListUsersWorker` | Zeebe job workers for AI Agent tools (jokes, list users); return `toolCallResult` |
-| `com.example.aichat.repository` | `SessionRepository` | In-memory session store; scheduled expiry cleanup |
+| `com.example.aichat.service` | `ChatService`, `CamundaChatService`, `AgentResponseMapper`, `ResponseResolutionHandler`, `SseStreamOrchestrator` | Business logic; session lifecycle; variable→response mapping; resolution strategies; SSE stream lifecycle |
+| `com.example.aichat.camunda` | `ProcessVariableClient`, `ZeebeMessageGateway`, `CamundaRestClient`, `MessagePublisher`, `ClusterWebClientConfig` | Abstractions for variables/state and messages; REST API v2; Zeebe publish/correlate; OAuth2 WebClient |
+| `com.example.aichat.worker` | `JokesApiWorker`, `ListUsersWorker` | Zeebe job workers for AI Agent tools (list users); return `toolCallResult` |
+| `com.example.aichat.repository` | `SessionStore`, `SessionRepository` | Session storage abstraction; in-memory implementation with scheduled expiry cleanup |
 | `com.example.aichat.model` | `SessionState` | Mutable, thread-safe chat session state |
 | `com.example.aichat.dto` | 5 records | Immutable request/response contracts |
 | `com.example.aichat.exception` | `GlobalExceptionHandler`, 3 custom exceptions | Centralized exception-to-HTTP mapping |
@@ -307,47 +362,53 @@ Follows the **Dependency Inversion Principle** — `ChatController` depends on t
 
 ### 5.3 CamundaChatService
 
-`@Service` implementing `ChatService`. Core business logic class.
+`@Service` implementing `ChatService`. Orchestrates session lifecycle and response resolution; depends on abstractions and delegates SSE to `SseStreamOrchestrator` (SOLID: DIP, SRP).
+
+**Dependencies (abstractions):** `ProcessVariableClient`, `ZeebeMessageGateway`, `SessionStore`, `AgentResponseMapper`, `ResponseResolutionHandler`, `SseStreamOrchestrator`.
 
 #### `startSession(String inputText)`
 
 1. Generates a random UUID as `sessionId`.
 2. Builds variables map: `sessionId`, `inputText`, `inputDocuments` (empty list).
-3. Calls `messagePublisher.correlate("ai-chat-start", "", variables)` — synchronous gRPC call that returns `processInstanceKey`.
-4. Constructs and persists a new `SessionState` with the returned key.
+3. Calls `messageGateway.correlate(startMessageName, "", variables)` — synchronous gRPC call that returns `processInstanceKey`.
+4. Constructs and persists a new `SessionState` via `sessionStore.save(session)`.
 5. Returns the `SessionState` (sessionId + processInstanceKey exposed to frontend).
 
 #### `getResponse(String sessionId)`
 
-Reads current process state from Camunda and translates it to a `ChatResponseDTO`:
+Reads current process state and translates it to a `ChatResponseDTO`:
 
-1. Validates and retrieves `SessionState` from `SessionRepository`.
-2. Calls `restClient.fetchProcessInstanceVariables(processInstanceKey)`.
-3. If variables are **empty**: increments empty poll counter; after 60 consecutive empties, checks if process is in a terminal state (`COMPLETED`/`CANCELED`); if terminal, throws `SessionExpiredException`.
-4. If variables are **present**: extracts `routeCategory` and `agent.responseText`; calls `session.checkAndAcceptNewResponse()` to atomically detect a new response.
-5. Returns status `"ready"` with response, or `"processing"` if still waiting.
-6. On 3+ consecutive REST errors: returns status `"error"`.
+1. Retrieves `SessionState` from `sessionStore.getActiveSession(sessionId)`.
+2. Calls `processVariableClient.fetchProcessInstanceVariables(processInstanceKey)`.
+3. If variables are **empty**: delegates to `resolutionHandler.handleEmptyVariables(session)` (empty poll counter, terminal-state check, expiry).
+4. If variables are **present**: uses `responseMapper.toResponseData(variables)` for route category, response text, label, and agent hash; calls `session.checkAndAcceptNewResponse(...)` to atomically detect a new response.
+5. If stale-poll threshold reached: delegates to `resolutionHandler.handleStaleResponse(...)` (flow-node/terminal check).
+6. Otherwise: returns `resolutionHandler.lastKnownOrProcessing(session)`.
+7. On 3+ consecutive errors: returns status `"error"`.
 
 #### `sendReply(String sessionId, String followUpInput)`
 
-1. Validates session.
-2. Calls `messagePublisher.publish("ai-chat-user-reply", sessionId, variables)` — `sessionId` is the correlation key.
-3. Sets `session.awaitingResponse = true` (also resets empty poll counter).
-4. On publish failure: checks if process is terminal; throws `SessionExpiredException` if so, otherwise re-throws.
+1. Validates session via `sessionStore.getActiveSession(sessionId)`.
+2. Calls `messageGateway.publish(replyMessageName, sessionId, variables)` — `sessionId` is the correlation key.
+3. Sets `session.awaitingResponse = true`.
+4. On publish failure: uses `processVariableClient.isProcessInstanceInState(...)` for terminal check; throws `SessionExpiredException` if terminal, otherwise re-throws.
 
 #### `streamResponse(String sessionId)`
 
-1. Validates session exists.
-2. Creates a `SseEmitter` with a 10-minute timeout.
-3. Schedules a `Runnable` with `scheduleWithFixedDelay(runnable, 0, 1, SECONDS)` on a `ScheduledThreadPoolExecutor` sized to `availableProcessors()`.
-4. Each scheduled execution calls `getResponse()` and sends the result as a JSON SSE event.
-5. On terminal status (`"ready"` or `"error"`): completes the emitter, which cancels the scheduled future via the `onCompletion` callback.
-6. On `SessionExpiredException`: sends a final `expired` event, then completes the emitter.
-7. On `IOException` (client disconnected): completes with error.
+Delegates to `sseStreamOrchestrator.streamResponse(sessionId)`, which creates the `SseEmitter`, schedules the poll loop (calling `getResponse()` at fixed intervals), and handles completion/cleanup.
 
-### 5.4 MessagePublisher
+### 5.3.1 SOLID design (backend)
 
-`@Component` in package `com.example.aichat.camunda` — single point for all Zeebe message operations.
+| Principle | Application |
+|-----------|-------------|
+| **Single Responsibility (SRP)** | `AgentResponseMapper`: variable→response data only. `ResponseResolutionHandler`: empty/stale/last-known resolution. `SseStreamOrchestrator`: SSE lifecycle and polling. `CamundaChatService`: orchestration only. |
+| **Open/Closed (OCP)** | New resolution strategies or storage backends can be added without changing existing orchestration. |
+| **Dependency Inversion (DIP)** | `ProcessVariableClient` (impl: `CamundaRestClient`), `ZeebeMessageGateway` (impl: `MessagePublisher`), `SessionStore` (impl: `SessionRepository`). Controller and service depend on interfaces. |
+| **Interface Segregation** | Narrow interfaces: `ProcessVariableClient` (variables + state checks), `ZeebeMessageGateway` (publish/correlate), `SessionStore` (save/getActiveSession). |
+
+### 5.4 ZeebeMessageGateway and MessagePublisher
+
+`ZeebeMessageGateway` is the interface; `MessagePublisher` is the `@Component` implementation in package `com.example.aichat.camunda` — single point for all Zeebe message operations.
 
 | Method | Zeebe Command | Correlation Key | TTL | Returns | Used For |
 |--------|---------------|-----------------|-----|---------|----------|
@@ -356,15 +417,15 @@ Reads current process state from Camunda and translates it to a `ChatResponseDTO
 
 **`publish()` vs `correlate()`:** `publish()` buffers the message in Zeebe for the TTL duration if no subscription exists yet. `correlate()` requires an active subscription and fails immediately if none exists — this is correct for start events since the process is guaranteed to have a waiting message start event when deployed. `correlate()` returns the `processInstanceKey` synchronously, eliminating the need for subsequent polling to find the started instance.
 
-### 5.5 CamundaRestClient
+### 5.5 ProcessVariableClient and CamundaRestClient
 
-`@Component` in package `com.example.aichat.camunda` — all Camunda Cluster REST API v2 HTTP calls.
+`ProcessVariableClient` is the interface used by the service layer; `CamundaRestClient` is the `@Component` implementation in package `com.example.aichat.camunda` — all Camunda Cluster REST API v2 HTTP calls.
 
 #### Camunda API Calls
 
 | Method | HTTP | Endpoint | Purpose |
 |--------|------|----------|---------|
-| `fetchProcessInstanceVariables()` | POST | `/v2/variables/search` | Fetch all variables for a process instance |
+| `fetchProcessInstanceVariables()` | POST | `/v2/variables/search` | Fetch variables (`agent`, `routeCategory`) for response resolution |
 | `searchProcessInstances()` | POST | `/v2/process-instances/search` | Filter process instances by state/key |
 | `isProcessInstanceInState()` | POST | `/v2/process-instances/search` (×N states) | Check if instance is COMPLETED or CANCELED |
 | `fetchFullVariableValue()` (private) | GET | `/v2/variables/{variableKey}` | Fetch full (non-truncated) variable value |
@@ -407,9 +468,9 @@ getAccessToken() [synchronized]
 
 Token caching is synchronized on the `ClusterWebClientConfig` instance. The 60-second buffer ensures the token is refreshed before it actually expires.
 
-### 5.7 SessionRepository
+### 5.7 SessionStore and SessionRepository
 
-`@Repository` — in-memory `ConcurrentHashMap<String, SessionState>`.
+`SessionStore` is the interface (save, getActiveSession); `SessionRepository` is the `@Repository` implementation — in-memory `ConcurrentHashMap<String, SessionState>`.
 
 | Operation | Method | Behavior |
 |-----------|--------|----------|
@@ -442,18 +503,20 @@ Mutable, thread-safe domain model. All state-mutating methods are `synchronized`
 | `awaitingResponse` | boolean | `true` | Tracks whether a new AI response is expected |
 | `lastResponseText` | String | null | Last confirmed AI response text |
 | `lastHandledBy` | String | null | Agent label for last response |
+| `lastAgentHash` | int | 0 | Hash of last accepted agent variable; used with text to detect new response |
 | `consecutiveEmptyPolls` | int | 0 | Reset on any variable data; triggers expiry check at threshold |
+| `consecutiveStalePollsWhileAwaiting` | int | 0 | Polls where agent data unchanged while awaiting; triggers gateway check |
 | `consecutiveErrors` | int | 0 | Reset on success; triggers error response at 3 |
 | `expired` | boolean | false | Set on process termination |
 
-#### `checkAndAcceptNewResponse(currentResponseText, handledBy)` — Atomic Detection
+#### `checkAndAcceptNewResponse(currentResponseText, handledBy, agentHash)` — Atomic Detection
 
 This synchronized method prevents duplicate response delivery:
 
 1. Returns `null` if `currentResponseText` is blank.
 2. Returns `null` if `awaitingResponse == false` (response already delivered for this turn).
-3. Returns `currentResponseText` only if it differs from `lastResponseText` (new response detected).
-4. On detection: updates `lastResponseText`, `lastHandledBy`, sets `awaitingResponse = false`, resets `consecutiveEmptyPolls`.
+3. Returns `currentResponseText` only if it differs from `lastResponseText` or `agentHash` differs from `lastAgentHash` (new response detected).
+4. On detection: updates `lastResponseText`, `lastHandledBy`, `lastAgentHash`, sets `awaitingResponse = false`, resets `consecutiveEmptyPolls` and `consecutiveStalePollsWhileAwaiting`.
 
 ### 5.10 GlobalExceptionHandler
 
@@ -473,21 +536,42 @@ This synchronized method prevents duplicate response delivery:
 | `RuntimeException` | 500 Internal Server Error | `internal_error` |
 | `Exception` | 500 Internal Server Error | `internal_error` |
 
-All responses use `ErrorResponse(String error, String message)`.
+All responses use `ErrorResponse(String error, String message)`. The handler logs **WARN** for 4xx (session not found, expired, validation) and **ERROR** for 5xx and process start failures.
 
-### 5.11 MdcFilter
+### 5.11 Logging
+
+Backend logging is structured and uses SLF4J. The console pattern includes MDC `requestId` and `sessionId` (set by `MdcFilter`).
+
+| Component | Level | Events |
+|-----------|--------|--------|
+| **ChatController** | INFO | Chat started (sessionId, processInstanceKey); reply sent (sessionId); WARN when SSE stream rejected (session not found/expired) |
+| **CamundaChatService** | INFO | SSE stream opened (sessionId); published reply (message name, sessionId); stream error (WARN); persistent/transient response errors (WARN/ERROR); stale-polls gateway check |
+| **SessionRepository** | INFO | Cleanup (removed count, remaining) |
+| **GlobalExceptionHandler** | WARN | Session not found, session expired, validation errors; ERROR for process start, upstream, runtime |
+| **ClusterWebClientConfig** | INFO | OAuth token fetch and expiry |
+| **CamundaRestClient** | ERROR/WARN | Process instance search failure; variable fetch failure; full-value fetch failure |
+
+Set `logging.level.com.example.aichat: DEBUG` for more detail (e.g. per-poll or variable fetch).
+
+### 5.12 MdcFilter
 
 `@Component @Order(HIGHEST_PRECEDENCE)` extending `OncePerRequestFilter`.
 
-For every HTTP request:
-1. Generates a random 8-character `requestId` and puts it in MDC.
-2. Extracts `sessionId` from path `/api/chat/{sessionId}` (if segment is not `"start"`) and puts it in MDC.
+**Note:** This filter is **required** for proper request logging correlation. The application's logging pattern includes MDC values:
+
+```
+%d{HH:mm:ss.SSS} [%thread] %-5level [%X{requestId:-}] [%X{sessionId:-}] %logger{36} - %msg%n
+```
+
+For every HTTP request, MdcFilter:
+1. Generates a random 8-character `requestId` and puts it in MDC (used for tracking individual requests).
+2. Extracts `sessionId` from path `/api/chat/{sessionId}` (if segment is not `"start"`) and puts it in MDC (used for tracking chat sessions).
 3. Sets security response headers: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Cache-Control: no-store`.
 4. Clears MDC in `finally` block after the filter chain completes.
 
-MDC values appear in all log lines within the request thread, enabling easy log correlation by `requestId` and `sessionId`.
+MDC values (`requestId` and `sessionId`) appear in all log lines within the request thread, enabling easy log correlation and troubleshooting. Removing this filter will break the logging pattern.
 
-### 5.12 DTOs
+### 5.13 DTOs
 
 All DTOs are Java records (immutable).
 
@@ -532,11 +616,11 @@ sequenceDiagram
     BE-->>FE: 200 {sessionId, processInstanceKey}
 
     FE->>BE: GET /api/chat/{sessionId}/stream\n(EventSource opened)
-    BE->>BE: SseEmitter created\nscheduleWithFixedDelay(1s)
+    BE->>BE: SseEmitter created\nscheduleAtFixedRate(app.polling.interval-ms)
 
     CP->>CP: ClassifyRequest (FEEL)
     CP->>CP: Route to agent subprocess
-    CP->>EXT: HTTP Connector call\n(recipes, users, jokes, etc.)
+    CP->>EXT: HTTP Connector call\n(users, etc.)
     EXT-->>CP: Tool result
     CP->>CP: AI Agent processes result
     CP->>CP: Set agent.responseText variable
@@ -587,6 +671,8 @@ SSE is the primary channel for delivering AI responses to the browser. The backe
 
 ### 7.2 Backend SSE Lifecycle
 
+The backend implements **smart adaptive polling** for Camunda compatibility. The polling strategy reduces API load by automatically backing off during idle periods (when no new data is available).
+
 ```mermaid
 sequenceDiagram
     participant FE as "EventSource\n(Browser)"
@@ -599,38 +685,48 @@ sequenceDiagram
     CTRL->>SVC: streamResponse(sessionId)
     SVC->>SVC: Validate session
     SVC->>SVC: new SseEmitter(600_000ms)
-    SVC->>SCHED: scheduleWithFixedDelay(poll, 0, 1s)
+    SVC->>SCHED: scheduleAtFixedRate(poll, 0, pollingIntervalMs, MILLISECONDS)
+    Note over SCHED: Default: 1000ms (1 API call/sec)<br/>Adaptive backoff during idle (2x multiplier)
     SVC-->>CTRL: SseEmitter
     CTRL-->>FE: HTTP 200\nContent-Type: text/event-stream\n(connection held open)
 
-    loop Every 1s (after previous completes)
+    loop Every 1000ms (or configured interval)
         SCHED->>SVC: poll tick
-        SVC->>CA: POST /v2/variables/search
-        CA-->>SVC: variables
-        SVC->>SVC: getResponse() → ChatResponseDTO
-
-        alt status = "processing"
-            SVC->>FE: data: {"status":"processing"}\n\n
-        else status = "ready"
-            SVC->>FE: data: {"status":"ready","responseText":"...","handledBy":"..."}\n\n
-            SVC->>SVC: emitter.complete()
-            SVC->>SCHED: future.cancel() (via onCompletion)
-        else status = "error"
-            SVC->>FE: data: {"status":"error","responseText":"..."}\n\n
-            SVC->>SVC: emitter.complete()
-            SVC->>SCHED: future.cancel()
-        else SessionExpiredException
-            SVC->>FE: data: {"status":"expired","responseText":"Session expired."}\n\n
-            SVC->>SVC: emitter.complete()
-            SVC->>SCHED: future.cancel()
-        else IOException (client disconnected)
-            SVC->>SVC: emitter.completeWithError()
-            SVC->>SCHED: future.cancel()
+        
+        alt Session idle (>10 empty polls) AND idle-multiplier=2.0
+            SVC->>SVC: Skip poll (modulo adaptive throttling)
+            Note over SVC: Effectively ~2000ms during idle
+        else Active polling
+            SVC->>CA: POST /v2/variables/search
+            CA-->>SVC: variables
+            SVC->>SVC: getResponse() → ChatResponseDTO
+            
+            alt status = "processing"
+                SVC->>FE: data: {"status":"processing"}\n\n
+            else status = "ready"
+                SVC->>FE: data: {"status":"ready","responseText":"...","handledBy":"..."}\n\n
+                SVC->>SVC: emitter.complete()
+                SVC->>SCHED: future.cancel()
+            else status = "error"
+                SVC->>FE: data: {"status":"error","responseText":"..."}\n\n
+                SVC->>SVC: emitter.complete()
+            else SessionExpiredException
+                SVC->>FE: data: {"status":"expired"}\n\n
+                SVC->>SVC: emitter.complete()
+            else IOException (client disconnected)
+                SVC->>SVC: emitter.completeWithError()
+            end
         end
     end
 
     Note over FE: 10-min timeout → emitter.onTimeout() → future.cancel()
 ```
+
+**Polling Strategy for Camunda Compatibility:**
+- **Base interval:** 1000ms (1 API call/second per active session)
+- **Adaptive backoff:** During idle periods (>10 empty polls), polls are skipped modulo the idle multiplier
+- **Idle multiplier:** Default 2.0x - reduces to ~0.5 API calls/second during inactive processing
+- **Benefit:** Significantly reduced API pressure on Camunda while maintaining <1s response latency for active queries
 
 ### 7.3 Frontend EventSource Lifecycle
 
@@ -905,7 +1001,7 @@ Starts a new chat session. Correlates the `ai-chat-start` Zeebe message, which t
 **Request**
 
 ```json
-{ "inputText": "Tell me a joke" }
+{ "inputText": "What is the capital of France?" }
 ```
 
 | Field | Type | Constraints |
@@ -993,6 +1089,32 @@ data: {"status":"ready","responseText":"Here are all users: ...","handledBy":"Us
 
 **Terminal statuses** (stream closes after sending): `ready`, `error`, `expired`.
 
+### 11.5 Frontend–Backend–BPMN Alignment
+
+The following table ensures compatibility between the React frontend, Spring Boot API, and deployed BPMNs.
+
+| Layer | Contract | Value / Shape |
+|-------|----------|----------------|
+| **BPMN messages** | Start message name | `ai-chat-start` (main-chat-router.bpmn `Message_ChatStart`) |
+| | Reply message name | `ai-chat-user-reply` (main-chat-router.bpmn `Message_UserReply`) |
+| | Reply correlation key | `sessionId` (variable on process) |
+| | User-reply catch event id | `MessageCatchEvent_UserReply` (for flow-node check) |
+| **Backend config** | `app.camunda.messages.start` | `ai-chat-start` |
+| | `app.camunda.messages.reply` | `ai-chat-user-reply` |
+| | `app.camunda.reply-catch-event-id` | `MessageCatchEvent_UserReply` (optional; default in code) |
+| **Start payload** | Variables sent with start | `sessionId`, `inputText`, `inputDocuments` (list) |
+| **Reply payload** | Variables sent with reply | `followUpInput`, `followUpDocuments` (list); correlation key = `sessionId` |
+| **Process variables read by backend** | For response resolution | `agent` (object with `responseText`), `routeCategory` (string) |
+| **Frontend → API** | POST /start body | `{ "inputText": string }` |
+| | POST /{sessionId}/reply body | `{ "followUpInput": string }` |
+| | Start response | `{ "sessionId": string, "processInstanceKey": string }` — frontend uses `sessionId` only |
+| **SSE / ChatResponseDTO** | Fields | `status`, `responseText`, `handledBy` (all strings; nullable) |
+| | Status values | `processing` \| `ready` \| `error` \| `expired` |
+| **Error response (4xx/5xx)** | Body | `{ "error": string, "message": string }` — frontend uses `error` as `errorCode`, e.g. `session_expired`, `session_not_found` |
+| **Route categories** | Backend agent labels | `user_data` → "User Data Agent", `content` → "Content & Entertainment Agent", `utility` → "Utility & Web Agent", `general` → "General Agent" |
+
+Keep message names and variable names in sync when changing BPMNs or backend; update `application.yaml` and this table if you rename messages or the reply catch event.
+
 **Error Responses** (before stream opens)
 
 | Status | Error Code | Cause |
@@ -1075,8 +1197,11 @@ All error responses share the same structure:
 | `app.camunda.messages.start` | `ai-chat-start` | Zeebe message name for process start |
 | `app.camunda.messages.reply` | `ai-chat-user-reply` | Zeebe message name for user replies |
 | `app.camunda.messages.ttl-seconds` | `30` | TTL for published messages (seconds) |
-| `app.polling.empty-polls-before-expiry-check` | `60` | Consecutive empty variable polls before checking process state |
-| `app.session.max-age-minutes` | `30` | Session max age for cleanup |
+| `app.polling.interval-ms` | `1000` | Base SSE polling interval in milliseconds (1 second = 1 API call/sec per session; optimized for Camunda) |
+| `app.polling.idle-interval-multiplier` | `2.0` | Adaptive backoff multiplier during idle periods (>10 empty polls); ~50% API reduction during processing |
+| `app.polling.empty-polls-before-expiry-check` | `60` | Consecutive empty variable polls before checking if process is terminal (60s at 1000ms interval) |
+| `app.polling.stale-polls-before-gateway-check` | `30` | Stale polls before checking if process reached event-based gateway (30s at 1000ms interval) |
+| `app.session.max-age-minutes` | `30` | Session max age before cleanup |
 | `app.session.cleanup-interval-ms` | `300000` | Session cleanup interval (5 minutes) |
 | `logging.level.com.example.aichat` | `INFO` | Application log level |
 | `logging.level.io.camunda` | `INFO` | Camunda SDK log level |
@@ -1092,7 +1217,36 @@ All error responses share the same structure:
 
 Variables are loaded from a `.env` file at the project root via the `springboot3-dotenv` dependency.
 
-### 13.3 Frontend Environment Variables
+### 13.3 Camunda Performance Tuning
+
+This application is optimized for Camunda SaaS by reducing unnecessary API calls while maintaining low response latency.
+
+**Default Strategy (Recommended):**
+- **Base polling:** 1000ms (1 second) = 1 API call/second per active SSE session
+- **Idle backoff:** 2.0x multiplier skips polls during idle (>10 empty polls), reducing to ~0.5 API calls/second
+- **Example load:** 10 concurrent sessions = ~10 API calls/sec (active) or ~5 API calls/sec (idle processing)
+
+**Tuning Guidelines:**
+
+| Scenario | Recommended Settings | Notes |
+|----------|---------------------|-------|
+| **Development/Testing** | `interval-ms: 1000, idle-multiplier: 2.0` | Default; good balance |
+| **Low traffic (<5 sessions)** | Keep default | Polling overhead negligible |
+| **High traffic (50+ sessions)** | `interval-ms: 2000, idle-multiplier: 3.0` | 2s base = 0.5 API/sec per session; 6s idle = 0.17 API/sec |
+| **Very high traffic (100+)** | `interval-ms: 3000, idle-multiplier: 4.0` | 3s base; ~1.4 API calls/sec total across 100 sessions |
+| **Latency-sensitive** | `interval-ms: 800, idle-multiplier: 1.5` | Faster responses; slight increase in API load |
+
+**Trade-offs:**
+- **Shorter intervals (500-800ms):** Faster response times (1s max latency) but higher API pressure
+- **Longer intervals (2000-3000ms):** Reduced API calls but slower response times (up to 3s)
+- **Higher idle multiplier:** More aggressive throttling during idle, less responsive to long-running processes
+
+**Monitoring:**
+- Track API request rate: should not exceed Camunda quota limits
+- Monitor response latency in browser DevTools; typical <1s for active queries with default settings
+- Check Camunda audit logs for API rate patterns
+
+### 13.4 Frontend Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -1100,7 +1254,7 @@ Variables are loaded from a `.env` file at the project root via the `springboot3
 
 Set in `.env` or `.env.local` at the `Frontend/` directory root for non-default environments.
 
-### 13.4 Tech Stack Versions
+### 13.5 Tech Stack Versions
 
 | Component | Technology | Version |
 |-----------|------------|---------|
@@ -1209,7 +1363,9 @@ AI Agent Chat With Tools/
 │       │   │   ├── camunda/
 │       │   │   │   ├── CamundaRestClient.java
 │       │   │   │   ├── ClusterWebClientConfig.java
-│       │   │   │   └── MessagePublisher.java
+│       │   │   │   ├── MessagePublisher.java
+│       │   │   │   ├── ProcessVariableClient.java (interface)
+│       │   │   │   └── ZeebeMessageGateway.java (interface)
 │       │   │   ├── config/
 │       │   │   │   ├── MdcFilter.java
 │       │   │   │   ├── StartupConfigLogger.java
@@ -1230,10 +1386,14 @@ AI Agent Chat With Tools/
 │       │   │   ├── model/
 │       │   │   │   └── SessionState.java
 │       │   │   ├── repository/
-│       │   │   │   └── SessionRepository.java
+│       │   │   │   ├── SessionRepository.java
+│       │   │   │   └── SessionStore.java (interface)
 │       │   │   ├── service/
+│       │   │   │   ├── AgentResponseMapper.java
 │       │   │   │   ├── CamundaChatService.java
-│       │   │   │   └── ChatService.java
+│       │   │   │   ├── ChatService.java (interface)
+│       │   │   │   ├── ResponseResolutionHandler.java
+│       │   │   │   └── SseStreamOrchestrator.java
 │       │   │   └── worker/
 │       │   │       ├── JokesApiWorker.java
 │       │   │       └── ListUsersWorker.java
@@ -1245,8 +1405,7 @@ AI Agent Chat With Tools/
 │       │           ├── agent-user-data.bpmn
 │       │           ├── agent-content.bpmn
 │       │           ├── agent-utility.bpmn
-│       │           ├── agent-general.bpmn
-│       │           └── agent-structured-response.bpmn
+│       │           └── agent-general.bpmn
 │       └── test/
 │           └── java/com/example/aichat/
 │               ├── controller/

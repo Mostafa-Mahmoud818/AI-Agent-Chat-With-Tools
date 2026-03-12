@@ -7,9 +7,7 @@ import SparkIcon from './SparkIcon'
 import './ChatWindow.css'
 
 const QUICK_PROMPTS = [
-    'Tell me a joke',
     'List all users',
-    'Search for pasta recipes',
     "What's the date and time?",
     'Calculate the superflux product of 5 and 3',
 ]
@@ -107,6 +105,27 @@ export default function ChatWindow() {
             }
         }
 
+        // Fallback: if backend sends a named "error" event, handle it like onmessage
+        es.addEventListener('error', (event) => {
+            if (event.data) {
+                try {
+                    const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data
+                    if (data.status === 'expired') {
+                        stopStreaming()
+                        handleSessionExpired()
+                        return
+                    }
+                    if (data.status === 'error' || data.responseText) {
+                        stopStreaming()
+                        setError(data.responseText || 'An error occurred.')
+                        setPhase('ready')
+                    }
+                } catch {
+                    // ignore parse errors
+                }
+            }
+        })
+
         es.onerror = () => {
             // EventSource auto-reconnects on transient errors; only act on a closed stream
             if (es.readyState === EventSource.CLOSED) {
@@ -195,7 +214,7 @@ export default function ChatWindow() {
                             <SparkIcon size={48} withCircle />
                         </div>
                         <h2>How can I help you today?</h2>
-                        <p>I'm an AI agent with access to various tools — I can look up users, search recipes, tell jokes, fetch URLs, check the date and time, and more.</p>
+                        <p>I'm an AI agent with access to various tools — I can look up users, fetch URLs, check the date and time, and more.</p>
                         <div className="quick-prompts">
                             {QUICK_PROMPTS.map(prompt => (
                                 <button key={prompt} className="quick-prompt" onClick={() => handleSendMessage(prompt)}>

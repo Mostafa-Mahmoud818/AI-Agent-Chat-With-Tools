@@ -30,7 +30,7 @@
     </bpmn:scriptTask>
     <bpmn:sequenceFlow id="Flow_to_classifier" sourceRef="SetProviderConfig" targetRef="ClassifyRequestIntent" />
     <bpmn:serviceTask id="ClassifyRequestIntent" name="Classify Request Intent" zeebe:modelerTemplate="io.camunda.connectors.agenticai.aiagent.v1" zeebe:modelerTemplateVersion="5" zeebe:modelerTemplateIcon="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iMTYiIGZpbGw9IiNBNTZFRkYiLz4KPG1hc2sgaWQ9InBhdGgtMi1vdXRzaWRlLTFfMTg1XzYiIG1hc2tVbml0cz0idXNlclNwYWNlT25Vc2UiIHg9IjQiIHk9IjQiIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgZmlsbD0iYmxhY2siPgo8cmVjdCBmaWxsPSJ3aGl0ZSIgeD0iNCIgeT0iNCIgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0Ii8+CjxwYXRoIGZpbGwtcnVsZT0iZXZlbm9kZCIgY2xpcC1ydWxlPSJldmVub2RkIiBkPSJNMjAuMDEwNSAxMi4wOTg3QzE4LjQ5IDEwLjU4OTQgMTcuMTU5NCA4LjEwODE0IDE2LjE3OTkgNi4wMTEwM0MxNi4xNTIgNi4wMDQ1MSAxNi4xMTc2IDYgMTYuMDc5NCA2QzE2LjA0MTEgNiAxNi4wMDY2IDYuMDA0NTEgMTUuOTc4OCA2LjAxMTA0QzE0Ljk5OTQgOC4xMDgxNCAxMy42Njk3IDEwLjU4ODkgMTIuMTQ4MSAxMi4wOTgxQzEwLjYyNjkgMTMuNjA3MSA4LjEyNTY4IDE0LjkyNjQgNi4wMTE1NyAxNS44OTgxQzYuMDA0NzQgMTUuOTI2MSA2IDE1Ljk2MTEgNiAxNkM2IDE2LjAzODcgNi4wMDQ2OCAxNi4wNzM2IDYuMDExNDQgMTYuMTAxNEM4LjEyNTE5IDE3LjA3MjkgMTAuNjI2MiAxOC4zOTE5IDEyLjE0NzcgMTkuOTAxNkMxMy42Njk3IDIxLjQxMDcgMTQuOTk5NiAyMy44OTIgMTUuOTc5MSAyNS45ODlDMTYuMDA2OCAyNS45OTU2IDE2LjA0MTEgMjYgMTYuMDc5MyAyNkMxNi4xMTc1IDI2IDE2LjE1MTkgMjUuOTk1NCAxNi4xNzk2IDI1Ljk4OUMxNy4xNTkxIDIzLjg5MiAxOC40ODg4IDIxLjQxMSAyMC4wMDk5IDE5LjkwMjFNMjAuMDA5OSAxOS45MDIxQzIxLjUyNTMgMTguMzk4NyAyMy45NDY1IDE3LjA2NjkgMjUuOTkxNSAxNi4wODI0QzI1Ljk5NjUgMTYuMDU5MyAyNiAxNi4wMzEgMjYgMTUuOTk5N0MyNiAxNS45Njg0IDI1Ljk5NjUgMTUuOTQwMyAyNS45OTE1IDE1LjkxNzFDMjMuOTQ3NCAxNC45MzI3IDIxLjUyNTkgMTMuNjAxIDIwLjAxMDUgMTIuMDk4NyIvPgo8L21hc2s+CjxwYXRoIGZpbGwtcnVsZT0iZXZlbm9kZCIgY2xpcC1ydWxlPSJldmVub2RkIiBkPSJNMjAuMDEwNSAxMi4wOTg3QzE4LjQ5IDEwLjU4OTQgMTcuMTU5NCA4LjEwODE0IDE2LjE3OTkgNi4wMTEwM0MxNi4xNTIgNi4wMDQ1MSAxNi4xMTc2IDYgMTYuMDc5NCA2QzE2LjA0MTEgNiAxNi4wMDY2IDYuMDA0NTEgMTUuOTc4OCA2LjAxMTA0QzE0Ljk5OTQgOC4xMDgxNCAxMy42Njk3IDEwLjU4ODkgMTIuMTQ4MSAxMi4wOTgxQzEwLjYyNjkgMTMuNjA3MSA4LjEyNTY4IDE0LjkyNjQgNi4wMTE1NyAxNS44OTgxQzYuMDA0NzQgMTUuOTI2MSA2IDE1Ljk2MTEgNiAxNkM2IDE2LjAzODcgNi4wMDQ2OCAxNi4wNzM2IDYuMDExNDQgMTYuMTAxNEM4LjEyNTE5IDE3LjA3MjkgMTAuNjI2MiAxOC4zOTE5IDEyLjE0NzcgMTkuOTAxNkMxMy42Njk3IDIxLjQxMDcgMTQuOTk5NiAyMy44OTIgMTUuOTc5MSAyNS45ODlDMTYuMDA2OCAyNS45OTU2IDE2LjA0MTEgMjYgMTYuMDc5MyAyNkMxNi4xMTc1IDI2IDE2LjE1MTkgMjUuOTk1NCAxNi4xNzk2IDI1Ljk4OUMxNy4xNTkxIDIzLjg5MiAxOC40ODg4IDIxLjQxMSAyMC4wMDk5IDE5LjkwMjFNMjAuMDA5OSAxOS45MDIxQzIxLjUyNTMgMTguMzk4NyAyMy45NDY1IDE3LjA2NjkgMjUuOTkxNSAxNi4wODI0QzI1Ljk5NjUgMTYuMDU5MyAyNiAxNi4wMzEgMjYgMTUuOTk5N0MyNiAxNS45Njg0IDI1Ljk5NjUgMTUuOTQwMyAyNS45OTE1IDE1LjkxNzFDMjMuOTQ3NCAxNC45MzI3IDIxLjUyNTkgMTMuNjAxIDIwLjAxMDUgMTIuMDk4NyIgZmlsbD0id2hpdGUiLz4KPHBhdGggZmlsbC1ydWxlPSJldmVub2RkIiBjbGlwLXJ1bGU9ImV2ZW5vZGQiIGQ9Ik0yMC4wMTA1IDEyLjA5ODdDMTguNDkgMTAuNTg5NCAxNy4xNTk0IDguMTA4MTQgMTYuMTc5OSA2LjAxMTAzQzE2LjE1MiA2LjAwNDUxIDE2LjExNzYgNiAxNi4wNzk0IDZDMTYuMDQxMSA2IDE2LjAwNjYgNi4wMDQ1MSAxNS45Nzg4IDYuMDExMDRDMTQuOTk5NCA4LjEwODE0IDEzLjY2OTcgMTAuNTg4OSAxMi4xNDgxIDEyLjA5ODFDMTAuNjI2OSAxMy42MDcxIDguMTI1NjggMTQuOTI2NCA2LjAxMTU3IDE1Ljg5ODFDNi4wMDQ3NCAxNS45MjYxIDYgMTUuOTYxMSA2IDE2QzYgMTYuMDM4NyA2LjAwNDY4IDE2LjA3MzYgNi4wMTE0NCAxNi4xMDE0QzguMTI1MTkgMTcuMDcyOSAxMC42MjYyIDE4LjM5MTkgMTIuMTQ3NyAxOS45MDE2QzEzLjY2OTcgMjEuNDEwNyAxNC45OTk2IDIzLjg5MiAxNS45NzkxIDI1Ljk4OUMxNi4wMDY4IDI1Ljk5NTYgMTYuMDQxMSAyNiAxNi4wNzkzIDI2QzE2LjExNzUgMjYgMTYuMTUxOSAyNS45OTU0IDE2LjE3OTYgMjUuOTg5QzE3LjE1OTEgMjMuODkyIDE4LjQ4ODggMjEuNDExIDIwLjAwOTkgMTkuOTAyMU0yMC4wMDk5IDE5LjkwMjFDMjEuNTI1MyAxOC4zOTg3IDIzLjk0NjUgMTcuMDY2OSAyNS45OTE1IDE2LjA4MjRDMjUuOTk2NSAxNi4wNTkzIDI2IDE2LjAzMSAyNiAxNS45OTk3QzI2IDE1Ljk2ODQgMjUuOTk2NSAxNS45NDAzIDI1Ljk5MTUgMTUuOTE3MUMyMy45NDc0IDE0LjkzMjcgMjEuNTI1OSAxMy42MDEgMjAuMDEwNSAxMi4wOTg3IiBzdHJva2U9IiM0OTFEOEIiIHN0cm9rZS13aWR0aD0iNCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgbWFzaz0idXJsKCNwYXRoLTItb3V0c2lkZS0xXzE4NV82KSIvPgo8L3N2Zz4K">
-      <bpmn:documentation>AI-powered intent classifier. Analyses the user request and returns routeCategory as one of: user_data, content, utility, general.</bpmn:documentation>
+      <bpmn:documentation>AI-powered intent classifier. Analyses the user request and returns routeCategory as one of: user_data, utility, general.</bpmn:documentation>
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="io.camunda.agenticai:aiagent:1" retries="3" />
         <zeebe:ioMapping>
@@ -40,7 +40,7 @@
           <zeebe:input source="{{secrets.AWS_BEDROCK_SECRET_KEY}}" target="provider.bedrock.authentication.secretKey" />
           <zeebe:input source="=providerConfig.model" target="provider.bedrock.model.model" />
           <zeebe:input source="=providerConfig.type" target="provider.type" />
-          <zeebe:input source="=&#34;You are a request classifier. Analyse the user&#39;s request and respond with ONLY one of these exact category names: user_data, content, utility, or general.&#10;&#10;Categories:&#10;- user_data: users, people, contacts, profiles, emails, phones, accounts, members, customers&#10;- content: recipes, cooking, food, ingredients, dishes, cuisine, jokes, humour, entertainment&#10;- utility: current date/time, superflux calculations, math operations, URLs, websites, web content&#10;- general: everything else (math, science, history, geography, coding, explanations, creative writing, etc.)&#10;&#10;Rules:&#10;1. Respond with ONLY the category name, nothing else.&#10;2. If ambiguous or spans multiple domains, choose the MOST relevant. When unclear, prefer general.&#10;3. Do not answer the user&#39;s question. Only output the category.&#10;4. For brief conversational follow-ups (e.g. &#39;yes&#39;, &#39;no&#39;, &#39;more&#39;, &#39;another one&#39;, &#39;ok&#39;, &#39;sure&#39;, &#39;continue&#39;, &#39;thanks&#39;), classify them in the SAME category as your most recent classification.&#34;" target="data.systemPrompt.prompt" />
+          <zeebe:input source="=&#34;## Role&#10;You are a request intent classifier. Your only task is to output exactly one category label. You must not answer the user&#39;s question, explain, or add any other text.&#10;&#10;## Output format&#10;Respond with exactly one of these tokens: user_data | utility | general&#10;&#10;## Category definitions&#10;- user_data: Requests about users, people, contacts, profiles, emails, phones, accounts, members, customers, or listing/loading user records.&#10;- utility: Current date, time, or timezone; superflux product (3*(a+b)); fetching or opening a specific URL/website.&#10;- general: Everything else — math (non-superflux), science, history, geography, coding, explanations, definitions, creative writing, translation, trivia, advice, or ambiguous requests.&#10;&#10;## Rules&#10;1. Output only the single category word. No punctuation, no explanation.&#10;2. If the request fits multiple categories, choose the single most specific match. If truly ambiguous, default to general.&#10;3. For short follow-ups (e.g. &#39;yes&#39;, &#39;no&#39;, &#39;more&#39;, &#39;another one&#39;, &#39;ok&#39;, &#39;sure&#39;, &#39;continue&#39;, &#39;thanks&#39;), reuse the same category as the previous turn.&#10;4. Do not use &#60;thinking&#62; or any tags. Output only: user_data, utility, or general.&#34;" target="data.systemPrompt.prompt" />
           <zeebe:input source="=currentInput" target="data.userPrompt.prompt" />
           <zeebe:input source="=if (is defined(classifierAgentCtx) and classifierAgentCtx != null) then classifierAgentCtx else null" target="data.context" />
           <zeebe:input source="in-process" target="data.memory.storage.type" />
@@ -66,15 +66,11 @@
     <bpmn:exclusiveGateway id="Gateway_RouteByCategory" name="Route by category" default="Flow_to_general">
       <bpmn:incoming>Flow_to_route</bpmn:incoming>
       <bpmn:outgoing>Flow_to_user_data</bpmn:outgoing>
-      <bpmn:outgoing>Flow_to_content</bpmn:outgoing>
       <bpmn:outgoing>Flow_to_utility</bpmn:outgoing>
       <bpmn:outgoing>Flow_to_general</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:sequenceFlow id="Flow_to_user_data" name="user_data" sourceRef="Gateway_RouteByCategory" targetRef="Call_UserData">
       <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=routeCategory = "user_data"</bpmn:conditionExpression>
-    </bpmn:sequenceFlow>
-    <bpmn:sequenceFlow id="Flow_to_content" name="content" sourceRef="Gateway_RouteByCategory" targetRef="Call_Content">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=routeCategory = "content"</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="Flow_to_utility" name="utility" sourceRef="Gateway_RouteByCategory" targetRef="Call_Utility">
       <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=routeCategory = "utility"</bpmn:conditionExpression>
@@ -96,23 +92,6 @@
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_to_user_data</bpmn:incoming>
       <bpmn:outgoing>Flow_ud_to_merge</bpmn:outgoing>
-    </bpmn:callActivity>
-    <bpmn:callActivity id="Call_Content" name="Content &#38; Entertainment Agent">
-      <bpmn:extensionElements>
-        <zeebe:calledElement processId="ai-agent-content" propagateAllChildVariables="false" />
-        <zeebe:ioMapping>
-          <zeebe:input source="=currentInput" target="currentInput" />
-          <zeebe:input source="=if (is defined(conversationHistory) and conversationHistory != null) then conversationHistory else null" target="conversationHistory" />
-          <zeebe:input source="=if (is defined(inputDocuments) and inputDocuments != null) then inputDocuments else []" target="inputDocuments" />
-          <zeebe:input source="=if (is defined(followUpDocuments) and followUpDocuments != null) then followUpDocuments else []" target="followUpDocuments" />
-          <zeebe:input source="=if (is defined(contentAgentCtx) and contentAgentCtx != null) then contentAgentCtx else null" target="agentContext" />
-          <zeebe:input source="=providerConfig" target="providerConfig" />
-          <zeebe:output source="=agent" target="agent" />
-          <zeebe:output source="=agentContext" target="contentAgentCtx" />
-        </zeebe:ioMapping>
-      </bpmn:extensionElements>
-      <bpmn:incoming>Flow_to_content</bpmn:incoming>
-      <bpmn:outgoing>Flow_ct_to_merge</bpmn:outgoing>
     </bpmn:callActivity>
     <bpmn:callActivity id="Call_Utility" name="Utility &#38; Web Agent">
       <bpmn:extensionElements>
@@ -152,10 +131,6 @@
       <bpmn:outgoing>Flow_err_ud</bpmn:outgoing>
       <bpmn:errorEventDefinition id="ErrorDef_UserData" />
     </bpmn:boundaryEvent>
-    <bpmn:boundaryEvent id="Error_Content" name="Agent error" attachedToRef="Call_Content">
-      <bpmn:outgoing>Flow_err_ct</bpmn:outgoing>
-      <bpmn:errorEventDefinition id="ErrorDef_Content" />
-    </bpmn:boundaryEvent>
     <bpmn:boundaryEvent id="Error_Utility" name="Agent error" attachedToRef="Call_Utility">
       <bpmn:outgoing>Flow_err_ut</bpmn:outgoing>
       <bpmn:errorEventDefinition id="ErrorDef_Utility" />
@@ -165,12 +140,10 @@
       <bpmn:errorEventDefinition id="ErrorDef_General" />
     </bpmn:boundaryEvent>
     <bpmn:sequenceFlow id="Flow_err_ud" sourceRef="Error_UserData" targetRef="Gateway_MergeErrors" />
-    <bpmn:sequenceFlow id="Flow_err_ct" sourceRef="Error_Content" targetRef="Gateway_MergeErrors" />
     <bpmn:sequenceFlow id="Flow_err_ut" sourceRef="Error_Utility" targetRef="Gateway_MergeErrors" />
     <bpmn:sequenceFlow id="Flow_err_gn" sourceRef="Error_General" targetRef="Gateway_MergeErrors" />
     <bpmn:exclusiveGateway id="Gateway_MergeErrors" name="Merge errors">
       <bpmn:incoming>Flow_err_ud</bpmn:incoming>
-      <bpmn:incoming>Flow_err_ct</bpmn:incoming>
       <bpmn:incoming>Flow_err_ut</bpmn:incoming>
       <bpmn:incoming>Flow_err_gn</bpmn:incoming>
       <bpmn:outgoing>Flow_errors_to_handler</bpmn:outgoing>
@@ -189,13 +162,11 @@
       <bpmn:outgoing>Flow_error_to_merge</bpmn:outgoing>
     </bpmn:scriptTask>
     <bpmn:sequenceFlow id="Flow_ud_to_merge" sourceRef="Call_UserData" targetRef="Gateway_MergeResults" />
-    <bpmn:sequenceFlow id="Flow_ct_to_merge" sourceRef="Call_Content" targetRef="Gateway_MergeResults" />
     <bpmn:sequenceFlow id="Flow_ut_to_merge" sourceRef="Call_Utility" targetRef="Gateway_MergeResults" />
     <bpmn:sequenceFlow id="Flow_gn_to_merge" sourceRef="Call_General" targetRef="Gateway_MergeResults" />
     <bpmn:sequenceFlow id="Flow_error_to_merge" sourceRef="HandleAgentError" targetRef="Gateway_MergeResults" />
     <bpmn:exclusiveGateway id="Gateway_MergeResults" name="Merge results">
       <bpmn:incoming>Flow_ud_to_merge</bpmn:incoming>
-      <bpmn:incoming>Flow_ct_to_merge</bpmn:incoming>
       <bpmn:incoming>Flow_ut_to_merge</bpmn:incoming>
       <bpmn:incoming>Flow_gn_to_merge</bpmn:incoming>
       <bpmn:incoming>Flow_error_to_merge</bpmn:incoming>
@@ -205,7 +176,7 @@
     <bpmn:scriptTask id="StoreConversationHistory" name="Store Conversation History">
       <bpmn:documentation>Appends the current turn (user message + agent response) to conversationHistory, keeping the last 6 entries (3 exchanges). This cross-agent history is passed to every agent so they have full session awareness.</bpmn:documentation>
       <bpmn:extensionElements>
-        <zeebe:script expression="=if count((if (is defined(conversationHistory) and conversationHistory != null) then conversationHistory else []) + [&#34;User: &#34; + currentInput + &#34; | &#34; + string(routeCategory) + &#34; agent: &#34; + (if agent != null and agent.responseText != null then (if string-length(string(agent.responseText)) &gt; 200 then substring(string(agent.responseText), 1, 200) + &#34;...&#34; else string(agent.responseText)) else &#34;&#34;)]) &gt; 6 then sublist((if (is defined(conversationHistory) and conversationHistory != null) then conversationHistory else []) + [&#34;User: &#34; + currentInput + &#34; | &#34; + string(routeCategory) + &#34; agent: &#34; + (if agent != null and agent.responseText != null then (if string-length(string(agent.responseText)) &gt; 200 then substring(string(agent.responseText), 1, 200) + &#34;...&#34; else string(agent.responseText)) else &#34;&#34;)], count((if (is defined(conversationHistory) and conversationHistory != null) then conversationHistory else []) + [&#34;User: &#34; + currentInput + &#34; | &#34; + string(routeCategory) + &#34; agent: &#34; + (if agent != null and agent.responseText != null then (if string-length(string(agent.responseText)) &gt; 200 then substring(string(agent.responseText), 1, 200) + &#34;...&#34; else string(agent.responseText)) else &#34;&#34;)]) - 5) else (if (is defined(conversationHistory) and conversationHistory != null) then conversationHistory else []) + [&#34;User: &#34; + currentInput + &#34; | &#34; + string(routeCategory) + &#34; agent: &#34; + (if agent != null and agent.responseText != null then (if string-length(string(agent.responseText)) &gt; 200 then substring(string(agent.responseText), 1, 200) + &#34;...&#34; else string(agent.responseText)) else &#34;&#34;)]" resultVariable="conversationHistory" />
+        <zeebe:script expression="={&#10;  h: if (is defined(conversationHistory) and conversationHistory != null) then conversationHistory else [],&#10;  d: if (agent != null and is defined(agent.responseText) and agent.responseText != null) then string(agent.responseText) else &#34;&#34;,&#10;  tm: if (agent != null and is defined(agent.conversation) and agent.conversation != null and is defined(agent.conversation.messages)) then agent.conversation.messages[role = &#34;tool_call_result&#34;] else [],&#10;  tr: if (count(tm) &#62; 0 and is defined(tm[count(tm)].results) and count(tm[count(tm)].results) &#62; 0 and is defined(tm[count(tm)].results[1].content)) then string(tm[count(tm)].results[1].content) else &#34;&#34;,&#10;  rt: if (d != &#34;&#34;) then d else tr,&#10;  t: if (string-length(rt) &#62; 200) then substring(rt, 1, 200) + &#34;...&#34; else rt,&#10;  e: &#34;User: &#34; + currentInput + &#34; | &#34; + string(routeCategory) + &#34; agent: &#34; + t,&#10;  u: h + [e],&#10;  r: if (count(u) &#62; 6) then sublist(u, count(u) - 5) else u&#10;}.r" resultVariable="conversationHistory" />
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_merge_to_history</bpmn:incoming>
       <bpmn:outgoing>Flow_history_to_wait</bpmn:outgoing>
@@ -274,10 +245,6 @@
         <dc:Bounds x="760" y="80" width="200" height="80" />
         <bpmndi:BPMNLabel />
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Call_Content_di" bpmnElement="Call_Content" bioc:stroke="#205022" bioc:fill="#e8f5e9" color:background-color="#e8f5e9" color:border-color="#205022">
-        <dc:Bounds x="760" y="220" width="200" height="80" />
-        <bpmndi:BPMNLabel />
-      </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="Call_Utility_di" bpmnElement="Call_Utility" bioc:stroke="#4a148c" bioc:fill="#f3e5f5" color:background-color="#f3e5f5" color:border-color="#4a148c">
         <dc:Bounds x="760" y="360" width="200" height="80" />
         <bpmndi:BPMNLabel />
@@ -342,12 +309,6 @@
           <dc:Bounds x="980" y="448" width="56" height="14" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Error_Content_di" bpmnElement="Error_Content" bioc:stroke="#b71c1c" bioc:fill="#ffcdd2" color:background-color="#ffcdd2" color:border-color="#b71c1c">
-        <dc:Bounds x="942" y="282" width="36" height="36" />
-        <bpmndi:BPMNLabel>
-          <dc:Bounds x="980" y="308" width="56" height="14" />
-        </bpmndi:BPMNLabel>
-      </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="Error_UserData_di" bpmnElement="Error_UserData" bioc:stroke="#b71c1c" bioc:fill="#ffcdd2" color:background-color="#ffcdd2" color:border-color="#b71c1c">
         <dc:Bounds x="942" y="142" width="36" height="36" />
         <bpmndi:BPMNLabel>
@@ -378,14 +339,6 @@
           <dc:Bounds x="665" y="133" width="49" height="14" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Flow_to_content_di" bpmnElement="Flow_to_content">
-        <di:waypoint x="620" y="335" />
-        <di:waypoint x="620" y="260" />
-        <di:waypoint x="760" y="260" />
-        <bpmndi:BPMNLabel>
-          <dc:Bounds x="671" y="273" width="38" height="14" />
-        </bpmndi:BPMNLabel>
-      </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_to_utility_di" bpmnElement="Flow_to_utility">
         <di:waypoint x="620" y="385" />
         <di:waypoint x="620" y="410" />
@@ -408,12 +361,6 @@
         <di:waypoint x="1080" y="200" />
         <di:waypoint x="1080" y="635" />
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Flow_err_ct_di" bpmnElement="Flow_err_ct">
-        <di:waypoint x="960" y="318" />
-        <di:waypoint x="960" y="340" />
-        <di:waypoint x="1080" y="340" />
-        <di:waypoint x="1080" y="635" />
-      </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_err_ut_di" bpmnElement="Flow_err_ut">
         <di:waypoint x="960" y="458" />
         <di:waypoint x="960" y="480" />
@@ -432,12 +379,6 @@
       <bpmndi:BPMNEdge id="Flow_ud_to_merge_di" bpmnElement="Flow_ud_to_merge">
         <di:waypoint x="960" y="120" />
         <di:waypoint x="1230" y="120" />
-        <di:waypoint x="1230" y="360" />
-        <di:waypoint x="1285" y="360" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Flow_ct_to_merge_di" bpmnElement="Flow_ct_to_merge">
-        <di:waypoint x="960" y="260" />
-        <di:waypoint x="1230" y="260" />
         <di:waypoint x="1230" y="360" />
         <di:waypoint x="1285" y="360" />
       </bpmndi:BPMNEdge>
