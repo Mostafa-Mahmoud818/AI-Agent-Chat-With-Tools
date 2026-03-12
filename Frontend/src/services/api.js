@@ -51,18 +51,8 @@ async function post(path, body) {
     return handleResponse(res);
 }
 
-async function get(path) {
-    const res = await fetchWithTimeout(`${API_BASE}${path}`);
-    return handleResponse(res);
-}
-
 export async function startChat(inputText) {
     const res = await post('/start', { inputText });
-    return res.json();
-}
-
-export async function getResponse(sessionId) {
-    const res = await get(`/${sessionId}/response`);
     return res.json();
 }
 
