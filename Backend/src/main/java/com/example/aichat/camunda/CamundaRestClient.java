@@ -5,13 +5,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
-import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.web.reactive.function.client.WebClientResponseException;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
 
-import java.time.Duration;
 import java.util.*;
 
 /**
@@ -23,17 +21,14 @@ public class CamundaRestClient {
 
     private static final Logger log = LoggerFactory.getLogger(CamundaRestClient.class);
 
-    private final WebClient clusterClient;
+    private final RestClient clusterClient;
     private final ObjectMapper objectMapper;
-    private final Duration apiTimeout;
 
     public CamundaRestClient(
-            @Qualifier("clusterWebClient") WebClient clusterClient,
-            ObjectMapper objectMapper,
-            @Value("${app.camunda.cluster-api-timeout-seconds:30}") int apiTimeoutSeconds) {
+            @Qualifier("clusterRestClient") RestClient clusterClient,
+            ObjectMapper objectMapper) {
         this.clusterClient = clusterClient;
         this.objectMapper = objectMapper;
-        this.apiTimeout = Duration.ofSeconds(apiTimeoutSeconds);
     }
 
     public List<JsonNode> searchProcessInstances(Map<String, Object> filter, int size) {
@@ -53,13 +48,12 @@ public class CamundaRestClient {
             String responseBody = clusterClient.post()
                     .uri("/v2/process-instances/search")
                     .contentType(MediaType.APPLICATION_JSON)
-                    .bodyValue(searchRequest)
+                    .body(searchRequest)
                     .retrieve()
-                    .bodyToMono(String.class)
-                    .block(apiTimeout);
+                    .body(String.class);
 
             return parseItems(responseBody);
-        } catch (WebClientResponseException e) {
+        } catch (RestClientResponseException e) {
             log.error("Process instance search failed ({}): {}", e.getStatusCode(), e.getResponseBodyAsString());
             throw e;
         }
@@ -93,10 +87,9 @@ public class CamundaRestClient {
             String responseBody = clusterClient.post()
                     .uri("/v2/variables/search")
                     .contentType(MediaType.APPLICATION_JSON)
-                    .bodyValue(searchRequest)
+                    .body(searchRequest)
                     .retrieve()
-                    .bodyToMono(String.class)
-                    .block(apiTimeout);
+                    .body(String.class);
 
             List<JsonNode> items = parseItems(responseBody);
             if (items.isEmpty()) {
@@ -115,7 +108,7 @@ public class CamundaRestClient {
             } catch (Exception ex) {
                 target.put(varName, varValue);
             }
-        } catch (WebClientResponseException e) {
+        } catch (RestClientResponseException e) {
             if (e.getStatusCode().value() != 404) {
                 log.error("Error fetching variable '{}' for PI {}: {} - Response: {}",
                         varName, processInstanceKey, e.getMessage(), e.getResponseBodyAsString());
@@ -157,15 +150,14 @@ public class CamundaRestClient {
             String responseBody = clusterClient.get()
                     .uri("/v2/variables/{variableKey}", variableKey)
                     .retrieve()
-                    .bodyToMono(String.class)
-                    .block(apiTimeout);
+                    .body(String.class);
 
             JsonNode root = objectMapper.readTree(responseBody);
             if (root.has("fullValue") && !root.path("fullValue").isNull()) {
                 return root.path("fullValue").asText();
             }
             return root.path("value").asText(null);
-        } catch (WebClientResponseException e) {
+        } catch (RestClientResponseException e) {
             log.warn("Failed to fetch full value for variable '{}' (key={}): {} {}",
                     varName, variableKey, e.getStatusCode(), e.getResponseBodyAsString());
             return null;
@@ -212,10 +204,9 @@ public class CamundaRestClient {
             String responseBody = clusterClient.post()
                     .uri("/v2/flow-node-instances/search")
                     .contentType(MediaType.APPLICATION_JSON)
-                    .bodyValue(searchRequest)
+                    .body(searchRequest)
                     .retrieve()
-                    .bodyToMono(String.class)
-                    .block(apiTimeout);
+                    .body(String.class);
 
             return !parseItems(responseBody).isEmpty();
         } catch (Exception e) {
