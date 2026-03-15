@@ -30,7 +30,7 @@
     </bpmn:scriptTask>
     <bpmn:sequenceFlow id="Flow_to_classifier" sourceRef="SetProviderConfig" targetRef="ClassifyRequestIntent" />
     <bpmn:serviceTask id="ClassifyRequestIntent" name="Classify Request Intent" zeebe:modelerTemplate="io.camunda.connectors.agenticai.aiagent.v1" zeebe:modelerTemplateVersion="5" zeebe:modelerTemplateIcon="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iMTYiIGZpbGw9IiNBNTZFRkYiLz4KPG1hc2sgaWQ9InBhdGgtMi1vdXRzaWRlLTFfMTg1XzYiIG1hc2tVbml0cz0idXNlclNwYWNlT25Vc2UiIHg9IjQiIHk9IjQiIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgZmlsbD0iYmxhY2siPgo8cmVjdCBmaWxsPSJ3aGl0ZSIgeD0iNCIgeT0iNCIgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0Ii8+CjxwYXRoIGZpbGwtcnVsZT0iZXZlbm9kZCIgY2xpcC1ydWxlPSJldmVub2RkIiBkPSJNMjAuMDEwNSAxMi4wOTg3QzE4LjQ5IDEwLjU4OTQgMTcuMTU5NCA4LjEwODE0IDE2LjE3OTkgNi4wMTEwM0MxNi4xNTIgNi4wMDQ1MSAxNi4xMTc2IDYgMTYuMDc5NCA2QzE2LjA0MTEgNiAxNi4wMDY2IDYuMDA0NTEgMTUuOTc4OCA2LjAxMTA0QzE0Ljk5OTQgOC4xMDgxNCAxMy42Njk3IDEwLjU4ODkgMTIuMTQ4MSAxMi4wOTgxQzEwLjYyNjkgMTMuNjA3MSA4LjEyNTY4IDE0LjkyNjQgNi4wMTE1NyAxNS44OTgxQzYuMDA0NzQgMTUuOTI2MSA2IDE1Ljk2MTEgNiAxNkM2IDE2LjAzODcgNi4wMDQ2OCAxNi4wNzM2IDYuMDExNDQgMTYuMTAxNEM4LjEyNTE5IDE3LjA3MjkgMTAuNjI2MiAxOC4zOTE5IDEyLjE0NzcgMTkuOTAxNkMxMy42Njk3IDIxLjQxMDcgMTQuOTk5NiAyMy44OTIgMTUuOTc5MSAyNS45ODlDMTYuMDA2OCAyNS45OTU2IDE2LjA0MTEgMjYgMTYuMDc5MyAyNkMxNi4xMTc1IDI2IDE2LjE1MTkgMjUuOTk1NCAxNi4xNzk2IDI1Ljk4OUMxNy4xNTkxIDIzLjg5MiAxOC40ODg4IDIxLjQxMSAyMC4wMDk5IDE5LjkwMjFNMjAuMDA5OSAxOS45MDIxQzIxLjUyNTMgMTguMzk4NyAyMy45NDY1IDE3LjA2NjkgMjUuOTkxNSAxNi4wODI0QzI1Ljk5NjUgMTYuMDU5MyAyNiAxNi4wMzEgMjYgMTUuOTk5N0MyNiAxNS45Njg0IDI1Ljk5NjUgMTUuOTQwMyAyNS45OTE1IDE1LjkxNzFDMjMuOTQ3NCAxNC45MzI3IDIxLjUyNTkgMTMuNjAxIDIwLjAxMDUgMTIuMDk4NyIvPgo8L21hc2s+CjxwYXRoIGZpbGwtcnVsZT0iZXZlbm9kZCIgY2xpcC1ydWxlPSJldmVub2RkIiBkPSJNMjAuMDEwNSAxMi4wOTg3QzE4LjQ5IDEwLjU4OTQgMTcuMTU5NCA4LjEwODE0IDE2LjE3OTkgNi4wMTEwM0MxNi4xNTIgNi4wMDQ1MSAxNi4xMTc2IDYgMTYuMDc5NCA2QzE2LjA0MTEgNiAxNi4wMDY2IDYuMDA0NTEgMTUuOTc4OCA2LjAxMTA0QzE0Ljk5OTQgOC4xMDgxNCAxMy42Njk3IDEwLjU4ODkgMTIuMTQ4MSAxMi4wOTgxQzEwLjYyNjkgMTMuNjA3MSA4LjEyNTY4IDE0LjkyNjQgNi4wMTE1NyAxNS44OTgxQzYuMDA0NzQgMTUuOTI2MSA2IDE1Ljk2MTEgNiAxNkM2IDE2LjAzODcgNi4wMDQ2OCAxNi4wNzM2IDYuMDExNDQgMTYuMTAxNEM4LjEyNTE5IDE3LjA3MjkgMTAuNjI2MiAxOC4zOTE5IDEyLjE0NzcgMTkuOTAxNkMxMy42Njk3IDIxLjQxMDcgMTQuOTk5NiAyMy44OTIgMTUuOTc5MSAyNS45ODlDMTYuMDA2OCAyNS45OTU2IDE2LjA0MTEgMjYgMTYuMDc5MyAyNkMxNi4xMTc1IDI2IDE2LjE1MTkgMjUuOTk1NCAxNi4xNzk2IDI1Ljk4OUMxNy4xNTkxIDIzLjg5MiAxOC40ODg4IDIxLjQxMSAyMC4wMDk5IDE5LjkwMjFNMjAuMDA5OSAxOS45MDIxQzIxLjUyNTMgMTguMzk4NyAyMy45NDY1IDE3LjA2NjkgMjUuOTkxNSAxNi4wODI0QzI1Ljk5NjUgMTYuMDU5MyAyNiAxNi4wMzEgMjYgMTUuOTk5N0MyNiAxNS45Njg0IDI1Ljk5NjUgMTUuOTQwMyAyNS45OTE1IDE1LjkxNzFDMjMuOTQ3NCAxNC45MzI3IDIxLjUyNTkgMTMuNjAxIDIwLjAxMDUgMTIuMDk4NyIgZmlsbD0id2hpdGUiLz4KPHBhdGggZmlsbC1ydWxlPSJldmVub2RkIiBjbGlwLXJ1bGU9ImV2ZW5vZGQiIGQ9Ik0yMC4wMTA1IDEyLjA5ODdDMTguNDkgMTAuNTg5NCAxNy4xNTk0IDguMTA4MTQgMTYuMTc5OSA2LjAxMTAzQzE2LjE1MiA2LjAwNDUxIDE2LjExNzYgNiAxNi4wNzk0IDZDMTYuMDQxMSA2IDE2LjAwNjYgNi4wMDQ1MSAxNS45Nzg4IDYuMDExMDRDMTQuOTk5NCA4LjEwODE0IDEzLjY2OTcgMTAuNTg4OSAxMi4xNDgxIDEyLjA5ODFDMTAuNjI2OSAxMy42MDcxIDguMTI1NjggMTQuOTI2NCA2LjAxMTU3IDE1Ljg5ODFDNi4wMDQ3NCAxNS45MjYxIDYgMTUuOTYxMSA2IDE2QzYgMTYuMDM4NyA2LjAwNDY4IDE2LjA3MzYgNi4wMTE0NCAxNi4xMDE0QzguMTI1MTkgMTcuMDcyOSAxMC42MjYyIDE4LjM5MTkgMTIuMTQ3NyAxOS45MDE2QzEzLjY2OTcgMjEuNDEwNyAxNC45OTk2IDIzLjg5MiAxNS45NzkxIDI1Ljk4OUMxNi4wMDY4IDI1Ljk5NTYgMTYuMDQxMSAyNiAxNi4wNzkzIDI2QzE2LjExNzUgMjYgMTYuMTUxOSAyNS45OTU0IDE2LjE3OTYgMjUuOTg5QzE3LjE1OTEgMjMuODkyIDE4LjQ4ODggMjEuNDExIDIwLjAwOTkgMTkuOTAyMU0yMC4wMDk5IDE5LjkwMjFDMjEuNTI1MyAxOC4zOTg3IDIzLjk0NjUgMTcuMDY2OSAyNS45OTE1IDE2LjA4MjRDMjUuOTk2NSAxNi4wNTkzIDI2IDE2LjAzMSAyNiAxNS45OTk3QzI2IDE1Ljk2ODQgMjUuOTk2NSAxNS45NDAzIDI1Ljk5MTUgMTUuOTE3MUMyMy45NDc0IDE0LjkzMjcgMjEuNTI1OSAxMy42MDEgMjAuMDEwNSAxMi4wOTg3IiBzdHJva2U9IiM0OTFEOEIiIHN0cm9rZS13aWR0aD0iNCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgbWFzaz0idXJsKCNwYXRoLTItb3V0c2lkZS0xXzE4NV82KSIvPgo8L3N2Zz4K">
-      <bpmn:documentation>AI-powered intent classifier. Analyses the user request and returns routeCategory as one of: user_data, utility, general.</bpmn:documentation>
+      <bpmn:documentation>AI-powered intent classifier. Analyses the user request and returns routeCategory as one of: user_data, utility, catering, general.</bpmn:documentation>
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="io.camunda.agenticai:aiagent:1" retries="3" />
         <zeebe:ioMapping>
@@ -40,7 +40,7 @@
           <zeebe:input source="{{secrets.AWS_BEDROCK_SECRET_KEY}}" target="provider.bedrock.authentication.secretKey" />
           <zeebe:input source="=providerConfig.model" target="provider.bedrock.model.model" />
           <zeebe:input source="=providerConfig.type" target="provider.type" />
-          <zeebe:input source="=&#34;## Role&#10;You are a request intent classifier. Your only task is to output exactly one category label. You must not answer the user&#39;s question, explain, or add any other text.&#10;&#10;## Output format&#10;Respond with exactly one of these tokens: user_data | utility | general&#10;&#10;## Category definitions&#10;- user_data: Requests about users, people, contacts, profiles, emails, phones, accounts, members, customers, or listing/loading user records.&#10;- utility: Current date, time, or timezone; superflux product (3*(a+b)); fetching or opening a specific URL/website.&#10;- general: Everything else — math (non-superflux), science, history, geography, coding, explanations, definitions, creative writing, translation, trivia, advice, or ambiguous requests.&#10;&#10;## Rules&#10;1. Output only the single category word. No punctuation, no explanation.&#10;2. If the request fits multiple categories, choose the single most specific match. If truly ambiguous, default to general.&#10;3. For short follow-ups (e.g. &#39;yes&#39;, &#39;no&#39;, &#39;more&#39;, &#39;another one&#39;, &#39;ok&#39;, &#39;sure&#39;, &#39;continue&#39;, &#39;thanks&#39;), reuse the same category as the previous turn.&#10;4. Do not use &#60;thinking&#62; or any tags. Output only: user_data, utility, or general.&#34;" target="data.systemPrompt.prompt" />
+          <zeebe:input source="=&#34;## Role&#10;You are a request intent classifier. Your only task is to output exactly one category label. You must not answer the user&#39;s question, explain, or add any other text.&#10;&#10;## Output format&#10;Respond with exactly one of these tokens: user_data | utility | catering | general&#10;&#10;## Category definitions&#10;- user_data: Requests about users, people, contacts, profiles, emails, phones, accounts, members, customers, or listing/loading user records.&#10;- utility: Current date, time, or timezone; superflux product (3*(a+b)); fetching or opening a specific URL/website.&#10;- catering: Requests about food, menu, dishes, catering, meals, restaurants, ordering food, appetizers, beverages, main courses, drinks, snacks, or browsing what is available to eat.&#10;- general: Everything else — math (non-superflux), science, history, geography, coding, explanations, definitions, creative writing, translation, trivia, advice, or ambiguous requests.&#10;&#10;## Rules&#10;1. Output only the single category word. No punctuation, no explanation.&#10;2. If the request fits multiple categories, choose the single most specific match. If truly ambiguous, default to general.&#10;3. For short follow-ups (e.g. &#39;yes&#39;, &#39;no&#39;, &#39;more&#39;, &#39;another one&#39;, &#39;ok&#39;, &#39;sure&#39;, &#39;continue&#39;, &#39;thanks&#39;), reuse the same category as the previous turn.&#10;4. Do not use &#60;thinking&#62; or any tags. Output only: user_data, utility, catering, or general.&#34;" target="data.systemPrompt.prompt" />
           <zeebe:input source="=currentInput" target="data.userPrompt.prompt" />
           <zeebe:input source="=if (is defined(classifierAgentCtx) and classifierAgentCtx != null) then classifierAgentCtx else null" target="data.context" />
           <zeebe:input source="in-process" target="data.memory.storage.type" />
@@ -67,6 +67,7 @@
       <bpmn:incoming>Flow_to_route</bpmn:incoming>
       <bpmn:outgoing>Flow_to_user_data</bpmn:outgoing>
       <bpmn:outgoing>Flow_to_utility</bpmn:outgoing>
+      <bpmn:outgoing>Flow_to_catering</bpmn:outgoing>
       <bpmn:outgoing>Flow_to_general</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:sequenceFlow id="Flow_to_user_data" name="user_data" sourceRef="Gateway_RouteByCategory" targetRef="Call_UserData">
@@ -74,6 +75,9 @@
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="Flow_to_utility" name="utility" sourceRef="Gateway_RouteByCategory" targetRef="Call_Utility">
       <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=routeCategory = "utility"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_to_catering" name="catering" sourceRef="Gateway_RouteByCategory" targetRef="Call_Catering">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=routeCategory = "catering"</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="Flow_to_general" name="general" sourceRef="Gateway_RouteByCategory" targetRef="Call_General" />
     <bpmn:callActivity id="Call_UserData" name="User Data Agent">
@@ -127,6 +131,27 @@
       <bpmn:incoming>Flow_to_general</bpmn:incoming>
       <bpmn:outgoing>Flow_gn_to_merge</bpmn:outgoing>
     </bpmn:callActivity>
+    <bpmn:callActivity id="Call_Catering" name="Catering Agent">
+      <bpmn:extensionElements>
+        <zeebe:calledElement processId="ai-agent-catering" propagateAllChildVariables="false" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=currentInput" target="currentInput" />
+          <zeebe:input source="=if (is defined(conversationHistory) and conversationHistory != null) then conversationHistory else null" target="conversationHistory" />
+          <zeebe:input source="=if (is defined(inputDocuments) and inputDocuments != null) then inputDocuments else []" target="inputDocuments" />
+          <zeebe:input source="=if (is defined(followUpDocuments) and followUpDocuments != null) then followUpDocuments else []" target="followUpDocuments" />
+          <zeebe:input source="=if (is defined(cateringAgentCtx) and cateringAgentCtx != null) then cateringAgentCtx else null" target="agentContext" />
+          <zeebe:input source="=providerConfig" target="providerConfig" />
+          <zeebe:output source="=agent" target="agent" />
+          <zeebe:output source="=agentContext" target="cateringAgentCtx" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_to_catering</bpmn:incoming>
+      <bpmn:outgoing>Flow_ct_to_merge</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:boundaryEvent id="Error_Catering" name="Agent error" attachedToRef="Call_Catering">
+      <bpmn:outgoing>Flow_err_ct</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="ErrorDef_Catering" />
+    </bpmn:boundaryEvent>
     <bpmn:boundaryEvent id="Error_UserData" name="Agent error" attachedToRef="Call_UserData">
       <bpmn:outgoing>Flow_err_ud</bpmn:outgoing>
       <bpmn:errorEventDefinition id="ErrorDef_UserData" />
@@ -139,10 +164,12 @@
       <bpmn:outgoing>Flow_err_gn</bpmn:outgoing>
       <bpmn:errorEventDefinition id="ErrorDef_General" />
     </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="Flow_err_ct" sourceRef="Error_Catering" targetRef="Gateway_MergeErrors" />
     <bpmn:sequenceFlow id="Flow_err_ud" sourceRef="Error_UserData" targetRef="Gateway_MergeErrors" />
     <bpmn:sequenceFlow id="Flow_err_ut" sourceRef="Error_Utility" targetRef="Gateway_MergeErrors" />
     <bpmn:sequenceFlow id="Flow_err_gn" sourceRef="Error_General" targetRef="Gateway_MergeErrors" />
     <bpmn:exclusiveGateway id="Gateway_MergeErrors" name="Merge errors">
+      <bpmn:incoming>Flow_err_ct</bpmn:incoming>
       <bpmn:incoming>Flow_err_ud</bpmn:incoming>
       <bpmn:incoming>Flow_err_ut</bpmn:incoming>
       <bpmn:incoming>Flow_err_gn</bpmn:incoming>
@@ -161,11 +188,13 @@
       <bpmn:incoming>Flow_errors_to_handler</bpmn:incoming>
       <bpmn:outgoing>Flow_error_to_merge</bpmn:outgoing>
     </bpmn:scriptTask>
+    <bpmn:sequenceFlow id="Flow_ct_to_merge" sourceRef="Call_Catering" targetRef="Gateway_MergeResults" />
     <bpmn:sequenceFlow id="Flow_ud_to_merge" sourceRef="Call_UserData" targetRef="Gateway_MergeResults" />
     <bpmn:sequenceFlow id="Flow_ut_to_merge" sourceRef="Call_Utility" targetRef="Gateway_MergeResults" />
     <bpmn:sequenceFlow id="Flow_gn_to_merge" sourceRef="Call_General" targetRef="Gateway_MergeResults" />
     <bpmn:sequenceFlow id="Flow_error_to_merge" sourceRef="HandleAgentError" targetRef="Gateway_MergeResults" />
     <bpmn:exclusiveGateway id="Gateway_MergeResults" name="Merge results">
+      <bpmn:incoming>Flow_ct_to_merge</bpmn:incoming>
       <bpmn:incoming>Flow_ud_to_merge</bpmn:incoming>
       <bpmn:incoming>Flow_ut_to_merge</bpmn:incoming>
       <bpmn:incoming>Flow_gn_to_merge</bpmn:incoming>
@@ -293,6 +322,10 @@
           <dc:Bounds x="1610" y="495" width="80" height="27" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Call_Catering_di" bpmnElement="Call_Catering" bioc:stroke="#205022" bioc:fill="#c8e6c9" color:background-color="#c8e6c9" color:border-color="#205022">
+        <dc:Bounds x="760" y="20" width="200" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="Call_UserData_di" bpmnElement="Call_UserData" bioc:stroke="#0d4372" bioc:fill="#e3f2fd" color:background-color="#e3f2fd" color:border-color="#0d4372">
         <dc:Bounds x="760" y="160" width="200" height="80" />
         <bpmndi:BPMNLabel />
@@ -307,6 +340,12 @@
         <dc:Bounds x="942" y="422" width="36" height="36" />
         <bpmndi:BPMNLabel>
           <dc:Bounds x="980" y="448" width="56" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Error_Catering_di" bpmnElement="Error_Catering" bioc:stroke="#b71c1c" bioc:fill="#ffcdd2" color:background-color="#ffcdd2" color:border-color="#b71c1c">
+        <dc:Bounds x="942" y="82" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="980" y="108" width="56" height="14" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="Error_UserData_di" bpmnElement="Error_UserData" bioc:stroke="#b71c1c" bioc:fill="#ffcdd2" color:background-color="#ffcdd2" color:border-color="#b71c1c">
@@ -330,6 +369,14 @@
       <bpmndi:BPMNEdge id="Flow_to_route_di" bpmnElement="Flow_to_route">
         <di:waypoint x="470" y="360" />
         <di:waypoint x="595" y="360" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_to_catering_di" bpmnElement="Flow_to_catering">
+        <di:waypoint x="620" y="335" />
+        <di:waypoint x="620" y="60" />
+        <di:waypoint x="760" y="60" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="665" y="73" width="43" height="14" />
+        </bpmndi:BPMNLabel>
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_to_user_data_di" bpmnElement="Flow_to_user_data">
         <di:waypoint x="620" y="335" />
@@ -355,6 +402,12 @@
           <dc:Bounds x="671" y="553" width="38" height="14" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_err_ct_di" bpmnElement="Flow_err_ct">
+        <di:waypoint x="960" y="118" />
+        <di:waypoint x="960" y="140" />
+        <di:waypoint x="1080" y="140" />
+        <di:waypoint x="1080" y="635" />
+      </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_err_ud_di" bpmnElement="Flow_err_ud">
         <di:waypoint x="960" y="258" />
         <di:waypoint x="960" y="280" />
@@ -375,6 +428,12 @@
       <bpmndi:BPMNEdge id="Flow_errors_to_handler_di" bpmnElement="Flow_errors_to_handler">
         <di:waypoint x="1105" y="660" />
         <di:waypoint x="1260" y="660" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ct_to_merge_di" bpmnElement="Flow_ct_to_merge">
+        <di:waypoint x="960" y="60" />
+        <di:waypoint x="1230" y="60" />
+        <di:waypoint x="1230" y="360" />
+        <di:waypoint x="1285" y="360" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_ud_to_merge_di" bpmnElement="Flow_ud_to_merge">
         <di:waypoint x="960" y="200" />
