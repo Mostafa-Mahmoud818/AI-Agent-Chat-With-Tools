@@ -16,9 +16,35 @@ const markdownComponents = {
     ),
 }
 
-function MessageBubble({ message }) {
+function MenuItems({ items, onItemClick }) {
+    return (
+        <div className="menu-items-grid">
+            {items.map(item => (
+                <button
+                    key={item.id}
+                    className="menu-card"
+                    onClick={() => onItemClick?.(item.label)}
+                    title={`Select ${item.label}`}
+                >
+                    <div className="menu-card-header">
+                        <span className="menu-card-label">{item.label}</span>
+                        {item.price != null && (
+                            <span className="menu-card-price">${Number(item.price).toFixed(2)}</span>
+                        )}
+                    </div>
+                    {item.description && (
+                        <span className="menu-card-desc">{item.description}</span>
+                    )}
+                </button>
+            ))}
+        </div>
+    )
+}
+
+function MessageBubble({ message, onMenuItemClick }) {
     const isAI = message.role === 'ai'
     const isSystem = message.role === 'system'
+    const hasMenu = isAI && message.payload?.subtype === 'menu' && message.payload?.menuitems?.length > 0
 
     if (isSystem) {
         return (
@@ -51,6 +77,9 @@ function MessageBubble({ message }) {
                     ) : (
                         <div className="message-text">{displayText}</div>
                     )}
+                    {hasMenu && (
+                        <MenuItems items={message.payload.menuitems} onItemClick={onMenuItemClick} />
+                    )}
                 </div>
                 {isAI && message.handledBy && (
                     <span className="handled-by">Answered by {message.handledBy}</span>
@@ -67,7 +96,17 @@ MessageBubble.propTypes = {
         text: PropTypes.string.isRequired,
         handledBy: PropTypes.string,
         timestamp: PropTypes.instanceOf(Date),
+        payload: PropTypes.shape({
+            subtype: PropTypes.string,
+            menuitems: PropTypes.arrayOf(PropTypes.shape({
+                id: PropTypes.string,
+                label: PropTypes.string,
+                description: PropTypes.string,
+                price: PropTypes.number,
+            })),
+        }),
     }).isRequired,
+    onMenuItemClick: PropTypes.func,
 }
 
 export default memo(MessageBubble)
