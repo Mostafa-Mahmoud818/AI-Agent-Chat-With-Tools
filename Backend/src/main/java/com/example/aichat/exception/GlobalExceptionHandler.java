@@ -12,7 +12,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
-import org.springframework.web.reactive.function.client.WebClientResponseException;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.util.stream.Collectors;
 
@@ -73,8 +73,8 @@ public class GlobalExceptionHandler {
                 .body(new ErrorResponse("invalid_request", "Invalid parameter: " + ex.getName()));
     }
 
-    @ExceptionHandler(WebClientResponseException.class)
-    public ResponseEntity<ErrorResponse> handleWebClientError(WebClientResponseException ex) {
+    @ExceptionHandler(RestClientResponseException.class)
+    public ResponseEntity<ErrorResponse> handleRestClientError(RestClientResponseException ex) {
         log.error("Camunda API error ({}): {}", ex.getStatusCode(), ex.getResponseBodyAsString());
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
                 .body(new ErrorResponse("upstream_error", "Failed to communicate with process engine"));
