@@ -26,6 +26,8 @@ public class ClusterRestClientConfig {
     private final String authTokenUrl;
     private final String clusterApiUrl;
 
+    private final RestClient authClient;
+
     private String cachedToken;
     private Instant tokenExpiry = Instant.MIN;
 
@@ -38,16 +40,18 @@ public class ClusterRestClientConfig {
         this.clientSecret = clientSecret;
         this.authTokenUrl = authTokenUrl;
         this.clusterApiUrl = clusterApiUrl;
+
+        JdkClientHttpRequestFactory authFactory = new JdkClientHttpRequestFactory(
+                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build());
+        authFactory.setReadTimeout(Duration.ofSeconds(10));
+        this.authClient = RestClient.builder().requestFactory(authFactory).build();
     }
 
     @Bean("clusterRestClient")
     public RestClient clusterRestClient(
             @Value("${app.camunda.cluster-api-timeout-seconds:30}") int apiTimeoutSeconds) {
-        HttpClient httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(5))
-                .build();
-
-        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(httpClient);
+        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(
+                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build());
         factory.setReadTimeout(Duration.ofSeconds(apiTimeoutSeconds));
 
         return RestClient.builder()
@@ -73,16 +77,7 @@ public class ClusterRestClientConfig {
                 "client_secret", clientSecret,
                 "audience", "zeebe.camunda.io"));
 
-        HttpClient authHttpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(5))
-                .build();
-        JdkClientHttpRequestFactory authFactory = new JdkClientHttpRequestFactory(authHttpClient);
-        authFactory.setReadTimeout(Duration.ofSeconds(10));
-
-        Map<?, ?> response = RestClient.builder()
-                .requestFactory(authFactory)
-                .build()
-                .post()
+        Map<?, ?> response = authClient.post()
                 .uri(authTokenUrl)
                 .contentType(MediaType.APPLICATION_FORM_URLENCODED)
                 .body(body)
