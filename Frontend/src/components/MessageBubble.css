@@ -184,3 +184,63 @@
 .markdown-body strong {
     font-weight: 600;
 }
+
+/* ===== Menu Items Grid ===== */
+.menu-items-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.menu-card {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    text-align: left;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.4;
+    transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.menu-card:hover {
+    background: rgba(165, 110, 255, 0.1);
+    border-color: var(--border-accent);
+}
+
+.menu-card:active {
+    background: rgba(165, 110, 255, 0.18);
+}
+
+.menu-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+}
+
+.menu-card-label {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 13.5px;
+}
+
+.menu-card-price {
+    font-weight: 600;
+    color: var(--accent-primary);
+    font-size: 13px;
+    white-space: nowrap;
+}
+
+.menu-card-desc {
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.4;
+}
