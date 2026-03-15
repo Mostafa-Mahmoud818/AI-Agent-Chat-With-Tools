@@ -10,6 +10,7 @@ const QUICK_PROMPTS = [
     'List all users',
     "What's the date and time?",
     'Calculate the superflux product of 5 and 3',
+    'Show me the catering menu',
 ]
 
 function isSessionGone(err) {
@@ -47,8 +48,8 @@ export default function ChatWindow() {
         }
     }, [])
 
-    const addMessage = useCallback((role, text, handledBy = null) => {
-        setMessages(prev => [...prev, { id: crypto.randomUUID(), role, text, timestamp: new Date(), handledBy }])
+    const addMessage = useCallback((role, text, handledBy = null, payload = null) => {
+        setMessages(prev => [...prev, { id: crypto.randomUUID(), role, text, timestamp: new Date(), handledBy, payload }])
     }, [])
 
     const stopStreaming = useCallback(() => {
@@ -81,7 +82,21 @@ export default function ChatWindow() {
 
                 if (data.status === 'ready' && data.responseText) {
                     stopStreaming()
-                    addMessage('ai', data.responseText, data.handledBy)
+                    // Try to parse structured JSON response from agents like catering
+                    let text = data.responseText
+                    let payload = null
+                    try {
+                        const parsed = JSON.parse(data.responseText)
+                        if (parsed && parsed.replyType) {
+                            text = parsed.textString || data.responseText
+                            if (parsed.replyType === 'json' && parsed.payload) {
+                                payload = parsed.payload
+                            }
+                        }
+                    } catch {
+                        // Not JSON — use raw responseText as-is
+                    }
+                    addMessage('ai', text, data.handledBy, payload)
                     setPhase('ready')
                     setError(null)
                     setTimeout(() => chatInputRef.current?.focus(), 100)
@@ -226,7 +241,7 @@ export default function ChatWindow() {
                 )}
 
                 {messages.map(msg => (
-                    <MessageBubble key={msg.id} message={msg} />
+                    <MessageBubble key={msg.id} message={msg} onMenuItemClick={handleSendMessage} />
                 ))}
 
                 {phase === 'thinking' && (
