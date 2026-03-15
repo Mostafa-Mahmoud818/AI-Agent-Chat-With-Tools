@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find '/d/Camunda/AI Agent Chat With Tools' -type d -name *frontend* -o -type d -name *ui* -o -type d -name *client*)",
+      "Bash(find '/d/Camunda/AI Agent Chat With Tools' -type f \\\\\\(-name *.tsx -o -name *.jsx -o -name *.ts -o -name *.js \\\\\\))",
+      "Bash(find '/d/Camunda/AI Agent Chat With Tools/Frontend/src' -type f \\\\\\(-name *.tsx -o -name *.ts -o -name *.jsx -o -name *.js \\\\\\))",
+      "Bash(find '/d/Camunda/AI Agent Chat With Tools/Backend/src' -type f \\\\\\(-name *ChatResponse* -o -name *Controller* -o -name *Service* \\\\\\))",
+      "Bash(find '/d/Camunda/AI Agent Chat With Tools/Backend/src/main/java' -type f -name *.java)",
+      "Bash(grep -r \"replyType\\\\|responseType\\\\|reply_type\" '/d/Camunda/AI Agent Chat With Tools' --include=*.java --include=*.jsx --include=*.ts --include=*.js --include=*.bpmn)"
+    ]
+  }
+}
