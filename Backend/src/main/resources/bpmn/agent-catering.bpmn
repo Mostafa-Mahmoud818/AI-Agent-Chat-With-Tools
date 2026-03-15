@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bioc="http://bpmn.io/schema/bpmn/biocolor/1.0" xmlns:color="http://www.omg.org/spec/BPMN/non-normative/color/1.0" xmlns:modeler="http://camunda.org/schema/modeler/1.0" id="Definitions_agent_catering" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Web Modeler" exporterVersion="8fb91b5" modeler:executionPlatform="Camunda Cloud" modeler:executionPlatformVersion="8.8.0">
+  <bpmn:process id="ai-agent-catering" name="Catering Agent" isExecutable="true">
+    <bpmn:extensionElements>
+      <zeebe:versionTag value="1.0" />
+    </bpmn:extensionElements>
+    <bpmn:startEvent id="Start_Catering" name="Start">
+      <bpmn:outgoing>Flow_start_to_agent</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_start_to_agent" sourceRef="Start_Catering" targetRef="Catering_Agent" />
+    <bpmn:adHocSubProcess id="Catering_Agent" name="Catering Agent" zeebe:modelerTemplate="io.camunda.connectors.agenticai.aiagent.jobworker.v1" zeebe:modelerTemplateVersion="5">
+      <bpmn:extensionElements>
+        <zeebe:adHoc outputCollection="toolCallResults" outputElement="={&#10;  id:      toolCall._meta.id,&#10;  name:    toolCall._meta.name,&#10;  content: toolCallResult&#10;}" />
+        <zeebe:taskDefinition type="io.camunda.agenticai:aiagent-job-worker:1" retries="3" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=providerConfig.region" target="provider.bedrock.region" />
+          <zeebe:input source="=providerConfig.authType" target="provider.bedrock.authentication.type" />
+          <zeebe:input source="{{secrets.AWS_BEDROCK_ACCESS_KEY}}" target="provider.bedrock.authentication.accessKey" />
+          <zeebe:input source="{{secrets.AWS_BEDROCK_SECRET_KEY}}" target="provider.bedrock.authentication.secretKey" />
+          <zeebe:input source="=providerConfig.model" target="provider.bedrock.model.model" />
+          <zeebe:input source="=providerConfig.type" target="provider.type" />
+          <zeebe:input source="=&#34;Role: You are a Catering Menu Assistant. Your purpose is to help users browse our restaurant menu, view categories, and explore dishes within each category using your tools.&#10;&#10;CRITICAL — Output format:&#10;You must ALWAYS respond with ONLY a valid JSON object. Never include any text, markdown, or code fences outside the JSON. Your response must conform to one of these two formats:&#10;&#10;Format 1 — Plain text reply (for greetings, clarifications, or when no menu data is needed):&#10;{&#10;  \&#34;replyType\&#34;: \&#34;text\&#34;,&#10;  \&#34;textString\&#34;: \&#34;Your message here\&#34;&#10;}&#10;&#10;Format 2 — Menu data reply (when returning categories or dishes):&#10;{&#10;  \&#34;replyType\&#34;: \&#34;json\&#34;,&#10;  \&#34;textString\&#34;: \&#34;A brief description of what is being shown\&#34;,&#10;  \&#34;payload\&#34;: {&#10;    \&#34;subtype\&#34;: \&#34;menu\&#34;,&#10;    \&#34;menuitems\&#34;: [&#10;      {&#10;        \&#34;id\&#34;: \&#34;item_id\&#34;,&#10;        \&#34;label\&#34;: \&#34;Item Name\&#34;,&#10;        \&#34;description\&#34;: \&#34;Item description.\&#34;,&#10;        \&#34;price\&#34;: 10.00&#10;      }&#10;    ]&#10;  }&#10;}&#10;&#10;Important rules for the payload:&#10;- When showing categories, do NOT include a price field in menuitems.&#10;- When showing dishes within a category, ALWAYS include the price field as a number.&#10;- The menuitems array must contain the exact data returned by the tools — do not fabricate items.&#10;&#10;Behaviour:&#10;1. When the user asks to see the menu, browse food options, or asks what is available, call Get Menu Categories.&#10;2. When the user selects a specific category (by name or ID), call Get Dishes by Category with the correct category ID.&#10;3. If the user asks about something unrelated to food or our menu, respond with a text reply politely stating you specialise in catering menu assistance.&#10;4. Do NOT use &#60;thinking&#62; tags — write your full answer directly as JSON.&#34;" target="data.systemPrompt.prompt" />
+          <zeebe:input source="=(if (is defined(conversationHistory) and conversationHistory != null and count(conversationHistory) &#62; 0) then &quot;[Prior session context:&#10;&quot; + string join(for e in conversationHistory return string(e), &quot;&#10;&quot;) + &quot;]&#10;&#10;&quot; else &quot;&quot;) + currentInput" target="data.userPrompt.prompt" />
+          <zeebe:input source="=if (is defined(inputDocuments) and inputDocuments != null) then inputDocuments else []" target="data.userPrompt.documents" />
+          <zeebe:input source="=if (is defined(agentContext) and agentContext != null) then agentContext else null" target="agentContext" />
+          <zeebe:input source="in-process" target="data.memory.storage.type" />
+          <zeebe:input source="=20" target="data.memory.contextWindowSize" />
+          <zeebe:input source="=9999" target="data.limits.maxModelCalls" />
+          <zeebe:input source="WAIT_FOR_TOOL_CALL_RESULTS" target="data.events.behavior" />
+          <zeebe:input source="text" target="data.response.format.type" />
+          <zeebe:input source="=false" target="data.response.format.parseJson" />
+          <zeebe:input source="=true" target="data.response.includeAssistantMessage" />
+          <zeebe:input source="=true" target="data.response.includeAgentContext" />
+          <zeebe:output source="=agent.context" target="agentContext" />
+          <zeebe:output source="=agent" target="agent" />
+        </zeebe:ioMapping>
+        <zeebe:taskHeaders>
+          <zeebe:header key="elementTemplateVersion" value="5" />
+          <zeebe:header key="elementTemplateId" value="io.camunda.connectors.agenticai.aiagent.jobworker.v1" />
+          <zeebe:header key="retryBackoff" value="PT0S" />
+        </zeebe:taskHeaders>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_start_to_agent</bpmn:incoming>
+      <bpmn:outgoing>Flow_agent_to_end</bpmn:outgoing>
+      <bpmn:serviceTask id="GetMenuCategories" name="Get Menu Categories">
+        <bpmn:documentation>Use this tool when the user asks to see the menu, browse food options, or asks what categories are available. Takes no input parameters. Returns an array of menu categories, each with id, label, and description.</bpmn:documentation>
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="get-menu-categories-worker" retries="3" />
+        </bpmn:extensionElements>
+      </bpmn:serviceTask>
+      <bpmn:serviceTask id="GetDishesByCategory" name="Get Dishes by Category">
+        <bpmn:documentation>Use this tool when the user selects or asks about a specific menu category. Requires one input: categoryId (string) — the category ID such as cat_001 (Appetizers), cat_002 (Main Courses), or cat_003 (Beverages). Returns an array of dishes with id, label, description, and price.</bpmn:documentation>
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="get-dishes-by-category-worker" retries="3" />
+          <zeebe:ioMapping>
+            <zeebe:input source="=fromAi(toolCall.categoryId, &#34;The category ID to fetch dishes for (e.g. cat_001, cat_002, cat_003)&#34;, &#34;string&#34;)" target="categoryId" />
+          </zeebe:ioMapping>
+        </bpmn:extensionElements>
+      </bpmn:serviceTask>
+    </bpmn:adHocSubProcess>
+    <bpmn:sequenceFlow id="Flow_agent_to_end" sourceRef="Catering_Agent" targetRef="End_Catering" />
+    <bpmn:endEvent id="End_Catering" name="Done">
+      <bpmn:incoming>Flow_agent_to_end</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="ai-agent-catering">
+      <bpmndi:BPMNShape id="Start_Catering_di" bpmnElement="Start_Catering">
+        <dc:Bounds x="152" y="202" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="158" y="245" width="25" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Catering_Agent_di" bpmnElement="Catering_Agent" isExpanded="true" bioc:stroke="#205022" bioc:fill="#c8e6c9" color:background-color="#c8e6c9" color:border-color="#205022">
+        <dc:Bounds x="260" y="120" width="520" height="200" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GetMenuCategories_di" bpmnElement="GetMenuCategories" bioc:stroke="#205022" bioc:fill="#a5d6a7" color:background-color="#a5d6a7" color:border-color="#205022">
+        <dc:Bounds x="310" y="160" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GetDishesByCategory_di" bpmnElement="GetDishesByCategory" bioc:stroke="#205022" bioc:fill="#a5d6a7" color:background-color="#a5d6a7" color:border-color="#205022">
+        <dc:Bounds x="450" y="160" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Catering_di" bpmnElement="End_Catering">
+        <dc:Bounds x="852" y="202" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="857" y="245" width="27" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_start_to_agent_di" bpmnElement="Flow_start_to_agent">
+        <di:waypoint x="188" y="220" />
+        <di:waypoint x="260" y="220" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_agent_to_end_di" bpmnElement="Flow_agent_to_end">
+        <di:waypoint x="780" y="220" />
+        <di:waypoint x="852" y="220" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
