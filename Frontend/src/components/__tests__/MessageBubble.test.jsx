@@ -11,10 +11,10 @@ describe('MessageBubble', () => {
     })
 
     it('renders AI message with markdown', () => {
-        const msg = { id: 'a1', role: 'ai', text: '**Bold text**', timestamp: new Date(), handledBy: 'General Agent' }
+        const msg = { id: 'a1', role: 'ai', text: '**Bold text**', timestamp: new Date(), handledBy: 'Catering Agent' }
         render(<MessageBubble message={msg} />)
         expect(screen.getByText('Bold text')).toBeInTheDocument()
-        expect(screen.getByText('Answered by General Agent')).toBeInTheDocument()
+        expect(screen.getByText('Answered by Catering Agent')).toBeInTheDocument()
     })
 
     it('renders system message with status role', () => {

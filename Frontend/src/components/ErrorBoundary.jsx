@@ -1,6 +1,9 @@
 import { Component } from 'react'
 import SparkIcon from './SparkIcon'
+import { createLogger } from '../utils/logger.js'
 import './ErrorBoundary.css'
+
+const log = createLogger('ErrorBoundary')
 
 class ErrorBoundary extends Component {
     state = { hasError: false }
@@ -10,7 +13,7 @@ class ErrorBoundary extends Component {
     }
 
     componentDidCatch(error, info) {
-        console.error('Uncaught error:', error, info)
+        log.error('React render error', error, info?.componentStack)
     }
 
     handleRetry = () => {
