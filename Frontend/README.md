@@ -1,16 +1,155 @@
-# React + Vite
+# AI Agent Chat With Tools — Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React + Vite frontend for the AI Agent Chat application powered by Camunda 8 orchestration.
 
-Currently, two official plugins are available:
+## Quick Start
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+```bash
+# 1. Setup environment
+cp .env.example .env
 
-## React Compiler
+# 2. Install dependencies
+npm install
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+# 3. Start development server
+npm run dev
+```
 
-## Expanding the ESLint configuration
+Opens http://localhost:5173 and connects to the backend on `http://localhost:8085/api/v1/public/chatting` (or `/api/v1/secure/chatting` if authenticated).
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Backend Requirements
+
+- **Backend running**: Modulith Service on port 8085
+- **PostgreSQL**: Database with dxp-chatting schema
+- **Camunda 8 SaaS cluster**: Configured for AI orchestration
+
+## Features
+
+✅ Real-time SSE streaming for agent responses  
+✅ Multi-turn conversational AI with message history  
+✅ Multi-agent routing (User Data, Utility & Web, Catering, General Knowledge)  
+✅ Markdown rendering of agent responses  
+✅ Structured menu display (catering agent)  
+✅ Responsive React/Vite UI
+
+## Development
+
+### Scripts
+```bash
+npm run dev       # Start dev server
+npm run build     # Production build
+npm run preview   # Preview production build
+npm test          # Run tests (Vitest)
+```
+
+### Project Structure
+```
+src/
+├── components/       # React components
+│   ├── ChatLayout.jsx
+│   ├── ChatWindow.jsx
+│   ├── ConversationSidebar.jsx
+│   ├── MessageBubble.jsx
+│   └── ...
+├── services/         # API client
+│   └── api.js
+├── utils/            # Utilities
+│   ├── agentMessage.js    # Turn/Message conversion
+│   └── logger.js
+├── assets/           # Static assets
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VITE_API_ORIGIN` | `http://localhost:8085` | Modulith Service backend URL (no trailing slash) |
+| `VITE_LOG_LEVEL` | `info` | Log verbosity: debug\|info\|warn\|error |
+
+## Technology Stack
+
+- **React** 18.3
+- **Vite** 4.5 (build tool)
+- **Markdown** react-markdown + remark-gfm for rich text
+- **Testing** Vitest + Testing Library
+- **Styling** CSS modules (scoped)
+
+## REST API Contract
+
+See [../DOCUMENTATION.md](../DOCUMENTATION.md#11-rest-api-reference) for the full API reference.
+
+### Main Endpoints (Modulith Service)
+
+Guest mode (anonymous):
+```
+POST   /api/v1/public/chatting/conversations
+POST   /api/v1/public/chatting/orchestration/sessions/{id}/start
+POST   /api/v1/public/chatting/orchestration/sessions/{id}/user-messages
+GET    /api/v1/public/chatting/orchestration/sessions/{id}/assistant-round/stream
+```
+
+Secure mode (JWT authenticated):
+```
+POST   /api/v1/secure/chatting/conversations
+POST   /api/v1/secure/chatting/orchestration/sessions/{id}/start
+POST   /api/v1/secure/chatting/orchestration/sessions/{id}/user-messages
+GET    /api/v1/secure/chatting/orchestration/sessions/{id}/assistant-round/stream
+```
+
+### Authentication
+
+**Guest Mode (Default)**
+- Uses `ankabut_guest_id` cookie (auto-generated UUID)
+- No login required
+- All API requests include `clientId` parameter or cookie
+
+**Secure Mode**
+- Uses JWT token from `Authorization: Bearer <token>` header
+- Token stored in `localStorage.ankabut_jwt`
+- API: `/api/v1/secure/chatting/*`
+
+## Relevant Backend Paths
+
+| Component | Path |
+|-----------|------|
+| Chatting module | `ankabut-dxp-modulith-service/` |
+| Controllers | `src/main/java/**/*.web` |
+| DTOs | `ankabut-dxp-commons/src/main/java/com/ankabut/dxp/commons/dto/chatting/` |
+| Database schema | `ankabut-dxp-config-service/src/main/resources/db/migration/V19__chatting_setup.sql` |
+
+## Known Limitations
+
+- Pagination defaults (50 conversations, 200 turns) may differ from backend defaults (20)
+- Quick prompts are static demos — actual routing determined by backend
+- No message editing/deletion (designed by backend as append-only)
+- Session resumption requires explicit previous session ID
+
+## Troubleshooting
+
+See [BACKEND_ALIGNMENT.md → Troubleshooting](./BACKEND_ALIGNMENT.md#troubleshooting)
+
+Common issues:
+1. **"Network error"** → Check backend is running on port 8085 or update `VITE_API_ORIGIN`
+2. **"Session expired"** → Backend may have timeout configured, check `/orchestration/sessions/` endpoint
+3. **SSE not connecting** → Verify JWT token in localStorage (secure mode) or proxy config
+
+## Performance & Monitoring
+
+- **SSE Timeout**: 15 seconds (configurable in `api.js`)
+- **Logging**: Use `VITE_LOG_LEVEL=debug` for detailed request/response logs
+- **Browser DevTools**: Check Network tab for API calls, Console for structured logs
+
+## Production Deployment
+
+1. Update `VITE_API_ORIGIN` to production backend URL
+2. Run `npm run build` → generates `dist/`
+3. Serve `dist/` via static file server (Nginx, Apache, etc.)
+4. Ensure CORS headers allow frontend origin if on different domain
+
+## Links
+
+- [Backend Repository](../../../ANKABUT/Ankabut-DXP-Services)
+- [Alignment Documentation](./BACKEND_ALIGNMENT.md)
+- [React](https://react.dev)
+- [Vite](https://vite.dev)
+- [Camunda Platform](https://camunda.com)

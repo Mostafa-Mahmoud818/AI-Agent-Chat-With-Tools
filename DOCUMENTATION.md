@@ -18,11 +18,15 @@
 14. [Testing](#14-testing)
 15. [Project Structure](#15-project-structure)
 
+### Feature-Specific Documentation
+
+- [Catering Service](./docs/catering-service.md) — Menu browsing, agent tools, and frontend rendering
+
 ---
 
 ## 1. System Overview
 
-AI Agent Chat With Tools is a three-tier web application that enables multi-turn conversational AI sessions orchestrated entirely by **Camunda 8 SaaS**. A **React/Vite** frontend presents the chat interface to the user. A **Spring Boot** backend translates chat interactions into Zeebe messages that start and drive BPMN processes on Camunda Cloud. Those processes classify each request, route it to one of three AI agent subprocesses (User Data, Utility & Web, General), and invoke external REST APIs or FEEL scripts to gather results. The backend delivers responses back to the browser in real time via **Server-Sent Events (SSE)**, eliminating polling latency. Each conversation is a single long-running BPMN process instance that loops until a 30-minute inactivity timer expires.
+AI Agent Chat With Tools is a three-tier web application orchestrated by **Camunda 8 SaaS** with **dual-mode authentication** (guest via cookie or JWT secure). A **React/Vite** frontend presents a conversational chat interface with conversation history and multi-session support. The **Modulith Service** backend on port 8085 provides conversation and session management via REST APIs (`/api/v1/public/chatting` for guests, `/api/v1/secure/chatting` for authenticated users). The backend translates chat interactions into Zeebe messages that start and drive BPMN processes on Camunda Cloud. Those processes classify each request, route it to one of four AI agent subprocesses (User Data, Utility & Web, Catering, General), and invoke external REST APIs, Zeebe job workers, or FEEL scripts to gather results. The backend delivers responses back to the browser in real time via **Server-Sent Events (SSE)**, eliminating polling latency. Each conversation can have multiple sessions, and each session is a long-running BPMN process instance.
 
 ---
 
@@ -34,13 +38,12 @@ graph TD
         FE["React/Vite App\nport 5173"]
     end
 
-    subgraph backend [Spring Boot Backend\nport 8081]
-        CTRL["ChatController\n/api/chat/**"]
-        SVC["CamundaChatService"]
+    subgraph backend [Modulith Backend\nport 8085]
+        CTRL["REST API\n/api/v1/public/chatting\n/api/v1/secure/chatting"]
+        SVC["ChatService\nOrchestration"]
+        DB["PostgreSQL\ndxp-chatting"]
         PUB["MessagePublisher\nZeebe gRPC"]
         RC["CamundaRestClient\nCluster REST API v2"]
-        SR["SessionRepository\nin-memory"]
-        WC["ClusterRestClientConfig\nOAuth2 token cache"]
     end
 
     subgraph camunda [Camunda 8 SaaS]
@@ -52,38 +55,38 @@ graph TD
     subgraph external [External APIs]
         JP["JSONPlaceholder\njsonplaceholder.typicode.com"]
         DJ["DummyJSON\ndummyjson.com"]
-                FETCH["Any URL\nFetch_URL tool"]
+        FETCH["Any URL\nFetch_URL tool"]
+        MENU["Menu API\n(mock.apidog.com\ncatering tools)"]
     end
 
-    FE -->|"POST /start, POST /reply\nHTTP"| CTRL
-    FE -->|"GET /stream\nSSE / EventSource"| CTRL
-    FE -->|"GET /response (fallback)\nHTTP"| CTRL
+    FE -->|"Guest: POST /conversations\nSSE: /assistant-round/stream"| CTRL
+    FE -->|"JWT: POST /orchestration/.../start\nsame SSE pattern"| CTRL
 
     CTRL --> SVC
+    SVC --> DB
     SVC --> PUB
     SVC --> RC
-    SVC --> SR
 
     PUB -->|"correlate() / publish()\ngRPC TLS"| ZEEBE
-    RC -->|"POST /v2/variables/search\nPOST /v2/process-instances/search\nGET /v2/variables/{key}"| CAPI
-    WC -->|"client_credentials\nOAuth2"| CAPI
+    RC -->|"POST /v2/variables/search\nPOST /v2/process-instances/search"| CAPI
 
     ZEEBE --> AI
     ZEEBE -->|"HTTP Connector"| JP
     ZEEBE -->|"HTTP Connector"| DJ
     ZEEBE -->|"HTTP Connector"| FETCH
+    ZEEBE -->|"Job workers\n+ HTTP"| MENU
 ```
 
 ### Communication Protocols Summary
 
 | Link | Protocol | Detail |
 |------|----------|--------|
-| Frontend → Backend (HTTP) | HTTP/1.1 over TCP | REST JSON, port 8081 |
+| Frontend → Backend (HTTP) | HTTP/1.1 over TCP | REST JSON, port 8085 |
 | Frontend → Backend (SSE) | HTTP/1.1, `text/event-stream` | `EventSource` persistent connection |
 | Backend → Zeebe | gRPC over TLS | Port 443, `grpcs://` address |
-| Backend → Cluster REST API | HTTPS | Bearer token (OAuth2), Spring `RestClient` (JDK HttpClient) |
-| Backend → Auth Server | HTTPS | `client_credentials` grant, form-encoded |
+| Backend → Cluster REST API | HTTPS | Bearer token (OAuth2) |
 | Camunda → External APIs | HTTPS | HTTP JSON Connector (`io.camunda:http-json:1`) |
+| Frontend Auth | Cookie + localStorage | Guest: `ankabut_guest_id` cookie; Secure: JWT in localStorage |
 
 ---
 
@@ -102,11 +105,11 @@ All four AI agent subprocesses are embedded as **Ad-Hoc SubProcesses** directly 
 
 #### Architecture B — Modular (`Backend/src/main/resources/bpmn/`)
 
-The main router delegates to three separate deployed processes via **Call Activities**. Each agent is an independent process definition that can be versioned, deployed, and tested in isolation. BPMN files are under `Backend/src/main/resources/bpmn/`: `main-chat-router.bpmn`, `agent-user-data.bpmn`, `agent-utility.bpmn`, and `agent-general.bpmn`. Processes can be deployed to the cluster via Camunda Web Modeler, CI/CD, or Zeebe classpath deployment.
+The main router delegates to four separate deployed processes via **Call Activities**. Each agent is an independent process definition that can be versioned, deployed, and tested in isolation. BPMN files are under `Backend/src/main/resources/bpmn/`: `main-chat-router.bpmn`, `agent-user-data.bpmn`, `agent-utility.bpmn`, `agent-catering.bpmn`, and `agent-general.bpmn`. Processes can be deployed to the cluster via Camunda Web Modeler, CI/CD, or Zeebe classpath deployment.
 
 - **Router Process ID:** `ai-agent-chat-router`
-- **Version Tag:** 2.1
-- **Child processes:** `ai-agent-user-data`, `ai-agent-utility`, `ai-agent-general`
+- **Version Tag:** 2.3
+- **Child processes:** `ai-agent-user-data`, `ai-agent-utility`, `ai-agent-catering`, `ai-agent-general`
 
 > **Note:** The repository also contains `agent-structured-response.bpmn` (`ai-agent-structured-response` v1.0), a Structured Response Analyst agent that returns JSON with `answer`, `key_points`, `confidence`, `sentiment`, and `category`. This agent is deployed independently but is not yet wired into the main router.
 
@@ -120,6 +123,7 @@ flowchart TD
     GwRoute{"Route by\ncategory"}
     UserData["Agent Subprocess\nUser Data"]
     Utility["Agent Subprocess\nUtility & Web"]
+    Catering["Agent Subprocess\nCatering"]
     General["Agent Subprocess\nGeneral"]
     ErrBoundary["Boundary Error Event\n(per agent)"]
     HandleErr["Script Task\nHandle Agent Error"]
@@ -135,12 +139,15 @@ flowchart TD
     Classify --> GwRoute
     GwRoute -->|"user_data"| UserData
     GwRoute -->|"utility"| Utility
+    GwRoute -->|"catering"| Catering
     GwRoute -->|"general"| General
     UserData --> GwMerge
     Utility --> GwMerge
+    Catering --> GwMerge
     General --> GwMerge
     UserData --- ErrBoundary
     Utility --- ErrBoundary
+    Catering --- ErrBoundary
     General --- ErrBoundary
     ErrBoundary --> HandleErr --> GwMerge
     GwMerge --> GwWait
@@ -156,9 +163,10 @@ flowchart TD
 |------|------|----|---------|
 | Message Start Event | Chat session started | `StartEvent_ChatSessionStarted` | Triggered by `ai-chat-start` message |
 | Exclusive Gateway | Start / continue | `Gateway_StartOrContinue` | First turn vs follow-up routing |
-| AI Agent Task (Service Task) | Classify Request Intent | `ClassifyRequestIntent` | AI-powered intent classification via LLM; returns `routeCategory` directly in `response.responseText` (no tools) |
+| AI Agent Task (Service Task) | Classify Request Intent | `ClassifyRequestIntent` | AI-powered intent classification via LLM; outputs exactly one of `user_data`, `utility`, `catering`, `general` into `routeCategory` (no tools) |
 | Call Activity | User Data Agent | `Call_UserData` | Calls `ai-agent-user-data` process to handle user data queries |
 | Call Activity | Utility & Web Agent | `Call_Utility` | Calls `ai-agent-utility` process for date/time, math, URL fetch |
+| Call Activity | Catering Agent | `Call_Catering` | Calls `ai-agent-catering` process for menu categories and dishes |
 | Call Activity | General Agent | `Call_General` | Calls `ai-agent-general` process for knowledge answers |
 | Boundary Error Event | Agent error | `Error_*` | Catches errors per agent call activity |
 | Exclusive Gateway | Merge errors | `Gateway_MergeErrors` | Collects all agent errors |
@@ -174,22 +182,23 @@ flowchart TD
 
 | Process ID | Version | Purpose |
 |------------|---------|--------|
-| `ai-agent-chat-router` | 2.1 | Main orchestration process; routes requests to specialized agents |
+| `ai-agent-chat-router` | 2.3 | Main orchestration process; classifies intent and routes to specialized agents |
 | `ai-agent-user-data` | 1.0 | User data lookups (list users, load user by ID) |
 | `ai-agent-utility` | 1.0 | Utility operations (date/time, math, URL fetch) |
+| `ai-agent-catering` | 1.0 | Catering menu (categories and dishes via job workers) |
 | `ai-agent-general` | 1.0 | General knowledge and conversational queries |
 | `ai-agent-structured-response` | 1.0 | Structured response analysis (JSON output); not yet wired into router |
 
 
 ### 3.4 AI Agent Architecture
 
-All specialized agent processes (`ai-agent-*`) use the **AI Agent Job Worker** connector (`io.camunda.agenticai:aiagent-job-worker:1`) from Camunda, configured with:
+Specialized agent subprocesses (`ai-agent-user-data`, `ai-agent-utility`, `ai-agent-catering`, `ai-agent-general`) use the **AI Agent Job Worker** connector (`io.camunda.agenticai:aiagent-job-worker:1`) from Camunda, configured with:
 
 - **Provider:** AWS Bedrock (Claude 3.5 Haiku)
-- **Memory:** In-process storage with 20-entry context window
+- **Memory:** In-process storage; subprocess agents use a **20-entry** context window (the main router’s **Classify Request Intent** task uses a smaller window — see BPMN)
 - **Tool Call Behavior:** `WAIT_FOR_TOOL_CALL_RESULTS` — agent can make multiple tool calls and receives results
-- **Response Formatting:** Markdown text with optional JSON parsing
-- **Context Retention:** Each agent maintains its own context variable for conversation awareness across turns
+- **Response Formatting:** Markdown or structured text; the Catering agent is configured for JSON-shaped replies in BPMN
+- **Context Retention:** Each agent maintains its own context variable (`userDataAgentCtx`, `utilityAgentCtx`, `cateringAgentCtx`, `generalAgentCtx`) for conversation awareness across turns
 
 Each agent receives:
 1. **User message** (`currentInput`) — current or follow-up user query
@@ -227,6 +236,13 @@ Each agent receives:
 |------|------|---------|
 | KnowledgeAnswer | Script Task (placeholder) | Placeholder tool; General Agent answers from knowledge only (no external tools needed) |
 
+#### Catering Agent (`ai-agent-catering`)
+
+| Task | Connector / Type | Endpoint / Input | Purpose |
+|------|------------------|------------------|---------|
+| Get Menu Categories | Zeebe job worker `get-menu-categories-worker` | Backend `GetMenuCategoriesWorker` | Returns menu categories (id, label, description) as `toolCallResult` |
+| Get Dishes by Category | Zeebe job worker `get-dishes-by-category-worker` | Backend `GetDishesByCategoryWorker` | Variable `categoryId`; returns dishes for that category from the menu API |
+
 ### 3.6 BPMN Variables
 
 | Variable | Direction | Set By | Consumed By |
@@ -238,13 +254,14 @@ Each agent receives:
 | `inputDocuments` | Input | Backend | All agents | Document attachments from initial message (currently empty list) |
 | `followUpDocuments` | Input | Backend | All agents | Document attachments from follow-up (currently empty list) |
 | `providerConfig` | Internal | SetProviderConfig script | ClassifyRequestIntent agent, all subprocesses | `{type, region, authType, model}` — Bedrock configuration |
-| `routeCategory` | Internal | ClassifyRequestIntent | Routing gateway | `user_data`, `utility`, or `general` — AI classifier result |
+| `routeCategory` | Internal | ClassifyRequestIntent | Routing gateway | `user_data`, `utility`, `catering`, or `general` — AI classifier result |
 | `classifierAgentCtx` | Internal | ClassifyRequestIntent | ClassifyRequestIntent (next turn) | Classifier's internal memory for context-aware classification across turns |
 | `conversationHistory` | Internal | StoreConversationHistory script | All agents | List of last 6 conversation entries (3 exchanges); format: `["User: ... | agent: ..."]` |
 | `userDataAgentCtx` | Internal | User Data Agent subprocess | User Data Agent (next turn) | User Data Agent's context memory |
 | `utilityAgentCtx` | Internal | Utility Agent subprocess | Utility Agent (next turn) | Utility Agent's context memory |
 | `generalAgentCtx` | Internal | General Agent subprocess | General Agent (next turn) | General Agent's context memory |
-| `agent` | Output | Agent subprocess | Backend | `{responseText, context}` — final response text and agent state |
+| `cateringAgentCtx` | Internal | Catering Agent subprocess | Catering Agent (next turn) | Catering Agent's context memory |
+| `agent` | Output | Agent subprocess | Backend | `{responseText, context, conversation, ...}` — final response text and agent state |
 | `toolCallResults` | Internal | Agent subprocess (ad-hoc) | Agent Connector | Collects tool call results within agent |
 | `agentContext` | Internal | Agent subprocess input | Agent Connector | Agent's context state for multi-turn awareness |
 
@@ -267,7 +284,7 @@ The **Store Conversation History** task maintains a shared conversation log acro
 ]
 ```
 
-Each agent also maintains its own context variable (`userDataAgentCtx`, `utilityAgentCtx`, `generalAgentCtx`) for internal state that persists across turns of the same category.
+Each agent also maintains its own context variable (`userDataAgentCtx`, `utilityAgentCtx`, `cateringAgentCtx`, `generalAgentCtx`) for internal state that persists across turns of the same category.
 
 ### 3.8 FEEL expression rules in BPMN
 
@@ -293,7 +310,7 @@ graph TD
     dto["dto\n5 records"]
     exception["exception\nApiException\nGlobalExceptionHandler\n3 domain exceptions"]
     config["config\nWebConfig\nClusterRestClientConfig"]
-    worker["worker\nListUsersWorker"]
+    worker["worker\nListUsersWorker\nGetMenuCategoriesWorker\nGetDishesByCategoryWorker"]
 
     controller --> service
     controller --> dto
@@ -316,12 +333,12 @@ graph TD
 | `com.example.aichat.controller` | `ChatController` | HTTP entry points; input validation; delegates to `CamundaChatService` |
 | `com.example.aichat.service` | `CamundaChatService`, `SseStreamOrchestrator` | Business logic; session lifecycle; response resolution; variable mapping; SSE stream lifecycle |
 | `com.example.aichat.camunda` | `CamundaRestClient`, `MessagePublisher` | Cluster REST API v2 (variables, process instances, flow nodes); Zeebe publish/correlate |
-| `com.example.aichat.worker` | `ListUsersWorker` | Zeebe job worker for AI Agent tool (list users); returns `toolCallResult` |
+| `com.example.aichat.worker` | `ListUsersWorker`, `GetMenuCategoriesWorker`, `GetDishesByCategoryWorker` | Zeebe job workers for AI Agent tools; return `toolCallResult` (and variables as needed) |
 | `com.example.aichat.repository` | `SessionRepository` | In-memory session storage (`ConcurrentHashMap`) with scheduled expiry cleanup |
 | `com.example.aichat.model` | `SessionState` | Mutable, thread-safe chat session state |
 | `com.example.aichat.dto` | 5 records | Immutable request/response contracts |
 | `com.example.aichat.exception` | `ApiException` (abstract), `GlobalExceptionHandler`, 3 domain exceptions | Base exception with errorCode/httpStatus; centralized exception-to-HTTP mapping |
-| `com.example.aichat.config` | `WebConfig`, `ClusterRestClientConfig` | CORS, security headers filter, stream scheduler; OAuth2 WebClient for Cluster REST API |
+| `com.example.aichat.config` | `WebConfig`, `ClusterRestClientConfig` | CORS, security headers filter, stream scheduler; OAuth2 token + `RestClient` for Cluster REST API |
 
 ---
 
@@ -336,9 +353,11 @@ graph TD
 | POST | `/start` | `StartChatRequest` | `StartChatResponse` | 200 | Starts new session; correlates start message |
 | GET | `/{sessionId}/response` | — | `ChatResponseDTO` | 200 | Fallback polling endpoint |
 | POST | `/{sessionId}/reply` | `ReplyRequest` | — | 200 | Publishes follow-up message |
-| GET | `/{sessionId}/stream` | — | SSE stream of `ChatResponseDTO` events | 200 | Primary response channel |
+| GET | `/{sessionId}/stream` | — | SSE stream of `ChatResponseDTO` events | 200 | Primary response channel; see note below |
 
 All `{sessionId}` path variables are validated with `@NotBlank`. Request bodies are validated with `@Valid`.
+
+**SSE opening errors:** For `GET /{sessionId}/stream`, `SessionNotFoundException` and `SessionExpiredException` are handled inside the controller (not by `GlobalExceptionHandler`). The response is still **HTTP 200** with `Content-Type: text/event-stream`: a single SSE `data:` event containing a JSON `ChatResponseDTO` — `status: "error"` with the exception message (not found), or `status: "expired"` with `"Session expired."` — then the emitter completes. Other endpoints return standard JSON error bodies for 404/410.
 
 ### 5.2 CamundaChatService
 
@@ -361,10 +380,12 @@ Reads current process state and translates it to a `ChatResponseDTO`:
 1. Retrieves `SessionState` from `sessionStore.getActiveSession(sessionId)`.
 2. Calls `camundaRestClient.fetchProcessInstanceVariables(processInstanceKey)`.
 3. If variables are **empty**: calls private `handleEmptyVariables(session)` (empty poll counter, terminal-state check, expiry).
-4. If variables are **present**: uses private methods `extractRouteCategory(variables)`, `extractResponseText(agentVar)`, `resolveAgentLabel(routeCategory)` for route category, response text, label, and agent hash; calls `session.checkAndAcceptNewResponse(...)` to atomically detect a new response.
-5. If stale-poll threshold reached: calls private `handleStaleResponse(...)` (flow-node/terminal check).
-6. Otherwise: calls private `lastKnownOrProcessing(session)`.
-7. On 3+ consecutive errors: returns status `"error"`.
+4. If variables are **present**: uses `extractRouteCategory(variables)`, `extractResponseText(agentVar)`, and `resolveAgentLabel(routeCategory)`. **`extractResponseText`** prefers `agent.responseText`; if blank, it walks **`agent.conversation.messages`** (last assistant content or `tool_call_result` content) so a response is still surfaced when the model finishes via tools without a top-level `responseText`.
+5. **`resolveAgentLabel`** maps `user_data`, `utility`, and `general` to friendly names via `AGENT_LABELS`. The category **`catering`** is not in that map — **`handledBy` is the trimmed `routeCategory` string (`"catering"`)** unless you extend the map in code to e.g. `"Catering Agent"`.
+6. Calls `session.checkAndAcceptNewResponse(...)` to atomically detect a new response (uses `agentVar.hashCode()` as `agentHash`).
+7. If stale-poll threshold reached: calls private `handleStaleResponse(...)` (flow-node/terminal check).
+8. Otherwise: calls private `lastKnownOrProcessing(session)`.
+9. On 3+ consecutive errors: returns status `"error"`.
 
 #### `sendReply(String sessionId, String followUpInput)`
 
@@ -458,8 +479,10 @@ The backend registers Zeebe job workers that implement AI Agent tool tasks. When
 | Worker | Job Type | Purpose |
 |--------|----------|---------|
 | `ListUsersWorker` | `list-users-worker` | Returns a static list of users (id, name, username, email) as `toolCallResult` for the User Data Agent |
+| `GetMenuCategoriesWorker` | `get-menu-categories-worker` | Fetches menu categories from the configured menu API; returns `toolCallResult` for the Catering Agent |
+| `GetDishesByCategoryWorker` | `get-dishes-by-category-worker` | Reads `categoryId` from the job; fetches dishes for that category; returns `toolCallResult` for the Catering Agent |
 
-The worker uses `@JobWorker(type = "list-users-worker", autoComplete = true, fetchAllVariables = false)` and returns `Map.of("toolCallResult", ...)`. It is registered automatically by the Camunda Spring Boot starter.
+Workers use `@JobWorker(..., autoComplete = true, fetchAllVariables = false)` and are registered automatically by the Camunda Spring Boot starter.
 
 ### 5.8 SessionState
 
@@ -475,18 +498,25 @@ Mutable, thread-safe domain model. All state-mutating methods are `synchronized`
 | `lastHandledBy` | String | null | Agent label for last response |
 | `lastAgentHash` | int | 0 | Hash of last accepted agent variable; used with text to detect new response |
 | `consecutiveEmptyPolls` | int | 0 | Reset on any variable data; triggers expiry check at threshold |
-| `consecutiveStalePollsWhileAwaiting` | int | 0 | Polls where agent data unchanged while awaiting; triggers gateway check |
+| `consecutiveStalePollsWhileAwaiting` | int | 0 | Incremented when `awaitingResponse` and response text/hash unchanged; triggers gateway check at threshold |
 | `consecutiveErrors` | int | 0 | Reset on success; triggers error response at 3 |
 | `expired` | boolean | false | Set on process termination |
+| `pollInProgress` | `AtomicBoolean` | false | Used with `tryStartPoll` / `endPoll` so overlapping SSE poll ticks do not run `getResponse` concurrently for the same session |
+
+#### Concurrent poll coalescing (`tryStartPoll` / `endPoll`)
+
+`SseStreamOrchestrator` calls `session.tryStartPoll()` before each `getResponse` and `endPoll()` in a `finally` block. If a poll is already in progress, the tick returns early so only one Cluster REST resolution runs at a time per session.
 
 #### `checkAndAcceptNewResponse(currentResponseText, handledBy, agentHash)` — Atomic Detection
 
 This synchronized method prevents duplicate response delivery:
 
 1. Returns `null` if `currentResponseText` is blank.
-2. Returns `null` if `awaitingResponse == false` (response already delivered for this turn).
-3. Returns `currentResponseText` only if it differs from `lastResponseText` or `agentHash` differs from `lastAgentHash` (new response detected).
-4. On detection: updates `lastResponseText`, `lastHandledBy`, `lastAgentHash`, sets `awaitingResponse = false`, resets `consecutiveEmptyPolls` and `consecutiveStalePollsWhileAwaiting`.
+2. If `awaitingResponse` is **false**, returns `null` (nothing to accept for this turn).
+3. If `awaitingResponse` is **true** and either response text or `agentHash` differs from the last accepted values, treats this as a **new response**: updates `lastResponseText`, `lastHandledBy`, `lastAgentHash`, sets `awaitingResponse = false`, resets `consecutiveEmptyPolls` and `consecutiveStalePollsWhileAwaiting`, and returns the new text.
+4. If `awaitingResponse` is **true** and both text and `agentHash` are unchanged, increments **`consecutiveStalePollsWhileAwaiting`** and returns `null`.
+
+`forceAcceptCurrentResponse(...)` (used after flow-node checks) sets state as in step 3 without requiring text/hash change.
 
 ### 5.9 ApiException and GlobalExceptionHandler
 
@@ -504,7 +534,7 @@ This synchronized method prevents duplicate response delivery:
 | `IllegalArgumentException` | 400 Bad Request | `invalid_request` |
 | `HttpMessageNotReadableException` | 400 Bad Request | `invalid_request` |
 | `MethodArgumentTypeMismatchException` | 400 Bad Request | `invalid_request` |
-| `WebClientResponseException` | 502 Bad Gateway | `upstream_error` |
+| `RestClientResponseException` | 502 Bad Gateway | `upstream_error` |
 | `RuntimeException` | 500 Internal Server Error | `internal_error` |
 | `Exception` | 500 Internal Server Error | `internal_error` |
 
@@ -625,62 +655,50 @@ SSE is the primary channel for delivering AI responses to the browser. The backe
 
 ### 7.2 Backend SSE Lifecycle
 
-The backend implements **smart adaptive polling** for Camunda compatibility. The polling strategy reduces API load by automatically backing off during idle periods (when no new data is available).
+The backend polls the **Cluster REST API** on a fixed schedule (`app.polling.interval-ms`, default 1000ms). **`SseStreamOrchestrator`** creates the `SseEmitter`, validates the session, and schedules **`CamundaChatService.getResponse()`** on each tick (subject to **`tryStartPoll` / `endPoll`** so only one in-flight poll runs per session). Separately, when the latest DTO is **`processing`** and the session has more than **10** consecutive empty polls, **`SseStreamOrchestrator`** may **skip sending** some SSE `data:` events (modulo `app.polling.idle-interval-multiplier`) to reduce browser/UI churn. **That throttle does not reduce Cluster REST API calls** — each scheduled tick still invokes `getResponse()` unless the previous poll has not finished.
 
 ```mermaid
 sequenceDiagram
     participant FE as "EventSource\n(Browser)"
     participant CTRL as "ChatController"
+    participant ORCH as "SseStreamOrchestrator"
     participant SVC as "CamundaChatService"
     participant SCHED as "ScheduledExecutorService"
     participant CA as "Cluster REST API"
 
     FE->>CTRL: GET /{sessionId}/stream\nAccept: text/event-stream
-    CTRL->>SVC: streamResponse(sessionId)
-    SVC->>SVC: Validate session
-    SVC->>SVC: new SseEmitter(600_000ms)
-    SVC->>SCHED: scheduleAtFixedRate(poll, 0, pollingIntervalMs, MILLISECONDS)
-    Note over SCHED: Default: 1000ms (1 API call/sec)<br/>Adaptive backoff during idle (2x multiplier)
-    SVC-->>CTRL: SseEmitter
+    CTRL->>ORCH: streamResponse(sessionId)
+    ORCH->>ORCH: getActiveSession, new SseEmitter(emitterTimeoutMs)
+    ORCH->>SCHED: scheduleAtFixedRate(poll, 0, pollingIntervalMs, MILLISECONDS)
+    Note over SCHED: Default 1000ms = up to 1 variable search/sec per session<br/>if each poll finishes within the interval
+    ORCH-->>CTRL: SseEmitter
     CTRL-->>FE: HTTP 200\nContent-Type: text/event-stream\n(connection held open)
 
-    loop Every 1000ms (or configured interval)
-        SCHED->>SVC: poll tick
-        
-        alt Session idle (>10 empty polls) AND idle-multiplier=2.0
-            SVC->>SVC: Skip poll (modulo adaptive throttling)
-            Note over SVC: Effectively ~2000ms during idle
-        else Active polling
-            SVC->>CA: POST /v2/variables/search
-            CA-->>SVC: variables
-            SVC->>SVC: getResponse() → ChatResponseDTO
-            
-            alt status = "processing"
-                SVC->>FE: data: {"status":"processing"}\n\n
-            else status = "ready"
-                SVC->>FE: data: {"status":"ready","responseText":"...","handledBy":"..."}\n\n
-                SVC->>SVC: emitter.complete()
-                SVC->>SCHED: future.cancel()
-            else status = "error"
-                SVC->>FE: data: {"status":"error","responseText":"..."}\n\n
-                SVC->>SVC: emitter.complete()
-            else SessionExpiredException
-                SVC->>FE: data: {"status":"expired"}\n\n
-                SVC->>SVC: emitter.complete()
-            else IOException (client disconnected)
-                SVC->>SVC: emitter.completeWithError()
-            end
+    loop Each polling interval
+        SCHED->>ORCH: poll tick
+        ORCH->>ORCH: tryStartPoll (skip tick if busy)
+        ORCH->>SVC: getResponse(sessionId)
+        SVC->>CA: POST /v2/variables/search
+        CA-->>SVC: variables
+        SVC-->>ORCH: ChatResponseDTO
+        alt processing, empty polls > 10, throttle modulo
+            ORCH->>ORCH: May skip emitter.send (no API savings)
+        else send to client
+            ORCH->>FE: data: ChatResponseDTO JSON\n\n
         end
+        alt status terminal ready, error, expired
+            ORCH->>ORCH: complete emitter, cancel future
+        end
+        ORCH->>ORCH: endPoll
     end
 
-    Note over FE: 10-min timeout → emitter.onTimeout() → future.cancel()
+    Note over FE: emitter timeout (e.g. 10 min) → onTimeout → cancel future
 ```
 
-**Polling Strategy for Camunda Compatibility:**
-- **Base interval:** 1000ms (1 API call/second per active session)
-- **Adaptive backoff:** During idle periods (>10 empty polls), polls are skipped modulo the idle multiplier
-- **Idle multiplier:** Default 2.0x - reduces to ~0.5 API calls/second during inactive processing
-- **Benefit:** Significantly reduced API pressure on Camunda while maintaining <1s response latency for active queries
+**Polling and SSE behavior:**
+- **Cluster REST load:** Driven by **`interval-ms`** and session count (each tick calls `getResponse` → variables search, unless the previous poll is still running).
+- **SSE event rate:** Can be lower than the poll rate when **`processing`** and empty-poll throttling applies — fewer duplicate `"processing"` pushes to the browser, not fewer Camunda requests.
+- **Idle multiplier:** Only affects **whether `emitter.send` runs** on a tick when status is `processing` and empty polls > 10; it is **not** an API backoff.
 
 ### 7.3 Frontend EventSource Lifecycle
 
@@ -914,10 +932,11 @@ The `handledBy` label (agent name) appears as a small badge below AI messages.
 | Export | Type | Purpose |
 |--------|------|---------|
 | `startChat(inputText)` | async function | POST `/start` |
-| `getResponse(sessionId)` | async function | GET `/{sessionId}/response` (fallback) |
 | `sendReply(sessionId, followUpInput)` | async function | POST `/{sessionId}/reply` |
 | `createResponseStream(sessionId)` | function | Returns `new EventSource(...)` for SSE |
 | `ApiError` | class | Custom error: `status`, `errorCode`, `message` |
+
+The backend also exposes **`GET /{sessionId}/response`** for snapshot polling; the React app does **not** wrap it — responses are delivered only via **`createResponseStream`** after start/reply.
 
 All HTTP functions use `fetchWithTimeout()` with a 15-second `AbortController` timeout. Network errors and timeouts are normalized into `ApiError` instances.
 
@@ -927,141 +946,128 @@ All HTTP functions use `fetchWithTimeout()` with a 15-second `AbortController` t
 
 ### Base URL
 
+**Guest mode (anonymous):**
 ```
-http://localhost:8081/api/chat
+http://localhost:8085/api/v1/public/chatting
 ```
 
-Configurable via `VITE_API_BASE` environment variable on the frontend.
+**Secure mode (JWT authenticated):**
+```
+http://localhost:8085/api/v1/secure/chatting
+```
+
+All requests in guest mode must include `clientId` (auto-generated UUID via `ankabut_guest_id` cookie).
+All requests in secure mode must include `Authorization: Bearer <jwt-token>` header.
 
 ---
 
-### POST `/api/chat/start`
+### Conversation Management
 
-Starts a new chat session. Correlates the `ai-chat-start` Zeebe message, which triggers the BPMN Message Start Event and returns the process instance key synchronously.
+#### POST `/conversations`
+
+Create a new conversation with an initial session.
+
+**Request (Guest)**
+```json
+{
+  "clientId": "550e8400-e29b-41d4-a716-446655440000",
+  "req": { "initialTitle": "My first chat" }
+}
+```
+
+**Request (Secure)**
+```json
+{ "initialTitle": "My chat title" }
+```
+
+**Response — 201 Created**
+```json
+{
+  "id": "conv-uuid",
+  "conversationId": "conv-uuid",
+  "sessionId": "sess-uuid",
+  "processInstanceKey": "2251799813685324",
+  "status": "ACTIVE",
+  "startedAt": "2025-03-15T14:30:00Z"
+}
+```
+
+---
+
+### Session Orchestration
+
+#### POST `/orchestration/sessions/{sessionId}/start`
+
+Start the Camunda orchestration (agentic workflow) for a session.
 
 **Request**
-
 ```json
-{ "inputText": "What is the capital of France?" }
+{ "inputText": "Show me the catering menu" }
 ```
-
-| Field | Type | Constraints |
-|-------|------|-------------|
-| `inputText` | string | Required, not blank, max 4000 chars |
 
 **Response — 200 OK**
-
 ```json
-{ "sessionId": "550e8400-e29b-41d4-a716-446655440000", "processInstanceKey": "2251799813685324" }
+{
+  "sessionId": "sess-uuid",
+  "processInstanceKey": "2251799813685324"
+}
 ```
-
-**Error Responses**
-
-| Status | Error Code | Cause |
-|--------|------------|-------|
-| 400 | `validation_error` | Blank or missing `inputText` |
-| 503 | `process_start_failed` | Zeebe correlation failed (process not deployed, network error) |
 
 ---
 
-### GET `/api/chat/{sessionId}/response`
+#### POST `/orchestration/sessions/{sessionId}/user-messages`
 
-Fallback polling endpoint. Returns current process state as a single snapshot.
-
-**Response — 200 OK**
-
-```json
-{ "status": "processing", "responseText": null, "handledBy": null }
-```
-
-```json
-{ "status": "ready", "responseText": "The current date and time is 2025-03-15T14:30:00Z.", "handledBy": "Utility & Web Agent" }
-```
-
-**Error Responses**
-
-| Status | Error Code | Cause |
-|--------|------------|-------|
-| 400 | `validation_error` | Blank `sessionId` |
-| 404 | `session_not_found` | Unknown session ID |
-| 410 | `session_expired` | Process completed or timed out |
-
----
-
-### POST `/api/chat/{sessionId}/reply`
-
-Sends a follow-up message to an active session. Publishes the `ai-chat-user-reply` message to Zeebe, correlated by `sessionId`.
+Send a follow-up message within an active session.
 
 **Request**
-
 ```json
-{ "followUpInput": "Can you tell me another one?" }
+{ "userInput": "What about pizza?" }
 ```
 
-| Field | Type | Constraints |
-|-------|------|-------------|
-| `followUpInput` | string | Required, not blank, max 4000 chars |
-
-**Response — 200 OK** — empty body.
-
-**Error Responses**
-
-| Status | Error Code | Cause |
-|--------|------------|-------|
-| 400 | `validation_error` | Blank or missing `followUpInput` |
-| 404 | `session_not_found` | Unknown session ID |
-| 410 | `session_expired` | Process already completed |
-| 500 | `internal_error` | Zeebe publish failed |
+**Response — 200 OK** — empty or acknowledgment.
 
 ---
 
-### GET `/api/chat/{sessionId}/stream`
+#### GET `/orchestration/sessions/{sessionId}/assistant-round/stream`
 
-Primary response channel. Opens a Server-Sent Events stream. The backend polls Camunda every ~1 second and pushes a `ChatResponseDTO` JSON payload as each SSE data event. The stream closes automatically when a terminal status is emitted.
+Open SSE stream for live agent responses.
 
 **Response** — `Content-Type: text/event-stream`
 
 ```
-data: {"status":"processing","responseText":null,"handledBy":null}
+data: {"status":"processing","message":null,"handledBy":null}
 
-data: {"status":"ready","responseText":"Here are all users: ...","handledBy":"User Data Agent"}
+data: {"status":"ready","message":"Here are our pizza options: ...","handledBy":"Catering Agent"}
 
 ```
 
-**Terminal statuses** (stream closes after sending): `ready`, `error`, `expired`.
+**Terminal statuses** (stream closes): `ready`, `error`, `expired`
+
+**Invalid or expired session:** If the session is unknown or expired, **`ChatController`** still returns **HTTP 200** with `text/event-stream` and sends **one** SSE event with `status: "error"` (not found message) or `status: "expired"`, then completes — not a JSON `404`/`410` body. Use **`GET /response`** or start/reply endpoints for standard REST error JSON.
 
 ### 11.5 Frontend–Backend–BPMN Alignment
 
-The following table ensures compatibility between the React frontend, Spring Boot API, and deployed BPMNs.
+The following table ensures compatibility between the React frontend, Modulith API, and deployed BPMNs.
 
 | Layer | Contract | Value / Shape |
 |-------|----------|----------------|
 | **BPMN messages** | Start message name | `ai-chat-start` (main-chat-router.bpmn `Message_ChatStart`) |
 | | Reply message name | `ai-chat-user-reply` (main-chat-router.bpmn `Message_UserReply`) |
 | | Reply correlation key | `sessionId` (variable on process) |
-| | User-reply catch event id | `MessageCatchEvent_UserReply` (for flow-node check) |
-| **Backend config** | `app.camunda.messages.start` | `ai-chat-start` |
-| | `app.camunda.messages.reply` | `ai-chat-user-reply` |
-| | `app.camunda.reply-catch-event-id` | `MessageCatchEvent_UserReply` (optional; default in code) |
-| **Start payload** | Variables sent with start | `sessionId`, `inputText`, `inputDocuments` (list) |
-| **Reply payload** | Variables sent with reply | `followUpInput`, `followUpDocuments` (list); correlation key = `sessionId` |
-| **Process variables read by backend** | For response resolution | `agent` (object with `responseText`), `routeCategory` (string) |
-| **Frontend → API** | POST /start body | `{ "inputText": string }` |
-| | POST /{sessionId}/reply body | `{ "followUpInput": string }` |
-| | Start response | `{ "sessionId": string, "processInstanceKey": string }` — frontend uses `sessionId` only |
-| **SSE / ChatResponseDTO** | Fields | `status`, `responseText`, `handledBy` (all strings; nullable) |
-| | Status values | `processing` \| `ready` \| `error` \| `expired` |
-| **Error response (4xx/5xx)** | Body | `{ "error": string, "message": string }` — frontend uses `error` as `errorCode`, e.g. `session_expired`, `session_not_found` |
-| **Route categories** | Backend agent labels | `user_data` → "User Data Agent", `utility` → "Utility & Web Agent", `general` → "General Agent" |
+| **Frontend auth modes** | Guest | Auto-generated UUID in `ankabut_guest_id` cookie |
+| | Secure | JWT token in `Authorization: Bearer` header |
+| **Conversation API** | POST /conversations | Returns `{ sessionId, conversationId, processInstanceKey, status }` |
+| **Orchestration API** | POST /orchestration/sessions/{id}/start | Request: `{ inputText }` |
+| | POST /orchestration/sessions/{id}/user-messages | Request: `{ userInput }` |
+| | GET /orchestration/sessions/{id}/assistant-round/stream | SSE stream of agent responses |
+| **Start payload** | BPMN variables | `sessionId`, `inputText`, `inputDocuments` (list) |
+| **Reply payload** | BPMN variables | `followUpInput`, `followUpDocuments` (list); correlation key = `sessionId` |
+| **Process variables read** | For response resolution | `agent` (object with `responseText`), `routeCategory` (string) |
+| **SSE Response** | Fields | `status` (processing|ready|error|expired), `message`, `handledBy` |
+| **Error response** | Body | `{ "error": "error_code", "message": "description" }` |
+| **Route categories** | Backend routing | `user_data` → User Data Agent, `utility` → Utility & Web Agent, `catering` → Catering Agent, `general` → General Agent |
 
-Keep message names and variable names in sync when changing BPMNs or backend; update `application.yaml` and this table if you rename messages or the reply catch event.
-
-**Error Responses** (before stream opens)
-
-| Status | Error Code | Cause |
-|--------|------------|-------|
-| 404 | `session_not_found` | Unknown session ID |
-| 410 | `session_expired` | Session already expired |
+Keep message names and variable names in sync when changing BPMNs; the Modulith Service translates REST requests into Zeebe messages automatically.
 
 ---
 
@@ -1091,7 +1097,7 @@ All domain exceptions (`SessionNotFoundException`, `SessionExpiredException`, `P
 | `IllegalArgumentException` | — | 400 | `invalid_request` | WARN |
 | `HttpMessageNotReadableException` | Jackson | 400 | `invalid_request` | WARN |
 | `MethodArgumentTypeMismatchException` | Spring MVC | 400 | `invalid_request` | WARN |
-| `WebClientResponseException` | `CamundaRestClient` | 502 | `upstream_error` | ERROR |
+| `RestClientResponseException` | `CamundaRestClient` | 502 | `upstream_error` | ERROR |
 | `RuntimeException` | Any | 500 | `internal_error` | ERROR |
 | `Exception` | Any | 500 | `internal_error` | ERROR |
 
@@ -1145,7 +1151,7 @@ All domain exceptions (`SessionNotFoundException`, `SessionExpiredException`, `P
 | `app.camunda.messages.reply` | `ai-chat-user-reply` | Zeebe message name for user replies |
 | `app.camunda.messages.ttl-seconds` | `30` | TTL for published messages (seconds) |
 | `app.polling.interval-ms` | `1000` | Base SSE polling interval in milliseconds (1 second = 1 API call/sec per session; optimized for Camunda) |
-| `app.polling.idle-interval-multiplier` | `2.0` | Adaptive backoff multiplier during idle periods (>10 empty polls); ~50% API reduction during processing |
+| `app.polling.idle-interval-multiplier` | `2.0` | When status is `processing` and empty polls > 10, only some ticks emit SSE events (modulo this factor); **does not** reduce Cluster REST API call frequency |
 | `app.polling.empty-polls-before-expiry-check` | `60` | Consecutive empty variable polls before checking if process is terminal (60s at 1000ms interval) |
 | `app.polling.stale-polls-before-gateway-check` | `30` | Stale polls before checking if process reached event-based gateway (30s at 1000ms interval) |
 | `app.polling.max-consecutive-errors` | `3` | Consecutive REST errors before returning error status to client |
@@ -1168,32 +1174,32 @@ Variables are loaded from a `.env` file at the project root via the `springboot3
 
 ### 13.3 Camunda Performance Tuning
 
-This application is optimized for Camunda SaaS by reducing unnecessary API calls while maintaining low response latency.
+Cluster REST **traffic is primarily driven by `app.polling.interval-ms`** (each SSE session schedules `getResponse` on that interval, which performs variable search). **`idle-interval-multiplier` does not reduce API calls** — it only reduces how often **`processing`** events are **sent over SSE** after many empty polls.
 
 **Default Strategy (Recommended):**
-- **Base polling:** 1000ms (1 second) = 1 API call/second per active SSE session
-- **Idle backoff:** 2.0x multiplier skips polls during idle (>10 empty polls), reducing to ~0.5 API calls/second
-- **Example load:** 10 concurrent sessions = ~10 API calls/sec (active) or ~5 API calls/sec (idle processing)
+- **Base polling:** 1000ms → up to **one** variables search per second per active SSE session (if each poll completes before the next tick).
+- **SSE throttling:** After >10 empty polls while `processing`, some ticks skip **`emitter.send`** (modulo idle multiplier), not `getResponse`.
+- **Example load:** 10 concurrent sessions ≈ up to **10** variable-search calls/sec (before accounting for slow polls skipping the next tick via `tryStartPoll`).
 
 **Tuning Guidelines:**
 
 | Scenario | Recommended Settings | Notes |
 |----------|---------------------|-------|
-| **Development/Testing** | `interval-ms: 1000, idle-multiplier: 2.0` | Default; good balance |
-| **Low traffic (<5 sessions)** | Keep default | Polling overhead negligible |
-| **High traffic (50+ sessions)** | `interval-ms: 2000, idle-multiplier: 3.0` | 2s base = 0.5 API/sec per session; 6s idle = 0.17 API/sec |
-| **Very high traffic (100+)** | `interval-ms: 3000, idle-multiplier: 4.0` | 3s base; ~1.4 API calls/sec total across 100 sessions |
-| **Latency-sensitive** | `interval-ms: 800, idle-multiplier: 1.5` | Faster responses; slight increase in API load |
+| **Development/Testing** | `interval-ms: 1000, idle-multiplier: 2.0` | Default |
+| **Low traffic (<5 sessions)** | Keep default | Overhead usually negligible |
+| **High traffic (50+ sessions)** | Increase **`interval-ms`** (e.g. 2000–3000) | Halves or thirds per-session API rate; increases worst-case latency to the new interval |
+| **Very high traffic (100+)** | `interval-ms: 3000` or higher | Trade latency for fewer Cluster REST calls |
+| **Latency-sensitive** | `interval-ms: 800` | Slightly higher API rate |
 
 **Trade-offs:**
-- **Shorter intervals (500-800ms):** Faster response times (1s max latency) but higher API pressure
-- **Longer intervals (2000-3000ms):** Reduced API calls but slower response times (up to 3s)
-- **Higher idle multiplier:** More aggressive throttling during idle, less responsive to long-running processes
+- **Shorter `interval-ms`:** Lower latency to detect `ready`, more Cluster REST requests per session.
+- **Longer `interval-ms`:** Fewer requests, higher maximum wait for the next poll.
+- **Higher idle multiplier:** Fewer duplicate `processing` SSE lines in the browser during long-running work; **no** impact on Camunda API quota by itself.
 
 **Monitoring:**
-- Track API request rate: should not exceed Camunda quota limits
-- Monitor response latency in browser DevTools; typical <1s for active queries with default settings
-- Check Camunda audit logs for API rate patterns
+- Track Cluster REST request rate: should stay within Camunda quota limits.
+- Monitor response latency in browser DevTools relative to `interval-ms`.
+- Check Camunda audit logs for API rate patterns.
 
 ### 13.4 Frontend Environment Variables
 
@@ -1337,12 +1343,15 @@ AI Agent Chat With Tools/
 │       │   │   │   ├── CamundaChatService.java
 │       │   │   │   └── SseStreamOrchestrator.java
 │       │   │   └── worker/
-│       │   │       └── ListUsersWorker.java
+│       │   │       ├── ListUsersWorker.java
+│       │   │       ├── GetMenuCategoriesWorker.java
+│       │   │       └── GetDishesByCategoryWorker.java
 │       │   └── resources/
 │       │       ├── application.yaml
 │       │       └── bpmn/
 │       │           ├── main-chat-router.bpmn
 │       │           ├── agent-user-data.bpmn
+│       │           ├── agent-catering.bpmn
 │       │           ├── agent-structured-response.bpmn
 │       │           ├── agent-utility.bpmn
 │       │           └── agent-general.bpmn

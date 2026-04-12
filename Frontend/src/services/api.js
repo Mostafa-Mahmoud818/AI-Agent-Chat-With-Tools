@@ -1,8 +1,20 @@
 /**
  * Ankabut DXP Chatting API — dual-mode (guest cookie + JWT secure).
  *
+ * ════════════════════════════════════════════════════════════════════════════
+ * Backend Service: Modulith Service (ankabut-dxp-modulith-service) on port 8085
+ * API Base: /api/v1/public/chatting (guest) or /api/v1/secure/chatting (authenticated)
+ * Database: PostgreSQL with schema dxp-chatting
+ * Orchestration: Camunda 8 (Zeebe) for agentic workflows
+ * ════════════════════════════════════════════════════════════════════════════
+ *
  * Guest mode  → /api/v1/public/chatting/*  (clientId via ankabut_guest_id cookie)
  * Secure mode → /api/v1/secure/chatting/*  (JWT via Authorization header)
+ *
+ * Data Types and Enums:
+ * - SessionStatus: ACTIVE | TIMED_OUT | ENDED | ERROR
+ * - RouteCategory: IT_SUPPORT | CATERING | ERROR
+ * - AgentResponseStatus (wire format): ready | processing | error | expired
  */
 
 import { createLogger } from '../utils/logger.js'
@@ -34,7 +46,7 @@ export function clearAuthToken() {
     localStorage.removeItem(JWT_STORAGE_KEY)
 }
 
-function isSecureMode() {
+export function isSecureMode() {
     return !!getJwtToken()
 }
 
@@ -158,6 +170,16 @@ function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
         .finally(() => clearTimeout(timer))
 }
 
+async function get(url) {
+    log.debug('GET', url)
+    const res = await fetchWithTimeout(url, {
+        method: 'GET',
+        headers: authHeaders(),
+    })
+    log.debug('GET response', url, res.status)
+    return handleResponse(res)
+}
+
 async function post(url, body) {
     log.debug('POST', url)
     const res = await fetchWithTimeout(url, {
@@ -172,8 +194,94 @@ async function post(url, body) {
 // ── API functions ───────────────────────────────────────────────────
 
 /**
- * Creates a new conversation + first session.
- * Returns { conversationId, sessionId }.
+ * Fetches paginated list of conversations for the current client (guest or user).
+ * 
+ * Backend: GET /api/v1/public(or /secure)/chatting/conversations
+ * Response: PagedResponse<ConversationDto>
+ * 
+ * @param {{ page?: number, size?: number }} opts - Pagination params (default: page=0, size=50)
+ * @returns {Promise<{ content: ConversationDto[], page: number, size: number, last: boolean }>}
+ */
+export async function getConversations({ page = 0, size = 50 } = {}) {
+    const base = getApiBase()
+    const qp = new URLSearchParams({ page: String(page), size: String(size) })
+    if (!isSecureMode()) {
+        qp.set('clientId', getOrCreateGuestId())
+    }
+    const res = await get(`${base}/conversations?${qp}`)
+    return unwrapResponse(res)
+}
+
+/**
+ * Fetches TurnDto[] for a conversation (contains user inputs + agent responses).
+ * 
+ * Backend: GET /api/v1/public(or /secure)/chatting/conversations/{id}/turns
+ * Turns include: id, sessionId, turnNumber, userInput, routeCategory, agentResponse, createdAt, updatedAt
+ * 
+ * @param {string} conversationId - UUID of the conversation
+ * @param {{ page?: number, size?: number }} opts - Pagination (default: page=0, size=200)
+ * @returns {Promise<{ content: TurnDto[], page: number, last: boolean }>}
+ */
+export async function getConversationTurns(conversationId, { page = 0, size = 200 } = {}) {
+    const base = getApiBase()
+    const qp = new URLSearchParams({ page: String(page), size: String(size) })
+    const res = await get(`${base}/conversations/${conversationId}/turns?${qp}${clientIdParam(true)}`)
+    return unwrapResponse(res)
+}
+
+/** Loads all pages of turns for a conversation (demo / moderate history sizes). */
+export async function fetchAllConversationTurns(conversationId, pageSize = 200) {
+    const all = []
+    let page = 0
+    while (true) {
+        const data = await getConversationTurns(conversationId, { page, size: pageSize })
+        const chunk = data.content ?? []
+        all.push(...chunk)
+        if (data.last === true || chunk.length === 0) break
+        page += 1
+    }
+    return all
+}
+
+/**
+ * @param {string} conversationId
+ * @param {{ page?: number, size?: number }} opts
+ */
+export async function getSessionsForConversation(conversationId, { page = 0, size = 50 } = {}) {
+    const base = getApiBase()
+    const qp = new URLSearchParams({ page: String(page), size: String(size) })
+    const res = await get(`${base}/conversations/${conversationId}/sessions?${qp}${clientIdParam(true)}`)
+    return unwrapResponse(res)
+}
+
+/**
+ * @param {string} conversationId
+ * @param {string | null} summary
+ */
+export async function createSessionInConversation(conversationId, summary = null) {
+    const base = getApiBase()
+    let res
+    if (isSecureMode()) {
+        res = await post(`${base}/conversations/${conversationId}/sessions`, { summary })
+    } else {
+        const guestId = getOrCreateGuestId()
+        res = await post(`${base}/conversations/${conversationId}/sessions`, {
+            clientId: guestId,
+            req: { summary },
+        })
+    }
+    return unwrapResponse(res)
+}
+
+/**
+ * Creates a new conversation with an initial session.
+ * 
+ * Backend: POST /api/v1/public(or /secure)/chatting/conversations
+ * Request: { initialTitle?, initialSummary? } (wrapped with clientId in guest mode)
+ * Response: SessionDto (includes conversationId and sessionId)
+ * 
+ * @param {string} inputText - User's initial message (truncated to 50 chars for title)
+ * @returns {Promise<{ conversationId: UUID, sessionId: UUID }>}
  */
 export async function createConversation(inputText) {
     const base = getApiBase()
@@ -201,8 +309,19 @@ export async function createConversation(inputText) {
 }
 
 /**
- * Starts Camunda orchestration for a session.
- * Returns { sessionId, processInstanceKey }.
+ * Starts Camunda 8 orchestration process for a session.
+ * 
+ * Backend: POST /api/v1/public(or /secure)/chatting/orchestration/sessions/{id}/start
+ * Request: { inputText: string, previousSessionId?: UUID }
+ * Response: { sessionId: UUID, processInstanceKey: bigint }
+ * 
+ * This initiates the agentic workflow that classifies the user input and routes
+ * to the appropriate handler (IT_SUPPORT, CATERING, etc.)
+ * 
+ * @param {string} sessionId - UUID of session to activate
+ * @param {string} inputText - User message to start orchestration with
+ * @param {string|null} previousSessionId - Optional previous session for context
+ * @returns {Promise<{ sessionId: UUID, processInstanceKey: bigint }>}
  */
 export async function startOrchestration(sessionId, inputText, previousSessionId = null) {
     const base = getApiBase()
@@ -217,7 +336,14 @@ export async function startOrchestration(sessionId, inputText, previousSessionId
 }
 
 /**
- * Sends a follow-up user message to an active orchestration.
+ * Sends a follow-up user message to an active orchestration process.
+ * 
+ * Backend: POST /api/v1/public(or /secure)/chatting/orchestration/sessions/{id}/user-messages
+ * Request: { followUpInput: string }
+ * Response: void (202 Accepted)
+ * 
+ * @param {string} sessionId - UUID of the active session
+ * @param {string} followUpInput - Follow-up message text
  */
 export async function sendReply(sessionId, followUpInput) {
     const base = getApiBase()
@@ -227,12 +353,22 @@ export async function sendReply(sessionId, followUpInput) {
 }
 
 /**
- * Opens a Server-Sent Events stream for the given session.
+ * Opens a Server-Sent Events stream for live agent response updates.
+ * 
+ * Backend: GET /api/v1/public(or /secure)/chatting/orchestration/sessions/{id}/assistant-round/stream
+ * SSE Event Format: { status: 'ready'|'processing'|'error'|'expired', message: string, handledBy?: string }
+ * 
+ * Statuses:
+ * - processing: Agent is thinking
+ * - ready: Agent response complete (includes message text)
+ * - error: Error occurred (message contains error detail)
+ * - expired: Session timed out
+ * 
+ * In guest mode: uses native EventSource (no auth header).
+ * In secure mode: uses fetch-based SSE with Authorization header (EventSource doesn't support headers).
  *
- * In guest mode: uses native EventSource (no auth header needed).
- * In secure mode: uses fetch-based SSE since EventSource doesn't support custom headers.
- *
- * Returns an EventSource-like object with `onmessage`, `onerror`, and `close()`.
+ * @param {string} sessionId - UUID of the session to stream from
+ * @returns {EventSource-like object} with onmessage, onerror, close(), readyState
  */
 export function createResponseStream(sessionId) {
     const base = getApiBase()
@@ -242,7 +378,7 @@ export function createResponseStream(sessionId) {
         const qp = clientIdParam()
         const streamUrl = `${base}/orchestration/sessions/${sessionId}/assistant-round/stream${qp}`
         log.info('SSE open (guest EventSource)', { sessionId })
-        return new EventSource(streamUrl)
+        return wrapNativeEventSource(new EventSource(streamUrl))
     }
 
     // Secure mode: fetch-based SSE with Authorization header
@@ -257,14 +393,26 @@ export function createResponseStream(sessionId) {
  */
 function createFetchEventSource(url) {
     const controller = new AbortController()
+    const listeners = new Map([['error', new Set()]])
     const emitter = {
         onmessage: null,
         onerror: null,
         readyState: EventSource.CONNECTING,
+        addEventListener(type, cb) {
+            if (!listeners.has(type)) listeners.set(type, new Set())
+            listeners.get(type).add(cb)
+        },
+        removeEventListener(type, cb) {
+            listeners.get(type)?.delete(cb)
+        },
         close() {
             this.readyState = EventSource.CLOSED
             controller.abort()
         },
+    }
+    const emitError = (event) => {
+        listeners.get('error')?.forEach((cb) => cb(event))
+        emitter.onerror?.(event)
     }
 
     ;(async () => {
@@ -277,7 +425,7 @@ function createFetchEventSource(url) {
             if (!res.ok) {
                 log.warn('SSE HTTP not OK', { url, status: res.status })
                 emitter.readyState = EventSource.CLOSED
-                emitter.onerror?.(new Event('error'))
+                emitError(new Event('error'))
                 return
             }
 
@@ -292,15 +440,19 @@ function createFetchEventSource(url) {
                 if (done) break
 
                 buffer += decoder.decode(value, { stream: true })
-                const lines = buffer.split('\n')
-                buffer = lines.pop() // keep incomplete line in buffer
+                const events = buffer.split('\n\n')
+                buffer = events.pop() // keep incomplete SSE event in buffer
 
-                for (const line of lines) {
-                    if (line.startsWith('data:')) {
-                        const data = line.slice(5).trim()
-                        if (data) {
-                            emitter.onmessage?.({ data })
+                for (const eventChunk of events) {
+                    const lines = eventChunk.split('\n')
+                    const dataLines = []
+                    for (const line of lines) {
+                        if (line.startsWith('data:')) {
+                            dataLines.push(line.slice(5).trim())
                         }
+                    }
+                    if (dataLines.length > 0) {
+                        emitter.onmessage?.({ data: dataLines.join('\n') })
                     }
                 }
             }
@@ -310,12 +462,41 @@ function createFetchEventSource(url) {
             if (err.name !== 'AbortError') {
                 log.error('SSE fetch failed', url, err)
                 emitter.readyState = EventSource.CLOSED
-                emitter.onerror?.(new Event('error'))
+                emitError(new Event('error'))
             }
         }
     })()
 
     return emitter
+}
+
+function wrapNativeEventSource(source) {
+    return {
+        get readyState() {
+            return source.readyState
+        },
+        get onmessage() {
+            return source.onmessage
+        },
+        set onmessage(handler) {
+            source.onmessage = handler
+        },
+        get onerror() {
+            return source.onerror
+        },
+        set onerror(handler) {
+            source.onerror = handler
+        },
+        addEventListener(type, cb) {
+            source.addEventListener(type, cb)
+        },
+        removeEventListener(type, cb) {
+            source.removeEventListener(type, cb)
+        },
+        close() {
+            source.close()
+        },
+    }
 }
 
 export { ApiError }

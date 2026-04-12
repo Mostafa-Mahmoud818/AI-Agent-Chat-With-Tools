@@ -130,10 +130,104 @@ body {
   100% { background-position: 200% 0; }
 }
 
+@keyframes slideInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes glow {
+  0%, 100% {
+    box-shadow: 0 0 12px rgba(165, 110, 255, 0.3), var(--shadow-sm);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(165, 110, 255, 0.5), var(--shadow-sm);
+  }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes skeleton {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
 /* ===== Utility ===== */
 .glass {
   background: rgba(22, 22, 42, 0.7);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border-subtle);
+}
+
+.glass-hover {
+  background: rgba(22, 22, 42, 0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--border-subtle);
+  transition: all var(--transition-fast);
+}
+
+.glass-hover:hover {
+  background: rgba(22, 22, 42, 0.8);
+  backdrop-filter: blur(16px);
+  border-color: var(--border-accent);
+}
+
+.skeleton-loading {
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+  background-size: 200% 100%;
+  animation: skeleton 1.5s infinite;
+}
+
+.button-press {
+  transition: all var(--transition-fast);
+}
+
+.button-press:active {
+  transform: scale(0.96);
+}
+
+.focus-ring:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(165, 110, 255, 0.3);
+}
+
+.scrollbar-hidden {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hidden::-webkit-scrollbar {
+  display: none;
 }

@@ -41,10 +41,28 @@ function MenuItems({ items, onItemClick }) {
     )
 }
 
+function resolveMenuItems(payload) {
+    if (!payload || typeof payload !== 'object') return []
+    if (Array.isArray(payload.menuitems)) return payload.menuitems
+    if (Array.isArray(payload.items)) return payload.items
+    return []
+}
+
+function formatHandledBy(value) {
+    if (!value) return null
+    const normalized = String(value).trim().toUpperCase()
+    if (normalized === 'IT_SUPPORT') return 'IT Support'
+    if (normalized === 'CATERING') return 'Catering'
+    if (normalized === 'ERROR') return 'Error'
+    return String(value).replace(/_/g, ' ')
+}
+
 function MessageBubble({ message, onMenuItemClick }) {
     const isAI = message.role === 'ai'
     const isSystem = message.role === 'system'
-    const hasMenu = isAI && message.payload?.subtype === 'menu' && message.payload?.menuitems?.length > 0
+    const menuItems = isAI ? resolveMenuItems(message.payload) : []
+    const hasMenu = isAI && message.payload?.subtype === 'menu' && menuItems.length > 0
+    const handledByLabel = formatHandledBy(message.handledBy)
 
     if (isSystem) {
         return (
@@ -78,11 +96,11 @@ function MessageBubble({ message, onMenuItemClick }) {
                         <div className="message-text">{displayText}</div>
                     )}
                     {hasMenu && (
-                        <MenuItems items={message.payload.menuitems} onItemClick={onMenuItemClick} />
+                        <MenuItems items={menuItems} onItemClick={onMenuItemClick} />
                     )}
                 </div>
-                {isAI && message.handledBy && (
-                    <span className="handled-by">Answered by {message.handledBy}</span>
+                {isAI && handledByLabel && (
+                    <span className="handled-by">Answered by {handledByLabel}</span>
                 )}
             </div>
         </div>

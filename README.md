@@ -4,9 +4,9 @@ A chat application powered by **Camunda 8** with a **multi-agent architecture**.
 
 ## Overview
 
-- **Backend**: Spring Boot 3 + Camunda 8 (Zeebe SaaS). Publishes messages to start chat sessions (`ai-chat-start`) and correlate follow-up replies (`ai-chat-user-reply`). Polls process instance variables for the AI agent's response.
-- **Frontend**: React + Vite chat UI. Sends the initial message, polls for the agent's response, and allows continuous follow-up messages in a chat loop.
-- **Process**: BPMN `ai-agent-chat-with-tools` (v3.0) with a message-based chat loop and multi-agent routing. A keyword-based classifier routes each request to one of four specialized AI Agent subprocesses. After each agent response, the process waits for a user reply message or a 30-minute inactivity timeout.
+- **Frontend**: React + Vite (port 5173) with dual-mode auth (guest cookie or JWT secure). Manages conversations, sessions, and multi-turn messaging.
+- **Backend**: Modulith Service (port 8085) with PostgreSQL and Camunda 8 SaaS integration. Provides REST APIs for conversation/session management and AI orchestration.
+- **Process**: BPMN processes with multi-agent AI routing. A classifier routes requests to specialized agents (User Data, Utility & Web, Catering, General). After each agent response, the process waits for user reply or 30-minute timeout.
 
 ## Multi-Agent Architecture
 
@@ -27,54 +27,48 @@ Each agent maintains **isolated conversation context** — its memory is stored 
 
 ## Prerequisites
 
-- **Java 21**
 - **Node.js** (LTS, e.g. 18+)
-- **Camunda 8** SaaS cluster (with the process and AI agent deployed)
-- **Backend config**: `.env` file in the `Backend/` directory (see below)
+- **Modulith Service** running on port 8085 with:
+  - PostgreSQL database (dxp-chatting schema auto-initialized)
+  - Camunda 8 SaaS cluster configured with AI agents deployed
 
 ## Configuration
 
-The backend loads credentials from a `.env` file (via [spring-dotenv](https://github.com/paulschwarz/spring-dotenv)). Copy the example and fill in your values:
+### Frontend
+
+The frontend connects to the Modulith Service backend (default: `http://localhost:8085`).
+
+To customize the backend URL, copy the `.env` example:
 
 ```bash
-cd Backend
+cd Frontend
 cp .env.example .env
 ```
 
-Then edit `Backend/.env`:
+Then edit `Frontend/.env`:
 
-```dotenv
-CAMUNDA_CLIENT_ID=your-client-id
-CAMUNDA_CLIENT_SECRET=your-client-secret
-CAMUNDA_CLIENT_CLOUD_CLUSTERID=your-cluster-id
-CAMUNDA_CLIENT_CLOUD_REGION=your-region
+```env
+# Backend API origin (Modulith Service); default: http://localhost:8085
+VITE_API_ORIGIN=http://localhost:8085
+
+# Log level (optional): debug | info | warn | error
+# VITE_LOG_LEVEL=debug
 ```
 
-Find your credentials at **https://console.camunda.io** -> your cluster -> **API** tab -> **Client Credentials**.
+### Backend (Modulith Service)
 
-| Variable | Where to find it |
-|---|---|
-| `CAMUNDA_CLIENT_ID` | Camunda Console -> cluster -> API -> Client Credentials |
-| `CAMUNDA_CLIENT_SECRET` | Camunda Console -> cluster -> API -> Client Credentials |
-| `CAMUNDA_CLIENT_CLOUD_CLUSTERID` | Camunda Console -> cluster overview -> Cluster ID |
-| `CAMUNDA_CLIENT_CLOUD_REGION` | Camunda Console -> cluster overview -> Region (e.g. `ric-1`) |
-
-The `.env` file is gitignored. Real environment variables always take precedence over `.env` values.
+Ensure the Modulith Service is configured with:
+- PostgreSQL database (dxp-chatting schema)
+- Camunda 8 SaaS cluster credentials (for Zeebe orchestration)
+- CORS origins to include frontend port (e.g., `http://localhost:5173`)
 
 ## Running the application
 
-### Backend
+### Backend (Modulith Service)
 
-```bash
-cd Backend
-./mvnw spring-boot:run
-```
+Ensure Modulith Service is running on **http://localhost:8085** before starting the frontend.
 
-Runs by default on **http://localhost:8081**. Endpoints:
-
-- `POST /api/chat/start` — body `{ "inputText": "What is the capital of France?" }` → returns `{ "sessionId": "...", "processInstanceKey": "..." }`.
-- `GET /api/chat/{sessionId}/response` — returns `{ "status": "processing"|"ready", "responseText": "...", "handledBy": "..." }`. The `handledBy` field indicates which specialized agent handled the request (e.g., "User Data Agent").
-- `POST /api/chat/{sessionId}/reply` — body `{ "followUpInput": "Follow up question..." }` → sends a follow-up message to the agent.
+See Modulith Service deployment docs for setup and configuration.
 
 ### Frontend
 
@@ -84,20 +78,27 @@ npm install
 npm run dev
 ```
 
-Runs by default on **http://localhost:5173** (or http://127.0.0.1:5173). Point the browser there; the app calls the backend at `http://localhost:8081/api/chat`.
+Opens **http://localhost:5173**. The app automatically connects to the Modulith Service backend.
+
+**Dual-mode authentication:**
+- **Guest**: Auto-generated UUID stored in `ankabut_guest_id` cookie
+- **Secure**: JWT token via `Authorization` header (if available in localStorage)
 
 ## Project structure
 
 ```
-├── Backend/                 # Spring Boot + Camunda 8
-│   ├── .env.example         # Environment variable template (copy to .env)
-│   ├── src/main/java/       # ChatController, ChatService, CamundaRestClient, config, DTOs, model
-│   └── src/main/resources/  # application.yaml.template, config
-├── Frontend/                # React + Vite
+├── DOCUMENTATION.md                    # Detailed technical reference
+├── Frontend/                           # React + Vite dual-auth chat UI
 │   ├── src/
-│   │   ├── components/      # ChatWindow, ChatInput, MessageBubble, ThinkingIndicator
-│   │   └── services/        # api.js (startChat, getResponse, sendReply)
+│   │   ├── components/                 # ChatWindow, ChatInput, MessageBubble, etc.
+│   │   ├── services/api.js             # Modulith Service REST client (guest + JWT)
+│   │   └── utils/                      # Logging, message parsing
+│   ├── .env.example                    # Frontend config template
 │   └── package.json
+├── docs/                               # Feature-specific documentation
+│   └── catering-service.md
+└── README.md                           # This file
+```
 ├── ai agent chat with tools.bpmn   # Process definition (v3.0, multi-agent)
 ├── ai agent chat *.form            # Form definitions (legacy, not used by v3.0)
 └── README.md                       # This file

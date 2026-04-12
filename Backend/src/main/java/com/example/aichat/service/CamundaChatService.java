@@ -22,7 +22,8 @@ import java.util.UUID;
 public class CamundaChatService {
 
     private static final Logger log = LoggerFactory.getLogger(CamundaChatService.class);
-    private static final String[] TERMINAL_STATES = { "COMPLETED", "CANCELED" };
+    /** Camunda v2 process-instances search filter: ACTIVE | COMPLETED | TERMINATED (not CANCELED). */
+    private static final String[] TERMINAL_STATES = { "COMPLETED", "TERMINATED" };
 
     private static final String VAR_SESSION_ID = "sessionId";
     private static final String VAR_INPUT_TEXT = "inputText";

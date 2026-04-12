@@ -1,5 +1,16 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { createConversation, startOrchestration, sendReply, createResponseStream, ApiError } from '../services/api'
+import PropTypes from 'prop-types'
+import {
+    createConversation,
+    startOrchestration,
+    sendReply,
+    createResponseStream,
+    fetchAllConversationTurns,
+    getSessionsForConversation,
+    createSessionInConversation,
+    ApiError,
+} from '../services/api'
+import { parseAgentMessage, turnsToMessages } from '../utils/agentMessage.js'
 import { createLogger } from '../utils/logger.js'
 import MessageBubble from './MessageBubble'
 import ChatInput from './ChatInput'
@@ -9,6 +20,12 @@ import './ChatWindow.css'
 
 const log = createLogger('ChatWindow')
 
+/**
+ * Quick prompt suggestions for new conversations.
+ * These are demo examples — actual routing and handling is determined by the backend
+ * AI orchestration service based on intent classification.
+ * Supported route categories: IT_SUPPORT, CATERING
+ */
 const QUICK_PROMPTS = [
     'Show me the catering menu',
     'What IT support topics are available?',
@@ -21,17 +38,66 @@ function isSessionGone(err) {
         (err.errorCode === 'session_expired' || err.status === 410)
 }
 
-export default function ChatWindow() {
+/**
+ * Resolves the active session for a conversation.
+ * 
+ * SessionStatus enum values (from backend):
+ * - ACTIVE: Session is actively processing
+ * - TIMED_OUT: Session expired due to inactivity
+ * - ENDED: Session completed normally
+ * - ERROR: Session encountered an error
+ * 
+ * If an active session exists, it is resumed. Otherwise, a new session is created
+ * and the latest previous session ID is tracked for context resumption.
+ */
+async function resolveSessionForConversation(conversationId) {
+    const page = await getSessionsForConversation(conversationId, { page: 0, size: 50 })
+    const sessions = page.content || []
+    
+    // Look for active session first
+    const activeSession = sessions.find((s) => {
+        // Backend returns SessionStatus enum (ACTIVE, TIMED_OUT, ENDED, ERROR)
+        const status = s.status?.toString?.() ?? s.status
+        return status === 'ACTIVE'
+    })
+    
+    if (activeSession) {
+        log.debug('Found active session', { sessionId: activeSession.id })
+        return { sessionId: activeSession.id, previousSessionId: null, createdNew: false }
+    }
+    
+    // No active session — create a new one and reference the most recent for context
+    const prevLatest = sessions[0] ?? null
+    const newSession = await createSessionInConversation(conversationId, null)
+    
+    log.info('Created new session', {
+        sessionId: newSession.id,
+        previousSessionId: prevLatest?.id ?? null,
+    })
+    
+    return {
+        sessionId: newSession.id,
+        previousSessionId: prevLatest?.id ?? null,
+        createdNew: true,
+    }
+}
+
+export default function ChatWindow({
+    sidebarConversationId = null,
+    onNewChat: onNewChatParent,
+    onConversationCreated,
+}) {
     const [messages, setMessages] = useState([])
     const [conversationId, setConversationId] = useState(null)
     const [sessionId, setSessionId] = useState(null)
     const [phase, setPhase] = useState('idle') // idle | thinking | ready | expired
     const [error, setError] = useState(null)
     const [sending, setSending] = useState(false)
+    const [conversationLoading, setConversationLoading] = useState(false)
+    const [firstOutgoingNeedsStart, setFirstOutgoingNeedsStart] = useState(false)
+    const [resumePreviousSessionId, setResumePreviousSessionId] = useState(null)
     const messagesEndRef = useRef(null)
-    // Ref to the ChatInput for programmatic focus
     const chatInputRef = useRef(null)
-    // Ref to the active EventSource; null when no stream is open
     const esRef = useRef(null)
 
     const scrollToBottom = useCallback(() => {
@@ -46,7 +112,6 @@ export default function ChatWindow() {
         log.debug('phase', phase)
     }, [phase])
 
-    // Close any open SSE stream on unmount
     useEffect(() => {
         return () => {
             if (esRef.current) {
@@ -57,7 +122,7 @@ export default function ChatWindow() {
     }, [])
 
     const addMessage = useCallback((role, text, handledBy = null, payload = null) => {
-        setMessages(prev => [...prev, { id: crypto.randomUUID(), role, text, timestamp: new Date(), handledBy, payload }])
+        setMessages((prev) => [...prev, { id: crypto.randomUUID(), role, text, timestamp: new Date(), handledBy, payload }])
     }, [])
 
     const stopStreaming = useCallback(() => {
@@ -73,38 +138,94 @@ export default function ChatWindow() {
         addMessage('system', 'Session has expired due to inactivity. Please start a new conversation.')
     }, [stopStreaming, addMessage])
 
-    /**
-     * Opens a Server-Sent Events connection for the given session.
-     * The backend pushes a ChatResponseDTO once the Camunda process produces
-     * a response; the stream self-closes on terminal statuses.
-     */
+    /** When parent clears sidebar selection, reset local chat state. */
+    useEffect(() => {
+        if (sidebarConversationId != null) return
+        stopStreaming()
+        setMessages([])
+        setConversationId(null)
+        setSessionId(null)
+        setPhase('idle')
+        setError(null)
+        setSending(false)
+        setConversationLoading(false)
+        setFirstOutgoingNeedsStart(false)
+        setResumePreviousSessionId(null)
+    }, [sidebarConversationId, stopStreaming])
+
+    /** Load history + session when user picks a conversation in the sidebar. */
+    useEffect(() => {
+        if (!sidebarConversationId) return undefined
+
+        let cancelled = false
+
+        async function load() {
+            stopStreaming()
+            setConversationLoading(true)
+            setError(null)
+            setFirstOutgoingNeedsStart(false)
+            setResumePreviousSessionId(null)
+            try {
+                const turns = await fetchAllConversationTurns(sidebarConversationId)
+                if (cancelled) return
+                const sessionInfo = await resolveSessionForConversation(sidebarConversationId)
+                if (cancelled) return
+                setMessages(turnsToMessages(turns))
+                setConversationId(sidebarConversationId)
+                setSessionId(sessionInfo.sessionId)
+                setFirstOutgoingNeedsStart(sessionInfo.createdNew)
+                setResumePreviousSessionId(sessionInfo.previousSessionId)
+                setPhase(turns.length > 0 ? 'ready' : 'idle')
+                setTimeout(() => chatInputRef.current?.focus(), 50)
+            } catch (err) {
+                if (cancelled) return
+                log.error('Failed to load conversation', err)
+                const msg = err instanceof ApiError ? err.message : 'Failed to load conversation'
+                setError(msg)
+                setMessages([])
+                setConversationId(null)
+                setSessionId(null)
+                setPhase('idle')
+            } finally {
+                if (!cancelled) setConversationLoading(false)
+            }
+        }
+
+        load()
+        return () => {
+            cancelled = true
+        }
+    }, [sidebarConversationId, stopStreaming])
+
     const startStreaming = useCallback((sid) => {
         stopStreaming()
 
         const es = createResponseStream(sid)
         esRef.current = es
+        let terminalHandled = false
+
+        const setReadyWithError = (message) => {
+            terminalHandled = true
+            stopStreaming()
+            setError(message)
+            setPhase('ready')
+            setTimeout(() => chatInputRef.current?.focus(), 100)
+        }
 
         es.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data)
+                // Backend emits processing -> terminal (ready/error/expired); only terminal events close stream.
+                if (data.status === 'processing') {
+                    setPhase('thinking')
+                    return
+                }
 
                 if (data.status === 'ready' && data.message) {
                     log.info('SSE assistant ready', { handledBy: data.handledBy, messageChars: data.message?.length })
+                    terminalHandled = true
                     stopStreaming()
-                    // Try to parse structured JSON response from agents like catering
-                    let text = data.message
-                    let payload = null
-                    try {
-                        const parsed = JSON.parse(data.message)
-                        if (parsed && parsed.replyType) {
-                            text = parsed.textString || data.message
-                            if (parsed.replyType === 'json' && parsed.payload) {
-                                payload = parsed.payload
-                            }
-                        }
-                    } catch {
-                        // Not JSON — use raw message as-is
-                    }
+                    const { text, payload } = parseAgentMessage(data.message)
                     addMessage('ai', text, data.handledBy, payload)
                     setPhase('ready')
                     setError(null)
@@ -114,15 +235,13 @@ export default function ChatWindow() {
 
                 if (data.status === 'error') {
                     log.warn('SSE assistant error', { message: data.message })
-                    stopStreaming()
-                    setError(data.message || 'An error occurred while processing your request.')
-                    setPhase('ready')
-                    setTimeout(() => chatInputRef.current?.focus(), 100)
+                    setReadyWithError(data.message || 'An error occurred while processing your request.')
                     return
                 }
 
                 if (data.status === 'expired') {
                     log.info('SSE session expired event')
+                    terminalHandled = true
                     stopStreaming()
                     handleSessionExpired()
                 }
@@ -131,20 +250,18 @@ export default function ChatWindow() {
             }
         }
 
-        // Fallback: if backend sends a named "error" event, handle it like onmessage
         es.addEventListener('error', (event) => {
             if (event.data) {
                 try {
                     const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data
                     if (data.status === 'expired') {
+                        terminalHandled = true
                         stopStreaming()
                         handleSessionExpired()
                         return
                     }
                     if (data.status === 'error' || data.message) {
-                        stopStreaming()
-                        setError(data.message || 'An error occurred.')
-                        setPhase('ready')
+                        setReadyWithError(data.message || 'An error occurred.')
                     }
                 } catch {
                     // ignore parse errors
@@ -153,18 +270,16 @@ export default function ChatWindow() {
         })
 
         es.onerror = () => {
-            // EventSource auto-reconnects on transient errors; only act on a closed stream
+            if (terminalHandled) return
             if (es.readyState === EventSource.CLOSED) {
                 log.warn('SSE connection closed', { sessionId: sid })
-                stopStreaming()
-                setError('Connection lost. Please try again.')
-                setPhase('ready')
+                setReadyWithError('Connection lost. Please try again.')
             }
         }
     }, [addMessage, stopStreaming, handleSessionExpired])
 
     const handleSendMessage = useCallback(async (text) => {
-        if (sending) return
+        if (sending || conversationLoading) return
 
         setError(null)
         setSending(true)
@@ -173,13 +288,20 @@ export default function ChatWindow() {
 
         try {
             if (!sessionId) {
-                // 1. Create conversation + first session
                 const { conversationId: convId, sessionId: sessId } = await createConversation(text)
                 setConversationId(convId)
                 setSessionId(sessId)
-                // 2. Start Camunda orchestration on the session
+                setFirstOutgoingNeedsStart(false)
+                setResumePreviousSessionId(null)
+                onConversationCreated?.()
                 await startOrchestration(sessId, text)
                 startStreaming(sessId)
+            } else if (firstOutgoingNeedsStart) {
+                const prev = resumePreviousSessionId || undefined
+                await startOrchestration(sessionId, text, prev)
+                setFirstOutgoingNeedsStart(false)
+                setResumePreviousSessionId(null)
+                startStreaming(sessionId)
             } else {
                 await sendReply(sessionId, text)
                 startStreaming(sessionId)
@@ -206,7 +328,17 @@ export default function ChatWindow() {
         } finally {
             setSending(false)
         }
-    }, [sessionId, sending, addMessage, startStreaming, handleSessionExpired])
+    }, [
+        sessionId,
+        sending,
+        conversationLoading,
+        firstOutgoingNeedsStart,
+        resumePreviousSessionId,
+        addMessage,
+        startStreaming,
+        handleSessionExpired,
+        onConversationCreated,
+    ])
 
     const handleNewChat = useCallback(() => {
         log.info('New chat — reset state')
@@ -217,7 +349,14 @@ export default function ChatWindow() {
         setPhase('idle')
         setError(null)
         setSending(false)
-    }, [stopStreaming])
+        setConversationLoading(false)
+        setFirstOutgoingNeedsStart(false)
+        setResumePreviousSessionId(null)
+        onNewChatParent?.()
+    }, [stopStreaming, onNewChatParent])
+
+    const showEmptyState = messages.length === 0 && phase === 'idle' && !conversationLoading
+    const showNewChatBtn = messages.length > 0 || conversationId != null || sessionId != null
 
     return (
         <div className="chat-window glass">
@@ -229,11 +368,17 @@ export default function ChatWindow() {
                     <div className="chat-header-info">
                         <h1>AI Agent</h1>
                         <span className="chat-status">
-                            {phase === 'thinking' ? 'Processing...' : phase === 'expired' ? 'Session expired' : 'Powered by Camunda'}
+                            {conversationLoading
+                                ? 'Loading…'
+                                : phase === 'thinking'
+                                  ? 'Processing...'
+                                  : phase === 'expired'
+                                    ? 'Session expired'
+                                    : 'Powered by Camunda'}
                         </span>
                     </div>
                 </div>
-                {messages.length > 0 && (
+                {showNewChatBtn && (
                     <button className="new-chat-btn" onClick={handleNewChat} title="New conversation" aria-label="Start new conversation">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
@@ -244,7 +389,13 @@ export default function ChatWindow() {
             </div>
 
             <div className="chat-messages" role="list" aria-label="Chat messages">
-                {messages.length === 0 && phase === 'idle' && (
+                {conversationLoading && (
+                    <div className="conversation-loading-banner" aria-live="polite">
+                        Loading conversation…
+                    </div>
+                )}
+
+                {showEmptyState && (
                     <div className="empty-state">
                         <div className="empty-icon">
                             <SparkIcon size={48} withCircle />
@@ -252,7 +403,7 @@ export default function ChatWindow() {
                         <h2>How can I help you today?</h2>
                         <p>I'm an AI agent that can help you browse our catering menu and get IT support — search knowledge base articles and create support tickets.</p>
                         <div className="quick-prompts">
-                            {QUICK_PROMPTS.map(prompt => (
+                            {QUICK_PROMPTS.map((prompt) => (
                                 <button key={prompt} className="quick-prompt" onClick={() => handleSendMessage(prompt)}>
                                     {prompt}
                                 </button>
@@ -261,7 +412,7 @@ export default function ChatWindow() {
                     </div>
                 )}
 
-                {messages.map(msg => (
+                {messages.map((msg) => (
                     <MessageBubble key={msg.id} message={msg} onMenuItemClick={handleSendMessage} />
                 ))}
 
@@ -289,7 +440,7 @@ export default function ChatWindow() {
             </div>
 
             <div className="chat-bottom">
-                {(phase === 'idle' || phase === 'ready') && (
+                {(phase === 'idle' || phase === 'ready') && !conversationLoading && (
                     <ChatInput
                         ref={chatInputRef}
                         onSend={handleSendMessage}
@@ -313,4 +464,10 @@ export default function ChatWindow() {
             </div>
         </div>
     )
+}
+
+ChatWindow.propTypes = {
+    sidebarConversationId: PropTypes.string,
+    onNewChat: PropTypes.func,
+    onConversationCreated: PropTypes.func,
 }
