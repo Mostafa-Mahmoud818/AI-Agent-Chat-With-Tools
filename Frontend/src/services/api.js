@@ -13,7 +13,8 @@
  *
  * Data Types and Enums:
  * - SessionStatus: ACTIVE | TIMED_OUT | ENDED | ERROR
- * - RouteCategory: IT_SUPPORT | CATERING | ERROR
+ * - RouteCategory (persisted on TurnDto, enum name): CATERING | IT_SUPPORT | FACILITIES_MAINTENANCE | ERROR
+ *   Classifier / Camunda wire token for F&M is facilities_maintenance (maps to FACILITIES_MAINTENANCE in DB).
  * - AgentResponseStatus (wire format): ready | processing | error | expired
  */
 
@@ -283,7 +284,7 @@ export async function createSessionInConversation(conversationId, summary = null
  * @param {string} inputText - User's initial message (truncated to 50 chars for title)
  * @returns {Promise<{ conversationId: UUID, sessionId: UUID }>}
  */
-export async function createConversation(inputText) {
+export async function createConversation(inputText, displayText = null) {
     const base = getApiBase()
     const title = inputText.length > 50 ? inputText.substring(0, 50) + '…' : inputText
 
@@ -312,22 +313,30 @@ export async function createConversation(inputText) {
  * Starts Camunda 8 orchestration process for a session.
  * 
  * Backend: POST /api/v1/public(or /secure)/chatting/orchestration/sessions/{id}/start
- * Request: { inputText: string, previousSessionId?: UUID }
+ * Request: { inputText: string, previousSessionId?: UUID, resourceId?: string }
  * Response: { sessionId: UUID, processInstanceKey: bigint }
  * 
  * This initiates the agentic workflow that classifies the user input and routes
- * to the appropriate handler (IT_SUPPORT, CATERING, etc.)
+ * to the appropriate handler (catering, it_support, facilities_maintenance, or error paths).
+ *
+ * `resourceId` is forwarded to Camunda (e.g. catering restaurant/resource id). Optional.
+ * Production DXP portals embedding this client should pass the same `resourceId` for catering (BRD BR-06) and mirror the demo menu UX (pagination, selection messages with UUIDs).
  * 
  * @param {string} sessionId - UUID of session to activate
  * @param {string} inputText - User message to start orchestration with
  * @param {string|null} previousSessionId - Optional previous session for context
+ * @param {string|null|undefined} resourceId - Optional resource id for catering tools (maps to process variable)
  * @returns {Promise<{ sessionId: UUID, processInstanceKey: bigint }>}
  */
-export async function startOrchestration(sessionId, inputText, previousSessionId = null) {
+export async function startOrchestration(sessionId, inputText, previousSessionId = null, resourceId = undefined, displayText = null) {
     const base = getApiBase()
     const qp = clientIdParam()
-    const body = { inputText }
-    if (previousSessionId) body.previousSessionId = previousSessionId
+    const body = {
+        inputText,
+        ...(previousSessionId ? { previousSessionId } : {}),
+        ...(resourceId != null && String(resourceId).trim() !== '' ? { resourceId: String(resourceId).trim() } : {}),
+        ...(displayText && displayText.trim() ? { displayText: displayText.trim() } : {}),
+    }
 
     const res = await post(`${base}/orchestration/sessions/${sessionId}/start${qp}`, body)
     const data = await unwrapResponse(res)
@@ -337,19 +346,32 @@ export async function startOrchestration(sessionId, inputText, previousSessionId
 
 /**
  * Sends a follow-up user message to an active orchestration process.
- * 
+ *
  * Backend: POST /api/v1/public(or /secure)/chatting/orchestration/sessions/{id}/user-messages
- * Request: { followUpInput: string }
- * Response: void (202 Accepted)
- * 
+ * Request: { followUpInput: string, displayText?: string, clientMessageId?: UUID }
+ * Response: void (202 Accepted) — or 409 Conflict if `clientMessageId` was already delivered.
+ *
+ * The `clientMessageId` is generated client-side (one UUID per logical send) and persisted
+ * server-side in a dedup table (24h retention). If a retry / double-submit reaches the backend
+ * with the same id, the server rejects it with 409 instead of producing a duplicate user turn.
+ * Callers can pass an explicit id to keep it stable across retries; if omitted, a fresh UUID
+ * is generated per call (so every call is treated as distinct).
+ *
  * @param {string} sessionId - UUID of the active session
  * @param {string} followUpInput - Follow-up message text
+ * @param {string|null} displayText - Optional human-friendly rendering (e.g. menu selection)
+ * @param {string|null} clientMessageId - Optional stable UUID for retry-safe delivery
  */
-export async function sendReply(sessionId, followUpInput) {
+export async function sendReply(sessionId, followUpInput, displayText = null, clientMessageId = null) {
     const base = getApiBase()
     const qp = clientIdParam()
-    log.info('Sending follow-up', { sessionId, chars: followUpInput?.length ?? 0 })
-    await post(`${base}/orchestration/sessions/${sessionId}/user-messages${qp}`, { followUpInput })
+    const messageId = clientMessageId ?? crypto.randomUUID()
+    log.info('Sending follow-up', { sessionId, chars: followUpInput?.length ?? 0, clientMessageId: messageId })
+    await post(`${base}/orchestration/sessions/${sessionId}/user-messages${qp}`, {
+        followUpInput,
+        clientMessageId: messageId,
+        ...(displayText && displayText.trim() ? { displayText: displayText.trim() } : {}),
+    })
 }
 
 /**
