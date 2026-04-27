@@ -1,6 +1,18 @@
-import { describe, it, expect } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, fireEvent } from '@testing-library/react'
 import MessageBubble from '../MessageBubble'
+
+function makeItems(count, { product = false } = {}) {
+    return Array.from({ length: count }, (_, i) => ({
+        id: `i${i + 1}`,
+        label: `Item ${i + 1}`,
+        description: product ? null : `Desc ${i + 1}`,
+        price: product ? i : null,
+        code: product ? String(100 + i) : null,
+        categoryId: null,
+        status: product ? 'AVAILABLE' : null,
+    }))
+}
 
 describe('MessageBubble', () => {
     it('renders user message as plain text', () => {
@@ -14,7 +26,19 @@ describe('MessageBubble', () => {
         const msg = { id: 'a1', role: 'ai', text: '**Bold text**', timestamp: new Date(), handledBy: 'Catering Agent' }
         render(<MessageBubble message={msg} />)
         expect(screen.getByText('Bold text')).toBeInTheDocument()
-        expect(screen.getByText('Answered by Catering Agent')).toBeInTheDocument()
+        expect(screen.getByText('Answered by Catering')).toBeInTheDocument()
+    })
+
+    it('renders persisted FACILITIES_MAINTENANCE route as Facilities & Maintenance subtitle', () => {
+        const msg = {
+            id: 'a-fm',
+            role: 'ai',
+            text: 'We can help with that.',
+            timestamp: new Date(),
+            handledBy: 'FACILITIES_MAINTENANCE',
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText('Answered by Facilities & Maintenance')).toBeInTheDocument()
     })
 
     it('renders system message with status role', () => {
@@ -37,5 +61,148 @@ describe('MessageBubble', () => {
         const link = screen.getByText('Click here')
         expect(link).toHaveAttribute('target', '_blank')
         expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+    })
+
+    it('paginates menu items at page size 6 and advances on Next', () => {
+        const msg = {
+            id: 'm1',
+            role: 'ai',
+            text: 'Here are the categories.',
+            timestamp: new Date(),
+            payload: { subtype: 'menu', menuitems: makeItems(14) },
+        }
+        render(<MessageBubble message={msg} />)
+        // Page 1: items 1–6 visible, 7 not
+        expect(screen.getByText('Item 1')).toBeInTheDocument()
+        expect(screen.getByText('Item 6')).toBeInTheDocument()
+        expect(screen.queryByText('Item 7')).not.toBeInTheDocument()
+        expect(screen.getByText('Page 1 of 3')).toBeInTheDocument()
+
+        fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
+        expect(screen.getByText('Item 7')).toBeInTheDocument()
+        expect(screen.queryByText('Item 1')).not.toBeInTheDocument()
+        expect(screen.getByText('Page 2 of 3')).toBeInTheDocument()
+
+        fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
+        expect(screen.getByText('Page 3 of 3')).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Next page' })).toBeDisabled()
+    })
+
+    it('hides pagination footer when item count <= page size', () => {
+        const msg = {
+            id: 'm2',
+            role: 'ai',
+            text: 'Short list',
+            timestamp: new Date(),
+            payload: { subtype: 'menu', menuitems: makeItems(6) },
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.queryByRole('navigation', { name: 'Menu pagination' })).not.toBeInTheDocument()
+    })
+
+    it('renders product cards with code badge and no description', () => {
+        const msg = {
+            id: 'm3',
+            role: 'ai',
+            text: 'Products',
+            timestamp: new Date(),
+            payload: { subtype: 'menu', menuitems: makeItems(2, { product: true }) },
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText('#100')).toBeInTheDocument()
+        expect(screen.getByText('#101')).toBeInTheDocument()
+        // BRD NFR-05: zero price as $0.0
+        expect(screen.getByText('$0.0')).toBeInTheDocument()
+        // Description is not rendered for products
+        expect(screen.queryByText(/^Desc /)).not.toBeInTheDocument()
+    })
+
+    it('passes full menu item to onMenuItemClick when a card is pressed', () => {
+        const onMenuItemClick = vi.fn()
+        const item = { id: 'uuid-cat-1', label: 'Drinks', description: 'Cold and hot' }
+        const msg = {
+            id: 'm-cat',
+            role: 'ai',
+            text: 'Categories',
+            timestamp: new Date(),
+            payload: { subtype: 'menu', menuitems: [item] },
+        }
+        render(<MessageBubble message={msg} onMenuItemClick={onMenuItemClick} />)
+        fireEvent.click(screen.getByRole('button', { name: /Drinks/i }))
+        expect(onMenuItemClick).toHaveBeenCalledTimes(1)
+        expect(onMenuItemClick).toHaveBeenCalledWith(
+            expect.objectContaining({ id: 'uuid-cat-1', label: 'Drinks' }),
+            undefined,
+        )
+    })
+
+    it('passes handledBy as second arg to onMenuItemClick for route-aware menu prefix', () => {
+        const onMenuItemClick = vi.fn()
+        const item = { id: 'area-1', label: 'Network', description: '' }
+        const msg = {
+            id: 'm-it',
+            role: 'ai',
+            text: 'Areas',
+            timestamp: new Date(),
+            handledBy: 'IT_SUPPORT',
+            payload: { subtype: 'menu', menuitems: [item] },
+        }
+        render(<MessageBubble message={msg} onMenuItemClick={onMenuItemClick} />)
+        fireEvent.click(screen.getByRole('button', { name: /Network/i }))
+        expect(onMenuItemClick).toHaveBeenCalledWith(expect.objectContaining({ id: 'area-1' }), 'IT_SUPPORT')
+    })
+
+    it('renders empty-menu copy when subtype is menu but list is empty', () => {
+        const msg = {
+            id: 'm4',
+            role: 'ai',
+            text: 'Here are the categories.',
+            timestamp: new Date(),
+            payload: { subtype: 'menu', menuitems: [] },
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText('No items are currently available. Please try again later or contact support.')).toBeInTheDocument()
+    })
+
+    it('renders error copy when subtype is error and suppresses textString', () => {
+        const msg = {
+            id: 'm5',
+            role: 'ai',
+            text: 'this text must not leak',
+            timestamp: new Date(),
+            payload: { subtype: 'error', menuitems: [], order: null },
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText('Something went wrong while loading the menu. Please try again or contact support if the issue persists.')).toBeInTheDocument()
+        expect(screen.queryByText('this text must not leak')).not.toBeInTheDocument()
+    })
+})
+
+describe('MessageBubble user message displayText', () => {
+    it('renders displayText instead of text for user messages when displayText is present', () => {
+        const message = {
+            id: 'u1',
+            role: 'user',
+            text: '[catering-menu] Selected category "Drinks" (id: 05d5752f).',
+            displayText: 'Drinks',
+            timestamp: new Date(),
+        }
+        render(<MessageBubble message={message} />)
+        expect(screen.getByText('Drinks')).toBeInTheDocument()
+        expect(
+            screen.queryByText('[catering-menu] Selected category "Drinks" (id: 05d5752f).')
+        ).not.toBeInTheDocument()
+    })
+
+    it('falls back to text when displayText is null', () => {
+        const message = {
+            id: 'u2',
+            role: 'user',
+            text: 'Show me the menu',
+            displayText: null,
+            timestamp: new Date(),
+        }
+        render(<MessageBubble message={message} />)
+        expect(screen.getByText('Show me the menu')).toBeInTheDocument()
     })
 })

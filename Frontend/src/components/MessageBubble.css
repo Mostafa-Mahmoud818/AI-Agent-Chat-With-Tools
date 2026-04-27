@@ -323,3 +323,273 @@
     font-size: 12px;
     line-height: 1.4;
 }
+
+/* ===== Product variant (code badge) ===== */
+.menu-card.product .menu-card-header {
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.menu-card-code {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-muted);
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-variant-numeric: tabular-nums;
+    padding: 1px 6px;
+    border-radius: var(--radius-full);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-subtle);
+    margin-left: auto;
+    white-space: nowrap;
+}
+
+.menu-card.product .menu-card-price {
+    margin-left: 0;
+}
+
+/* ===== Menu Pagination ===== */
+.menu-items-container {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.menu-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 4px;
+    padding-top: 6px;
+    border-top: 1px solid var(--border-subtle);
+}
+
+.menu-pager-btn {
+    padding: 4px 10px;
+    font-size: 12px;
+    font-family: inherit;
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.menu-pager-btn:hover:not([disabled]) {
+    background: rgba(165, 110, 255, 0.12);
+    border-color: var(--border-accent);
+}
+
+.menu-pager-btn[disabled] {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.menu-pager-info {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+/* ===== Empty menu & error state copy ===== */
+.menu-empty,
+.menu-error {
+    margin-top: 8px;
+    padding: 10px 12px;
+    font-size: 13px;
+    line-height: 1.45;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-subtle);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text-secondary);
+}
+
+.menu-error {
+    border-color: rgba(239, 68, 68, 0.3);
+    background: rgba(239, 68, 68, 0.08);
+    color: #fca5a5;
+}
+
+/* ===== Handled-by label ===== */
+.handled-by {
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border-subtle);
+    align-self: flex-start;
+    line-height: 1.6;
+    letter-spacing: 0.01em;
+}
+
+/* ===== Order Confirmation Card ===== */
+.order-confirmation-card {
+    margin-top: 10px;
+    padding: 12px 14px;
+    background: rgba(34, 197, 94, 0.06);
+    border: 1px solid rgba(34, 197, 94, 0.25);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.order-confirmation-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #4ade80;
+}
+
+.order-confirmation-header svg {
+    flex-shrink: 0;
+    stroke: #4ade80;
+}
+
+.order-confirmation-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.order-meta-item {
+    display: flex;
+    gap: 8px;
+    font-size: 12px;
+    align-items: baseline;
+}
+
+.order-meta-label {
+    color: var(--text-secondary);
+    min-width: 64px;
+    flex-shrink: 0;
+}
+
+.order-meta-value {
+    color: var(--text-primary);
+    font-weight: 500;
+    word-break: break-all;
+}
+
+.order-status {
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    color: #4ade80;
+}
+
+.order-confirmation-items {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-top: 4px;
+    border-top: 1px solid rgba(34, 197, 94, 0.15);
+}
+
+.order-total {
+    color: #4ade80;
+    font-weight: 600;
+}
+
+.order-date {
+    color: var(--text-secondary);
+    font-size: 11px;
+}
+
+.order-item-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    gap: 8px;
+}
+
+.order-item-name {
+    color: var(--text-primary);
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.order-item-right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.order-item-qty {
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.order-item-total {
+    color: var(--text-primary);
+    font-weight: 500;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ===== Ticket Card ===== */
+.ticket-card {
+    margin-top: 10px;
+    padding: 12px 14px;
+    background: rgba(99, 102, 241, 0.06);
+    border: 1px solid rgba(99, 102, 241, 0.25);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.ticket-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #818cf8;
+}
+
+.ticket-card-header svg {
+    flex-shrink: 0;
+    stroke: #818cf8;
+}
+
+.ticket-card-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.ticket-meta-item {
+    display: flex;
+    gap: 8px;
+    font-size: 12px;
+    align-items: baseline;
+}
+
+.ticket-meta-label {
+    color: var(--text-secondary);
+    min-width: 64px;
+    flex-shrink: 0;
+}
+
+.ticket-meta-value {
+    color: var(--text-primary);
+    font-weight: 500;
+    word-break: break-all;
+}
+
+.ticket-status {
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    color: #818cf8;
+}

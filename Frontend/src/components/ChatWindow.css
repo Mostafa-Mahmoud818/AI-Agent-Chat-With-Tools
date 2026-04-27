@@ -141,9 +141,18 @@
 .empty-state p {
     font-size: 14px;
     color: var(--text-secondary);
-    max-width: 400px;
+    max-width: 440px;
     line-height: 1.6;
     margin-bottom: 24px;
+}
+
+.empty-state .env-hint {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12px;
+    background: rgba(165, 110, 255, 0.12);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--text-primary);
 }
 
 .quick-prompts {
@@ -216,7 +225,6 @@
 
 .error-dismiss:hover {
     background: rgba(239, 68, 68, 0.15);
-}
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-full);
     background: var(--bg-tertiary);

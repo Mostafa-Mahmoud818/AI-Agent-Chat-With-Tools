@@ -11,6 +11,14 @@ import {
     ApiError,
 } from '../services/api'
 import { parseAgentMessage, turnsToMessages } from '../utils/agentMessage.js'
+import { formatMenuSelectionMessage } from '../utils/menuSelection.js'
+import {
+    cacheLevel,
+    getCachedLevel,
+    invalidateSession,
+    isRestartIntent,
+    setActiveSession,
+} from '../utils/menuCache.js'
 import { createLogger } from '../utils/logger.js'
 import MessageBubble from './MessageBubble'
 import ChatInput from './ChatInput'
@@ -24,14 +32,23 @@ const log = createLogger('ChatWindow')
  * Quick prompt suggestions for new conversations.
  * These are demo examples — actual routing and handling is determined by the backend
  * AI orchestration service based on intent classification.
- * Supported route categories: IT_SUPPORT, CATERING
+ * Supported route categories: catering, it_support, facilities_maintenance (see TurnDto routeCategory enum).
  */
 const QUICK_PROMPTS = [
-    'Show me the catering menu',
-    'What IT support topics are available?',
-    'I need help with my VPN connection',
+    'Show me the catering products menu',
+    'Show me the catering product categories',
     'Create a support ticket for my laptop issue',
+    'I need help with my VPN connection',
+    'Submit a facilities & maintenance request',
+    'The AC in meeting room 3 is not working',
+    'I need cleaning scheduled for my office',
 ]
+
+/** Optional Spanterk/restaurant resource id — sent as `resourceId` on orchestration start (see .env.example). */
+function getCateringResourceId() {
+    const v = import.meta.env.VITE_DEFAULT_CATERING_RESOURCE_ID
+    return v != null && String(v).trim() !== '' ? String(v).trim() : undefined
+}
 
 function isSessionGone(err) {
     return err instanceof ApiError &&
@@ -112,6 +129,11 @@ export default function ChatWindow({
         log.debug('phase', phase)
     }, [phase])
 
+    /** Menu cache is strictly per-session (BRD) — switching sessions clears the previous session's cache. */
+    useEffect(() => {
+        setActiveSession(sessionId)
+    }, [sessionId])
+
     useEffect(() => {
         return () => {
             if (esRef.current) {
@@ -121,8 +143,23 @@ export default function ChatWindow({
         }
     }, [])
 
-    const addMessage = useCallback((role, text, handledBy = null, payload = null) => {
-        setMessages((prev) => [...prev, { id: crypto.randomUUID(), role, text, timestamp: new Date(), handledBy, payload }])
+    const addMessage = useCallback((role, text, optsOrHandledBy = null, payload = null) => {
+        const handledBy = optsOrHandledBy && typeof optsOrHandledBy === 'object' ? null : optsOrHandledBy
+        const displayText = optsOrHandledBy && typeof optsOrHandledBy === 'object' ? (optsOrHandledBy.displayText ?? null) : null
+        setMessages((prev) => [...prev, { id: crypto.randomUUID(), role, text, displayText, timestamp: new Date(), handledBy, payload }])
+    }, [])
+
+    /** Cache/invalidate hooks triggered by an incoming AI payload. Must run for every menu bubble we render. */
+    const applyCacheSideEffects = useCallback((sid, payload) => {
+        if (!sid || !payload) return
+        if (payload.subtype === 'order_confirmation') {
+            invalidateSession(sid)
+            return
+        }
+        if (payload.subtype === 'menu' && Array.isArray(payload.breadcrumb) && payload.breadcrumb.length > 0) {
+            const last = payload.breadcrumb[payload.breadcrumb.length - 1]
+            if (last?.levelKey) cacheLevel(sid, last.levelKey, payload)
+        }
     }, [])
 
     const stopStreaming = useCallback(() => {
@@ -170,9 +207,14 @@ export default function ChatWindow({
                 if (cancelled) return
                 const sessionInfo = await resolveSessionForConversation(sidebarConversationId)
                 if (cancelled) return
-                setMessages(turnsToMessages(turns))
+                const loadedMessages = turnsToMessages(turns)
+                setMessages(loadedMessages)
                 setConversationId(sidebarConversationId)
                 setSessionId(sessionInfo.sessionId)
+                // Seed the cache from history so breadcrumb replay works after refresh/session-switch.
+                for (const m of loadedMessages) {
+                    if (m.role === 'ai') applyCacheSideEffects(sessionInfo.sessionId, m.payload)
+                }
                 setFirstOutgoingNeedsStart(sessionInfo.createdNew)
                 setResumePreviousSessionId(sessionInfo.previousSessionId)
                 setPhase(turns.length > 0 ? 'ready' : 'idle')
@@ -195,7 +237,7 @@ export default function ChatWindow({
         return () => {
             cancelled = true
         }
-    }, [sidebarConversationId, stopStreaming])
+    }, [sidebarConversationId, stopStreaming, applyCacheSideEffects])
 
     const startStreaming = useCallback((sid) => {
         stopStreaming()
@@ -226,6 +268,7 @@ export default function ChatWindow({
                     terminalHandled = true
                     stopStreaming()
                     const { text, payload } = parseAgentMessage(data.message)
+                    applyCacheSideEffects(sid, payload)
                     addMessage('ai', text, data.handledBy, payload)
                     setPhase('ready')
                     setError(null)
@@ -276,34 +319,44 @@ export default function ChatWindow({
                 setReadyWithError('Connection lost. Please try again.')
             }
         }
-    }, [addMessage, stopStreaming, handleSessionExpired])
+    }, [addMessage, stopStreaming, handleSessionExpired, applyCacheSideEffects])
 
-    const handleSendMessage = useCallback(async (text) => {
+    const handleSendMessage = useCallback(async (text, opts = {}) => {
         if (sending || conversationLoading) return
+
+        if (!sessionId && opts.displayText) {
+            log.warn('handleSendMessage: displayText on first message is unexpected (menu click without session)', { displayText: opts.displayText })
+        }
+
+        // BRD BR-14: typed restart intent invalidates the client-side menu cache
+        // so the next browse call fetches fresh data rather than replaying a cached level.
+        if (sessionId && isRestartIntent(text)) {
+            invalidateSession(sessionId)
+        }
 
         setError(null)
         setSending(true)
-        addMessage('user', text)
+        addMessage('user', text, { displayText: opts.displayText ?? null })
         setPhase('thinking')
 
         try {
             if (!sessionId) {
-                const { conversationId: convId, sessionId: sessId } = await createConversation(text)
+                const { conversationId: convId, sessionId: sessId } = await createConversation(text, opts.displayText ?? null)
                 setConversationId(convId)
                 setSessionId(sessId)
                 setFirstOutgoingNeedsStart(false)
                 setResumePreviousSessionId(null)
                 onConversationCreated?.()
-                await startOrchestration(sessId, text)
+                await startOrchestration(sessId, text, null, getCateringResourceId(), opts.displayText ?? null)
                 startStreaming(sessId)
             } else if (firstOutgoingNeedsStart) {
                 const prev = resumePreviousSessionId || undefined
-                await startOrchestration(sessionId, text, prev)
+                await startOrchestration(sessionId, text, prev, getCateringResourceId(), opts.displayText ?? null)
                 setFirstOutgoingNeedsStart(false)
                 setResumePreviousSessionId(null)
                 startStreaming(sessionId)
             } else {
-                await sendReply(sessionId, text)
+                await sendReply(sessionId, text, opts.displayText ?? null)
                 startStreaming(sessionId)
             }
         } catch (err) {
@@ -315,6 +368,20 @@ export default function ChatWindow({
             if (err instanceof ApiError && err.status === 400) {
                 log.warn('API validation error', { status: err.status, code: err.errorCode, message: err.message })
                 setError(err.message)
+                setPhase(sessionId ? 'ready' : 'idle')
+                return
+            }
+            if (err instanceof ApiError && err.status === 409) {
+                // 409 can come from two backend guards:
+                //   1. /start: a Camunda process instance is already registered for this session
+                //      (double-click race). The original start already succeeded.
+                //   2. /user-messages: the same clientMessageId was already persisted within
+                //      the 24h dedup window (retry after a network hiccup). The original reply
+                //      already reached Zeebe.
+                // Either way the server-side work is already in flight, so the optimistic
+                // user bubble we just painted is correct — drop phase back to ready and let
+                // the SSE stream deliver the assistant response.
+                log.info('409 conflict — treating as already-delivered', { code: err.errorCode, message: err.message })
                 setPhase(sessionId ? 'ready' : 'idle')
                 return
             }
@@ -340,8 +407,42 @@ export default function ChatWindow({
         onConversationCreated,
     ])
 
+    const handleMenuItemClick = useCallback(
+        (item, menuHandledBy) => {
+            const { agentInput, displayText } = formatMenuSelectionMessage(item, menuHandledBy)
+            handleSendMessage(agentInput, { displayText })
+        },
+        [handleSendMessage],
+    )
+
+    /**
+     * Breadcrumb ancestor click: replay the cached level in-place (no backend call, no new turn).
+     * On cache miss, fall back to a regular agent message so the user still navigates.
+     */
+    const handleBreadcrumbClick = useCallback((crumb) => {
+        if (!crumb?.levelKey) return
+        const cached = sessionId ? getCachedLevel(sessionId, crumb.levelKey) : null
+        if (!cached) {
+            handleSendMessage(`Go back to ${crumb.label}`)
+            return
+        }
+        setMessages((prev) => {
+            // Mutate the most recent AI menu bubble so the transcript isn't polluted with replayed levels.
+            for (let i = prev.length - 1; i >= 0; i--) {
+                const m = prev[i]
+                if (m.role === 'ai' && m.payload?.subtype === 'menu') {
+                    const next = prev.slice()
+                    next[i] = { ...m, payload: cached }
+                    return next
+                }
+            }
+            return prev
+        })
+    }, [sessionId, handleSendMessage])
+
     const handleNewChat = useCallback(() => {
         log.info('New chat — reset state')
+        if (sessionId) invalidateSession(sessionId)
         stopStreaming()
         setMessages([])
         setConversationId(null)
@@ -353,7 +454,7 @@ export default function ChatWindow({
         setFirstOutgoingNeedsStart(false)
         setResumePreviousSessionId(null)
         onNewChatParent?.()
-    }, [stopStreaming, onNewChatParent])
+    }, [sessionId, stopStreaming, onNewChatParent])
 
     const showEmptyState = messages.length === 0 && phase === 'idle' && !conversationLoading
     const showNewChatBtn = messages.length > 0 || conversationId != null || sessionId != null
@@ -401,7 +502,12 @@ export default function ChatWindow({
                             <SparkIcon size={48} withCircle />
                         </div>
                         <h2>How can I help you today?</h2>
-                        <p>I'm an AI agent that can help you browse our catering menu and get IT support — search knowledge base articles and create support tickets.</p>
+                        <p>
+                            I'm an AI agent that can help you explore the catering catalog (categories, subcategories, and
+                            products), submit IT-support tickets, and report facilities &amp; maintenance issues.
+                            Set <code className="env-hint">VITE_DEFAULT_CATERING_RESOURCE_ID</code> in{' '}
+                            <code className="env-hint">.env</code> when testing catering orders against your ACL resource.
+                        </p>
                         <div className="quick-prompts">
                             {QUICK_PROMPTS.map((prompt) => (
                                 <button key={prompt} className="quick-prompt" onClick={() => handleSendMessage(prompt)}>
@@ -413,7 +519,12 @@ export default function ChatWindow({
                 )}
 
                 {messages.map((msg) => (
-                    <MessageBubble key={msg.id} message={msg} onMenuItemClick={handleSendMessage} />
+                    <MessageBubble
+                        key={msg.id}
+                        message={msg}
+                        onMenuItemClick={handleMenuItemClick}
+                        onBreadcrumbClick={handleBreadcrumbClick}
+                    />
                 ))}
 
                 {phase === 'thinking' && (
