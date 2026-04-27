@@ -27,7 +27,7 @@ Opens http://localhost:5173 and connects to the backend on `http://localhost:808
 
 ✅ Real-time SSE streaming for agent responses  
 ✅ Multi-turn conversational AI with message history  
-✅ Multi-agent routing (User Data, Utility & Web, Catering, General Knowledge)  
+✅ Multi-agent routing (catering vs IT support via Camunda classifier)  
 ✅ Markdown rendering of agent responses  
 ✅ Structured menu display (catering agent)  
 ✅ Responsive React/Vite UI
@@ -54,7 +54,8 @@ src/
 ├── services/         # API client
 │   └── api.js
 ├── utils/            # Utilities
-│   ├── agentMessage.js    # Turn/Message conversion
+│   ├── agentMessage.js    # Turn/Message + SSE JSON parsing
+│   ├── menuSelection.js  # Menu clicks → `Selected … id:` (BPMN classifier bypass)
 │   └── logger.js
 ├── assets/           # Static assets
 ```
@@ -65,6 +66,7 @@ src/
 |----------|---------|-------------|
 | `VITE_API_ORIGIN` | `http://localhost:8085` | Modulith Service backend URL (no trailing slash) |
 | `VITE_LOG_LEVEL` | `info` | Log verbosity: debug\|info\|warn\|error |
+| `VITE_DEFAULT_CATERING_RESOURCE_ID` | _(unset)_ | Optional resource id sent on orchestration start (catering ACL) |
 
 ## Technology Stack
 
@@ -74,11 +76,12 @@ src/
 - **Testing** Vitest + Testing Library
 - **Styling** CSS modules (scoped)
 
-## REST API Contract
+## REST API contract
 
-See [../DOCUMENTATION.md](../DOCUMENTATION.md#11-rest-api-reference) for the full API reference.
+The TypeScript/JSDoc source of truth for request/response shapes is [`src/services/api.js`](src/services/api.js).  
+Backend process variables and BPMN alignment: see the Ankabut repo [`docs/bpmn-variables.md`](../../../ANKABUT/Ankabut-DXP-Services/docs/bpmn-variables.md) (example relative URL from this demo app when the backend repo lives at `D:\ANKABUT\Ankabut-DXP-Services`; clone location may differ).
 
-### Main Endpoints (Modulith Service)
+### Main endpoints (modulith service)
 
 Guest mode (anonymous):
 ```
@@ -126,8 +129,6 @@ GET    /api/v1/secure/chatting/orchestration/sessions/{id}/assistant-round/strea
 
 ## Troubleshooting
 
-See [BACKEND_ALIGNMENT.md → Troubleshooting](./BACKEND_ALIGNMENT.md#troubleshooting)
-
 Common issues:
 1. **"Network error"** → Check backend is running on port 8085 or update `VITE_API_ORIGIN`
 2. **"Session expired"** → Backend may have timeout configured, check `/orchestration/sessions/` endpoint
@@ -148,8 +149,7 @@ Common issues:
 
 ## Links
 
-- [Backend Repository](../../../ANKABUT/Ankabut-DXP-Services)
-- [Alignment Documentation](./BACKEND_ALIGNMENT.md)
+- [Ankabut DXP Services (backend)](../../../ANKABUT/Ankabut-DXP-Services) — adjust path if the repo is checked out elsewhere
 - [React](https://react.dev)
 - [Vite](https://vite.dev)
 - [Camunda Platform](https://camunda.com)
