@@ -1,13 +1,6 @@
 import PropTypes from 'prop-types'
 import './MenuBreadcrumb.css'
 
-/**
- * Breadcrumb bar rendered above a menu card (BRD: Menu navigation — breadcrumb).
- *
- * Crumbs come verbatim from `payload.breadcrumb` emitted by the agent; each entry is
- * `{ label, levelKey }`. The last crumb is the current level (non-interactive). Prior
- * crumbs are buttons — clicking one asks the host to replay the cached level in place.
- */
 export default function MenuBreadcrumb({ crumbs, onCrumbClick }) {
     if (!Array.isArray(crumbs) || crumbs.length === 0) return null
 
@@ -20,10 +13,7 @@ export default function MenuBreadcrumb({ crumbs, onCrumbClick }) {
                     return (
                         <li key={key} className="menu-breadcrumb-item">
                             {isCurrent ? (
-                                <span
-                                    className="menu-breadcrumb-current"
-                                    aria-current="page"
-                                >
+                                <span className="menu-breadcrumb-current" aria-current="page">
                                     {crumb.label}
                                 </span>
                             ) : (

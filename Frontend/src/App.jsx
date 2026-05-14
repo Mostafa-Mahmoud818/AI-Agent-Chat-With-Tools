@@ -1,6 +1,14 @@
-import ChatLayout from './components/ChatLayout'
+/**
+ * @file Root visual shell (background + ChatLayout). Mounted from `main.jsx`.
+ * @module App
+ */
+
+import ChatLayout from './components/layout/ChatLayout'
 import './App.css'
 
+/**
+ * Application root: chrome background and main `ChatLayout`.
+ */
 function App() {
   return (
     <div className="app-container">

@@ -1,14 +1,16 @@
 /**
- * Parses agent JSON replies from backend (catering / IT / F&M agents) from raw SSE or persisted turn text.
+ * @file Parses agent JSON from persisted turns and live SSE, and maps `TurnDto` rows to UI messages.
+ * @module utils/agentMessage
  *
- * The backend serializes agent responses as JSON with optional structured payloads.
- * This function handles both raw text and nested JSON structures.
- *
- * - Catering (`ai-agent-catering`): replyType json + textString + payload (menu, order_confirmation, …).
- * - IT Support & Facilities & Maintenance: same catering-style menu shape (textString, replyType text|json,
- *   payload.subtype menu|none|ticket|error, menuitems, breadcrumb, order null, ticketId/ticketStatus).
+ * Catering, IT, and F&amp;M agents share a catering-shaped envelope (`replyType`, `textString` or `textContent`,
+ * `payload.subtype` menu | ticket | error | order_confirmation | none). This module normalizes fences,
+ * flattened legacy shapes, breadcrumbs, and menu item fields (including optional `selectionSignal`).
  */
-/** Prefer textContent (IT/F&M BPMN) then textString (catering BPMN). */
+/**
+ * Prefer `textContent` (IT/F&M BPMN) then `textString` (catering BPMN).
+ * @param {object} parsed Parsed top-level agent JSON.
+ * @param {string} fallback Raw string if both fields are whitespace-only.
+ */
 function primaryAssistantText(parsed, fallback) {
     if (parsed.textContent != null) {
         const s = String(parsed.textContent)
@@ -22,7 +24,7 @@ function primaryAssistantText(parsed, fallback) {
     return fallback
 }
 
-/** Structured reply kinds: agents emit replyType json for all card/menu/ticket payloads. */
+/** @param {string|null|undefined} replyType */
 function isStructuredAgentReply(replyType) {
     return replyType === 'json'
 }
@@ -30,6 +32,9 @@ function isStructuredAgentReply(replyType) {
 /**
  * Strips markdown code fences that some LLMs emit even when instructed not to.
  * Handles ```json ... ``` and ``` ... ``` wrappers, plus leading/trailing whitespace.
+ *
+ * @param {string} raw
+ * @returns {string}
  */
 function stripCodeFences(raw) {
     const trimmed = raw.trim()
@@ -39,6 +44,13 @@ function stripCodeFences(raw) {
     return trimmed
 }
 
+/**
+ * Parses a single agent response string: plain text, JSON envelope, or fenced JSON.
+ *
+ * @param {string|null|undefined} raw Persisted `TurnDto.agentResponse`, or SSE `text` field.
+ * @returns {{ text: string, payload: object|null }} Display `text` plus structured `payload` when applicable
+ *   (`subtype` menu, ticket, order_confirmation, error, etc.; `null` for plain-text-only turns).
+ */
 export function parseAgentMessage(raw) {
     if (raw == null || raw === '') {
         return { text: '', payload: null }
@@ -88,6 +100,7 @@ export function parseAgentMessage(raw) {
     return { text, payload }
 }
 
+/** @param {*} payload @param {string|null} [replyType] */
 function normalizePayload(payload, replyType) {
     if (payload == null) return null
 
@@ -135,21 +148,37 @@ function normalizePayload(payload, replyType) {
     return payload
 }
 
+/**
+ * Normalizes heterogeneous agent row shapes into clickable menu cards.
+ * Keeps `selectionSignal` when present (backend-enriched line for classifiers).
+ *
+ * @param {unknown} items
+ * @returns {Array<{ id: string, label: string, description?: *, price?: *, code?: *, categoryId?: *, status?: *, selectionSignal?: string }>}
+ */
 function toMenuItems(items) {
     if (!Array.isArray(items)) return []
     return items
-        .map((item, idx) => {
+        .map((item) => {
             if (!item || typeof item !== 'object') return null
-            const label = item.label ?? item.name ?? item.title ?? null
-            if (!label) return null
+            const labelSrc = item.label ?? item.name ?? item.title ?? null
+            const id = item.id != null ? String(item.id).trim()
+                : item.code != null ? String(item.code).trim() : ''
+            if (!id) return null
+            if (!labelSrc) return null
+            const label = labelSrc != null && String(labelSrc).trim() !== ''
+                ? String(labelSrc)
+                : id
             return {
-                id: String(item.id ?? item.code ?? `item-${idx}`),
+                id,
                 label: String(label),
                 description: item.description ?? item.summary ?? null,
                 price: item.price ?? item.cost ?? null,
                 code: item.code ?? null,
                 categoryId: item.categoryId ?? null,
                 status: item.status ?? null,
+                ...(item.selectionSignal != null && typeof item.selectionSignal === 'string'
+                    ? { selectionSignal: item.selectionSignal }
+                    : {}),
             }
         })
         .filter(Boolean)
@@ -171,18 +200,11 @@ function toBreadcrumb(raw) {
 }
 
 /**
- * Maps API TurnDto[] (chronological order) to internal message objects for UI rendering.
- * 
- * Backend TurnDto fields mapped to message format:
- * - id: UUID → message.id (prefixed with turn-{id}-u/a)
- * - userInput: string → message.text
- * - createdAt: Instant → message.timestamp (ISO string, converted to Date)
- * - agentResponse: string|null → parsed and split into text + payload
- * - routeCategory: RouteCategory enum → message.handledBy (CATERING, IT_SUPPORT, FACILITIES_MAINTENANCE, ERROR)
- * - sessionId, turnNumber: metadata used for conversation structure
- * 
- * @param {Array} turns - TurnDto[] from backend paginated results
- * @returns {Array} messages - Internal message format: [{id, role, text, timestamp, handledBy, payload}]
+ * Maps chronological `TurnDto` rows to alternating user/assistant messages for the transcript.
+ *
+ * @param {object[]|null|undefined} turns Chronological rows (oldest first), e.g. from {@link fetchAllConversationTurns};
+ *     raw `getConversationTurns` returns newest-first and must be reversed before calling this.
+ * @returns {Array<{ id: string, role: 'user'|'ai', text: string, displayText?: string|null, timestamp: Date, handledBy?: string|null, payload?: object|null }>}
  */
 export function turnsToMessages(turns) {
     if (!turns?.length) return []

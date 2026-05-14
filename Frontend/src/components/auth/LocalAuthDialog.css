@@ -1,0 +1,105 @@
+.local-auth-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(10, 10, 15, 0.7);
+    backdrop-filter: blur(4px);
+}
+
+.local-auth-card {
+    width: min(460px, calc(100vw - 32px));
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    animation: scaleIn 0.2s ease;
+}
+
+.local-auth-card h2 {
+    font-size: 22px;
+    font-weight: 600;
+}
+
+.local-auth-subtitle {
+    color: var(--text-secondary);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.local-auth-form {
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.local-auth-form label {
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.local-auth-form input {
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    padding: 10px 12px;
+    font-size: 14px;
+    outline: none;
+}
+
+.local-auth-form input:focus {
+    border-color: var(--border-accent);
+    box-shadow: 0 0 0 3px rgba(165, 110, 255, 0.15);
+}
+
+.local-auth-form button {
+    border: 1px solid var(--border-accent);
+    border-radius: var(--radius-md);
+    background: rgba(165, 110, 255, 0.12);
+    color: var(--accent-primary);
+    font-size: 14px;
+    font-weight: 600;
+    padding: 10px 12px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.local-auth-form button:hover:not(:disabled) {
+    background: rgba(165, 110, 255, 0.2);
+}
+
+.local-auth-form button:disabled {
+    opacity: 0.7;
+    cursor: wait;
+}
+
+.local-auth-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.local-auth-form button.secondary {
+    color: var(--text-secondary);
+    border-color: var(--border-subtle);
+    background: transparent;
+}
+
+.local-auth-hint {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.local-auth-error {
+    color: #fca5a5;
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: var(--radius-md);
+    padding: 10px 12px;
+    font-size: 13px;
+}

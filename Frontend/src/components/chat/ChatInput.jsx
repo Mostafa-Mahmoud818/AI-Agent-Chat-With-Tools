@@ -1,17 +1,16 @@
+/**
+ * @file Composer input (textarea + send) for the chat pane.
+ * @module components/chat/ChatInput
+ */
+
 import { useState, useRef, useCallback, forwardRef, useImperativeHandle } from 'react'
 import PropTypes from 'prop-types'
 import './ChatInput.css'
 
-/**
- * Chat text input component.
- * Exposes a `focus()` method via forwardRef so parents can programmatically
- * focus the textarea without resorting to document.querySelector.
- */
 const ChatInput = forwardRef(function ChatInput({ onSend, placeholder, disabled }, ref) {
     const [text, setText] = useState('')
     const inputRef = useRef(null)
 
-    // Expose focus() to parent via ref
     useImperativeHandle(ref, () => ({
         focus() {
             inputRef.current?.focus()

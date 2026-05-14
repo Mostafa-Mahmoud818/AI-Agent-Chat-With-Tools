@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import ChatInput from '../ChatInput'
+import ChatInput from '../chat/ChatInput'
 
 describe('ChatInput', () => {
     it('calls onSend when form is submitted with text', () => {

@@ -1,95 +1,60 @@
 /**
- * Ankabut DXP Chatting API — dual-mode (guest cookie + JWT secure).
+ * @file Ankabut DXP Chatting HTTP + SSE client.
+ * @module services/api
  *
- * ════════════════════════════════════════════════════════════════════════════
- * Backend Service: Modulith Service (ankabut-dxp-modulith-service) on port 8085
- * API Base: /api/v1/public/chatting (guest) or /api/v1/secure/chatting (authenticated)
- * Database: PostgreSQL with schema dxp-chatting
- * Orchestration: Camunda 8 (Zeebe) for agentic workflows
- * ════════════════════════════════════════════════════════════════════════════
+ * @summary
+ * **Secure (default):** {@code /api/v1/secure/chatting} + Bearer {@code VITE_API_BEARER_TOKEN} (or local OTP).
+ * **Guest:** set {@code VITE_CHAT_AUTH=guest} → {@code /api/v1/public/chatting} + stable UUID {@code clientId}
+ * (localStorage + optional cookie {@code ankabut_guest_id}); no JWT.
  *
- * Guest mode  → /api/v1/public/chatting/*  (clientId via ankabut_guest_id cookie)
- * Secure mode → /api/v1/secure/chatting/*  (JWT via Authorization header)
+ * Base URL: {@code VITE_API_ORIGIN}, or {@code VITE_API_RELATIVE=1} for same-origin `/api` (Vite proxy), or {@code VITE_API_BACKEND} preset — see {@link resolveApiOrigin}.
  *
- * Data Types and Enums:
- * - SessionStatus: ACTIVE | TIMED_OUT | ENDED | ERROR
- * - RouteCategory (persisted on TurnDto, enum name): CATERING | IT_SUPPORT | FACILITIES_MAINTENANCE | ERROR
- *   Classifier / Camunda wire token for F&M is facilities_maintenance (maps to FACILITIES_MAINTENANCE in DB).
- * - AgentResponseStatus (wire format): ready | processing | error | expired
+ * **`resourceId` on orchestration start:** optional; blank falls back to {@code VITE_DEFAULT_RESOURCE_ID} when set.
+ *
+ * **Turn history:** {@code GET .../conversations/{id}/turns?limit=N} — {@code ConversationTurnDto[]} newest-first;
+ * {@code limit} defaults to 100, max 500. {@link fetchAllConversationTurns} reverses to chronological order for the transcript.
+ *
+ * **SSE payload:** {@code ChattingOrchestrationRoundResponseDto} — {@code status}: ready | processing | error | expired;
+ * {@code message}, {@code handledBy}.
  */
 
 import { createLogger } from '../utils/logger.js'
+import { resolveApiOrigin } from '../config/apiOrigin.js'
+import { getAccessToken } from '../auth/tokenStore.js'
+import { isGuestChatAuth } from '../config/chatAuth.js'
+import { getOrCreateGuestClientId } from '../auth/guestClientId.js'
 
 const log = createLogger('api')
 
-const API_ORIGIN = (import.meta.env.VITE_API_ORIGIN || '').replace(/\/$/, '')
-const PATH_PUBLIC = '/api/v1/public/chatting'
+const API_ORIGIN = resolveApiOrigin(import.meta.env)
+
 const PATH_SECURE = '/api/v1/secure/chatting'
-const GUEST_COOKIE_NAME = 'ankabut_guest_id'
-const JWT_STORAGE_KEY = 'ankabut_jwt'
+const PATH_PUBLIC = '/api/v1/public/chatting'
+
 const REQUEST_TIMEOUT_MS = 15_000
 
-// ── Auth helpers ────────────────────────────────────────────────────
+/** Backend {@code ChattingSecureController} / open: {@code @Max(500)} on {@code limit}. */
+const MAX_CONVERSATION_TURNS_LIMIT = 500
 
-function getJwtToken() {
-    try {
-        return localStorage.getItem(JWT_STORAGE_KEY) || null
-    } catch {
-        return null
-    }
-}
+const IS_TEST = import.meta.env.MODE === 'test'
 
-export function setAuthToken(token) {
-    localStorage.setItem(JWT_STORAGE_KEY, token)
-}
-
-export function clearAuthToken() {
-    localStorage.removeItem(JWT_STORAGE_KEY)
-}
-
-export function isSecureMode() {
-    return !!getJwtToken()
-}
-
-function getApiBase() {
-    const base = isSecureMode() ? PATH_SECURE : PATH_PUBLIC
-    return `${API_ORIGIN}${base}`
-}
-
-// ── Guest cookie helpers ────────────────────────────────────────────
-
-function getCookie(name) {
-    const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`))
-    return match ? decodeURIComponent(match[1]) : null
-}
-
-function setCookie(name, value, days = 365) {
-    const expires = new Date(Date.now() + days * 864e5).toUTCString()
-    document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/; SameSite=Lax`
-}
-
-function getOrCreateGuestId() {
-    let id = getCookie(GUEST_COOKIE_NAME)
-    if (!id) {
-        id = crypto.randomUUID()
-        setCookie(GUEST_COOKIE_NAME, id)
-    }
-    return id
+/**
+ * @returns {boolean}
+ */
+function useGuestAuth() {
+    return isGuestChatAuth(import.meta.env)
 }
 
 /**
- * Returns `?clientId=X` for guest mode, empty string for secure mode.
- * If `existingQuery` is true, uses `&clientId=X` instead.
+ * Thrown when the modulith returns a non-2xx response or JSON envelope `success: false`.
+ * @extends Error
  */
-function clientIdParam(existingQuery = false) {
-    if (isSecureMode()) return ''
-    const id = getOrCreateGuestId()
-    return `${existingQuery ? '&' : '?'}clientId=${encodeURIComponent(id)}`
-}
-
-// ── Error handling ──────────────────────────────────────────────────
-
 class ApiError extends Error {
+    /**
+     * @param {number} status HTTP status (0 for network/timeout).
+     * @param {string} errorCode Machine-friendly code when known (e.g. `session_expired`, `timeout`).
+     * @param {string} message Human-readable message from `ApiResponse` or Spring error JSON.
+     */
     constructor(status, errorCode, message) {
         super(message)
         this.status = status
@@ -106,11 +71,9 @@ async function handleResponse(res) {
     const raw = await res.text()
     try {
         const body = raw ? JSON.parse(raw) : {}
-        // Ankabut ApiResponse: { success, message, errors }
         if (body.message) {
             message = body.message
         } else if (body.error && body.path) {
-            // Spring Boot default error JSON
             message = `${body.error} — ${body.path}`
         }
         if (body.errors?.length) {
@@ -143,16 +106,78 @@ async function unwrapResponse(res) {
     return json.data
 }
 
+/** Backend `ChattingOrchestrationStartRequest.resourceId`: `@Size(max = 128)`, nullable. */
+const MAX_RESOURCE_ID_LEN = 128
+
+/**
+ * @param {string|null|undefined} explicit Passed from callers (omit to use env only).
+ * @returns {string|null}
+ */
+function resolveOrchestrationResourceId(explicit) {
+    let s = ''
+    if (explicit != null && String(explicit).trim() !== '') {
+        s = String(explicit).trim()
+    } else {
+        const raw = import.meta.env.VITE_DEFAULT_RESOURCE_ID
+        s = typeof raw === 'string' ? raw.trim() : ''
+    }
+    if (!s) return null
+    if (s.length > MAX_RESOURCE_ID_LEN) {
+        log.warn('resourceId longer than backend max — truncating', { max: MAX_RESOURCE_ID_LEN })
+        s = s.slice(0, MAX_RESOURCE_ID_LEN)
+    }
+    return s
+}
+
 // ── HTTP helpers ────────────────────────────────────────────────────
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' }
 
-function authHeaders() {
-    const token = getJwtToken()
-    if (token) {
-        return { ...JSON_HEADERS, Authorization: `Bearer ${token}` }
+/**
+ * Appends `clientId` for public guest APIs (required when cookie not sent cross-origin).
+ * @param {string} url
+ * @returns {string}
+ */
+export function withGuestClientIdQuery(url) {
+    if (!useGuestAuth()) return url
+    const id = getOrCreateGuestClientId()
+    const joiner = url.includes('?') ? '&' : '?'
+    return `${url}${joiner}clientId=${encodeURIComponent(id)}`
+}
+
+function bearerAuthHeaders() {
+    const token = getAccessToken()
+    if (!token) {
+        if (IS_TEST) {
+            return { ...JSON_HEADERS, Authorization: 'Bearer __vitest_bearer_placeholder__' }
+        }
+        throw new ApiError(
+            0,
+            'missing_bearer_token',
+            'Missing bearer token. Set VITE_API_BEARER_TOKEN, use local OTP auth, or set VITE_CHAT_AUTH=guest for public API.',
+        )
     }
-    return { ...JSON_HEADERS }
+    return { ...JSON_HEADERS, Authorization: `Bearer ${token}` }
+}
+
+function buildHeaders() {
+    if (useGuestAuth()) {
+        return { ...JSON_HEADERS }
+    }
+    return bearerAuthHeaders()
+}
+
+function getChattingPathPrefix() {
+    return useGuestAuth() ? PATH_PUBLIC : PATH_SECURE
+}
+
+function getApiBase() {
+    return `${API_ORIGIN}${getChattingPathPrefix()}`
+}
+
+/** Orchestration routes live under `/chatting/orchestration` for both secure and public. */
+function getOrchestrationBase() {
+    return `${API_ORIGIN}${getChattingPathPrefix()}/orchestration`
 }
 
 function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
@@ -160,214 +185,154 @@ function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
     const timer = setTimeout(() => controller.abort(), timeoutMs)
 
     return fetch(url, { ...options, signal: controller.signal })
-        .catch(err => {
+        .catch((err) => {
             if (err.name === 'AbortError') {
                 log.warn('Request timeout', url)
                 throw new ApiError(0, 'timeout', 'Request timed out. Please check your connection.')
             }
             log.error('Network failure', url, err)
-            throw new ApiError(0, 'network_error', 'Network error. Is the backend running?')
+            throw new ApiError(0, 'network_error', 'Network error. Is the backend reachable?')
         })
         .finally(() => clearTimeout(timer))
 }
 
 async function get(url) {
-    log.debug('GET', url)
-    const res = await fetchWithTimeout(url, {
+    const finalUrl = withGuestClientIdQuery(url)
+    log.debug('GET', finalUrl)
+    const res = await fetchWithTimeout(finalUrl, {
         method: 'GET',
-        headers: authHeaders(),
+        headers: buildHeaders(),
     })
-    log.debug('GET response', url, res.status)
+    log.debug('GET response', finalUrl, res.status)
     return handleResponse(res)
 }
 
 async function post(url, body) {
-    log.debug('POST', url)
-    const res = await fetchWithTimeout(url, {
+    const finalUrl = withGuestClientIdQuery(url)
+    log.debug('POST', finalUrl)
+    const res = await fetchWithTimeout(finalUrl, {
         method: 'POST',
-        headers: authHeaders(),
+        headers: buildHeaders(),
         body: JSON.stringify(body),
     })
-    log.debug('POST response', url, res.status)
+    log.debug('POST response', finalUrl, res.status)
     return handleResponse(res)
 }
 
 // ── API functions ───────────────────────────────────────────────────
 
 /**
- * Fetches paginated list of conversations for the current client (guest or user).
- * 
- * Backend: GET /api/v1/public(or /secure)/chatting/conversations
- * Response: PagedResponse<ConversationDto>
- * 
- * @param {{ page?: number, size?: number }} opts - Pagination params (default: page=0, size=50)
+ * @param {{ page?: number, size?: number }} [opts]
  * @returns {Promise<{ content: ConversationDto[], page: number, size: number, last: boolean }>}
  */
 export async function getConversations({ page = 0, size = 50 } = {}) {
     const base = getApiBase()
     const qp = new URLSearchParams({ page: String(page), size: String(size) })
-    if (!isSecureMode()) {
-        qp.set('clientId', getOrCreateGuestId())
-    }
     const res = await get(`${base}/conversations?${qp}`)
     return unwrapResponse(res)
 }
 
 /**
- * Fetches TurnDto[] for a conversation (contains user inputs + agent responses).
- * 
- * Backend: GET /api/v1/public(or /secure)/chatting/conversations/{id}/turns
- * Turns include: id, sessionId, turnNumber, userInput, routeCategory, agentResponse, createdAt, updatedAt
- * 
- * @param {string} conversationId - UUID of the conversation
- * @param {{ page?: number, size?: number }} opts - Pagination (default: page=0, size=200)
- * @returns {Promise<{ content: TurnDto[], page: number, last: boolean }>}
- */
-export async function getConversationTurns(conversationId, { page = 0, size = 200 } = {}) {
-    const base = getApiBase()
-    const qp = new URLSearchParams({ page: String(page), size: String(size) })
-    const res = await get(`${base}/conversations/${conversationId}/turns?${qp}${clientIdParam(true)}`)
-    return unwrapResponse(res)
-}
-
-/** Loads all pages of turns for a conversation (demo / moderate history sizes). */
-export async function fetchAllConversationTurns(conversationId, pageSize = 200) {
-    const all = []
-    let page = 0
-    while (true) {
-        const data = await getConversationTurns(conversationId, { page, size: pageSize })
-        const chunk = data.content ?? []
-        all.push(...chunk)
-        if (data.last === true || chunk.length === 0) break
-        page += 1
-    }
-    return all
-}
-
-/**
+ * Latest turns for a conversation (API order: newest first).
+ *
  * @param {string} conversationId
- * @param {{ page?: number, size?: number }} opts
+ * @param {{ limit?: number }} [opts] capped to {@link MAX_CONVERSATION_TURNS_LIMIT}; backend default when omitted is 100.
+ * @returns {Promise<object[]>} {@code ConversationTurnDto[]} (newest first)
  */
-export async function getSessionsForConversation(conversationId, { page = 0, size = 50 } = {}) {
+export async function getConversationTurns(conversationId, { limit = 100 } = {}) {
     const base = getApiBase()
-    const qp = new URLSearchParams({ page: String(page), size: String(size) })
-    const res = await get(`${base}/conversations/${conversationId}/sessions?${qp}${clientIdParam(true)}`)
+    const n = Math.min(Math.max(1, Number(limit) || 100), MAX_CONVERSATION_TURNS_LIMIT)
+    const qp = new URLSearchParams({ limit: String(n) })
+    const cid = encodeURIComponent(conversationId)
+    const res = await get(`${base}/conversations/${cid}/turns?${qp}`)
     return unwrapResponse(res)
 }
 
 /**
+ * Loads up to {@code limit} turns and returns them oldest-first for transcript rendering
+ * (reverses the API’s newest-first order). Conversations with more than 500 turns only return the 500 most recent rows.
+ *
  * @param {string} conversationId
- * @param {string | null} summary
+ * @param {number} [limit=500] max 500 per backend
+ * @returns {Promise<object[]>}
  */
-export async function createSessionInConversation(conversationId, summary = null) {
-    const base = getApiBase()
-    let res
-    if (isSecureMode()) {
-        res = await post(`${base}/conversations/${conversationId}/sessions`, { summary })
-    } else {
-        const guestId = getOrCreateGuestId()
-        res = await post(`${base}/conversations/${conversationId}/sessions`, {
-            clientId: guestId,
-            req: { summary },
-        })
+export async function fetchAllConversationTurns(conversationId, limit = MAX_CONVERSATION_TURNS_LIMIT) {
+    const turns = await getConversationTurns(conversationId, { limit })
+    if (!Array.isArray(turns)) {
+        log.warn('getConversationTurns: expected array data', { conversationId, turns })
+        return []
     }
-    return unwrapResponse(res)
+    return [...turns].reverse()
 }
 
 /**
- * Creates a new conversation with an initial session.
- * 
- * Backend: POST /api/v1/public(or /secure)/chatting/conversations
- * Request: { initialTitle?, initialSummary? } (wrapped with clientId in guest mode)
- * Response: SessionDto (includes conversationId and sessionId)
- * 
- * @param {string} inputText - User's initial message (truncated to 50 chars for title)
- * @returns {Promise<{ conversationId: UUID, sessionId: UUID }>}
+ * @param {string} inputText Title seed (`initialTitle`, truncated to 50 chars).
+ * @param {string|null} [_displayText] Reserved; unused today.
+ * @returns {Promise<{ conversationId: string|null }>}
  */
-export async function createConversation(inputText, displayText = null) {
+export async function createConversation(inputText, _displayText = null) {
     const base = getApiBase()
     const title = inputText.length > 50 ? inputText.substring(0, 50) + '…' : inputText
 
-    let res
-    if (isSecureMode()) {
-        res = await post(`${base}/conversations`, { initialTitle: title })
+    let body
+    if (useGuestAuth()) {
+        const clientId = getOrCreateGuestClientId()
+        body = {
+            clientId,
+            req: {
+                initialTitle: title,
+                initialSummary: null,
+            },
+        }
     } else {
-        const guestId = getOrCreateGuestId()
-        res = await post(`${base}/conversations`, { clientId: guestId, req: { initialTitle: title } })
+        body = { initialTitle: title }
     }
 
-    // Response is ApiResponse<SessionDto>
-    const session = await unwrapResponse(res)
-    log.info('Conversation created', {
-        conversationId: session.conversationId,
-        sessionId: session.id,
-        secure: isSecureMode(),
-    })
-    return {
-        conversationId: session.conversationId,
-        sessionId: session.id,
-    }
+    const res = await post(`${base}/conversations`, body)
+    const conv = await unwrapResponse(res)
+    const conversationId = conv.id != null ? String(conv.id) : null
+    log.info('Conversation created', { conversationId })
+    return { conversationId }
 }
 
 /**
- * Starts Camunda 8 orchestration process for a session.
- * 
- * Backend: POST /api/v1/public(or /secure)/chatting/orchestration/sessions/{id}/start
- * Request: { inputText: string, previousSessionId?: UUID, resourceId?: string }
- * Response: { sessionId: UUID, processInstanceKey: bigint }
- * 
- * This initiates the agentic workflow that classifies the user input and routes
- * to the appropriate handler (catering, it_support, facilities_maintenance, or error paths).
- *
- * `resourceId` is forwarded to Camunda (e.g. catering restaurant/resource id). Optional.
- * Production DXP portals embedding this client should pass the same `resourceId` for catering (BRD BR-06) and mirror the demo menu UX (pagination, selection messages with UUIDs).
- * 
- * @param {string} sessionId - UUID of session to activate
- * @param {string} inputText - User message to start orchestration with
- * @param {string|null} previousSessionId - Optional previous session for context
- * @param {string|null|undefined} resourceId - Optional resource id for catering tools (maps to process variable)
- * @returns {Promise<{ sessionId: UUID, processInstanceKey: bigint }>}
+ * @param {string} conversationId
+ * @param {string} inputText
+ * @param {string|null|undefined} [resourceId]
+ * @param {string|null} [displayText]
+ * @returns {Promise<object>}
  */
-export async function startOrchestration(sessionId, inputText, previousSessionId = null, resourceId = undefined, displayText = null) {
-    const base = getApiBase()
-    const qp = clientIdParam()
+export async function startOrchestration(conversationId, inputText, resourceId = undefined, displayText = null) {
+    const base = getOrchestrationBase()
+    const cid = encodeURIComponent(conversationId)
     const body = {
         inputText,
-        ...(previousSessionId ? { previousSessionId } : {}),
-        ...(resourceId != null && String(resourceId).trim() !== '' ? { resourceId: String(resourceId).trim() } : {}),
+        resourceId: resolveOrchestrationResourceId(resourceId),
         ...(displayText && displayText.trim() ? { displayText: displayText.trim() } : {}),
     }
 
-    const res = await post(`${base}/orchestration/sessions/${sessionId}/start${qp}`, body)
+    const res = await post(`${base}/conversations/${cid}/start`, body)
     const data = await unwrapResponse(res)
-    log.info('Orchestration started', { sessionId, processInstanceKey: data?.processInstanceKey })
+    log.info('Orchestration started', { conversationId, processInstanceKey: data?.processInstanceKey })
     return data
 }
 
 /**
- * Sends a follow-up user message to an active orchestration process.
- *
- * Backend: POST /api/v1/public(or /secure)/chatting/orchestration/sessions/{id}/user-messages
- * Request: { followUpInput: string, displayText?: string, clientMessageId?: UUID }
- * Response: void (202 Accepted) — or 409 Conflict if `clientMessageId` was already delivered.
- *
- * The `clientMessageId` is generated client-side (one UUID per logical send) and persisted
- * server-side in a dedup table (24h retention). If a retry / double-submit reaches the backend
- * with the same id, the server rejects it with 409 instead of producing a duplicate user turn.
- * Callers can pass an explicit id to keep it stable across retries; if omitted, a fresh UUID
- * is generated per call (so every call is treated as distinct).
- *
- * @param {string} sessionId - UUID of the active session
- * @param {string} followUpInput - Follow-up message text
- * @param {string|null} displayText - Optional human-friendly rendering (e.g. menu selection)
- * @param {string|null} clientMessageId - Optional stable UUID for retry-safe delivery
+ * @param {string} conversationId
+ * @param {string} followUpInput
+ * @param {string|null} [displayText]
+ * @param {string|null} [clientMessageId]
  */
-export async function sendReply(sessionId, followUpInput, displayText = null, clientMessageId = null) {
-    const base = getApiBase()
-    const qp = clientIdParam()
+export async function sendReply(conversationId, followUpInput, displayText = null, clientMessageId = null) {
+    const base = getOrchestrationBase()
+    const cid = encodeURIComponent(conversationId)
     const messageId = clientMessageId ?? crypto.randomUUID()
-    log.info('Sending follow-up', { sessionId, chars: followUpInput?.length ?? 0, clientMessageId: messageId })
-    await post(`${base}/orchestration/sessions/${sessionId}/user-messages${qp}`, {
+    log.info('Sending follow-up', {
+        conversationId,
+        chars: followUpInput?.length ?? 0,
+        clientMessageId: messageId,
+    })
+    await post(`${base}/conversations/${cid}/user-messages`, {
         followUpInput,
         clientMessageId: messageId,
         ...(displayText && displayText.trim() ? { displayText: displayText.trim() } : {}),
@@ -375,43 +340,22 @@ export async function sendReply(sessionId, followUpInput, displayText = null, cl
 }
 
 /**
- * Opens a Server-Sent Events stream for live agent response updates.
- * 
- * Backend: GET /api/v1/public(or /secure)/chatting/orchestration/sessions/{id}/assistant-round/stream
- * SSE Event Format: { status: 'ready'|'processing'|'error'|'expired', message: string, handledBy?: string }
- * 
- * Statuses:
- * - processing: Agent is thinking
- * - ready: Agent response complete (includes message text)
- * - error: Error occurred (message contains error detail)
- * - expired: Session timed out
- * 
- * In guest mode: uses native EventSource (no auth header).
- * In secure mode: uses fetch-based SSE with Authorization header (EventSource doesn't support headers).
+ * Assistant-round SSE. Bearer (secure) or guest query `clientId`.
  *
- * @param {string} sessionId - UUID of the session to stream from
- * @returns {EventSource-like object} with onmessage, onerror, close(), readyState
+ * @param {string} conversationId
+ * @returns {{ onmessage: Function|null, onerror: Function|null, close: () => void, readyState: number, addEventListener: Function, removeEventListener: Function }}
  */
-export function createResponseStream(sessionId) {
-    const base = getApiBase()
-
-    if (!isSecureMode()) {
-        // Guest mode: native EventSource
-        const qp = clientIdParam()
-        const streamUrl = `${base}/orchestration/sessions/${sessionId}/assistant-round/stream${qp}`
-        log.info('SSE open (guest EventSource)', { sessionId })
-        return wrapNativeEventSource(new EventSource(streamUrl))
-    }
-
-    // Secure mode: fetch-based SSE with Authorization header
-    const streamUrl = `${base}/orchestration/sessions/${sessionId}/assistant-round/stream`
-    log.info('SSE open (secure fetch)', { sessionId })
+export function createResponseStream(conversationId) {
+    const base = getOrchestrationBase()
+    const cid = encodeURIComponent(conversationId)
+    let streamUrl = `${base}/conversations/${cid}/assistant-round/stream`
+    streamUrl = withGuestClientIdQuery(streamUrl)
+    log.info('SSE open', { conversationId, guest: useGuestAuth() })
     return createFetchEventSource(streamUrl)
 }
 
 /**
- * Fetch-based SSE for secure mode (Authorization header support).
- * Returns an EventSource-like object: { onmessage, onerror, close(), readyState }.
+ * Fetch-based SSE (Bearer when not guest).
  */
 function createFetchEventSource(url) {
     const controller = new AbortController()
@@ -437,10 +381,25 @@ function createFetchEventSource(url) {
         emitter.onerror?.(event)
     }
 
+    const headers = { Accept: 'text/event-stream' }
+    if (!useGuestAuth()) {
+        const token = getAccessToken()
+        if (!token && !IS_TEST) {
+            emitter.readyState = EventSource.CLOSED
+            queueMicrotask(() => emitError(new Event('error')))
+            return emitter
+        }
+        if (IS_TEST && !token) {
+            headers.Authorization = 'Bearer __vitest_bearer_placeholder__'
+        } else {
+            headers.Authorization = `Bearer ${token}`
+        }
+    }
+
     ;(async () => {
         try {
             const res = await fetch(url, {
-                headers: { Authorization: `Bearer ${getJwtToken()}`, Accept: 'text/event-stream' },
+                headers,
                 signal: controller.signal,
             })
 
@@ -463,7 +422,7 @@ function createFetchEventSource(url) {
 
                 buffer += decoder.decode(value, { stream: true })
                 const events = buffer.split('\n\n')
-                buffer = events.pop() // keep incomplete SSE event in buffer
+                buffer = events.pop() ?? ''
 
                 for (const eventChunk of events) {
                     const lines = eventChunk.split('\n')
@@ -490,35 +449,6 @@ function createFetchEventSource(url) {
     })()
 
     return emitter
-}
-
-function wrapNativeEventSource(source) {
-    return {
-        get readyState() {
-            return source.readyState
-        },
-        get onmessage() {
-            return source.onmessage
-        },
-        set onmessage(handler) {
-            source.onmessage = handler
-        },
-        get onerror() {
-            return source.onerror
-        },
-        set onerror(handler) {
-            source.onerror = handler
-        },
-        addEventListener(type, cb) {
-            source.addEventListener(type, cb)
-        },
-        removeEventListener(type, cb) {
-            source.removeEventListener(type, cb)
-        },
-        close() {
-            source.close()
-        },
-    }
 }
 
 export { ApiError }

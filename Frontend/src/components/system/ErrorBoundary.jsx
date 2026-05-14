@@ -1,6 +1,6 @@
 import { Component } from 'react'
-import SparkIcon from './SparkIcon'
-import { createLogger } from '../utils/logger.js'
+import SparkIcon from '../ui/SparkIcon'
+import { createLogger } from '../../utils/logger.js'
 import './ErrorBoundary.css'
 
 const log = createLogger('ErrorBoundary')

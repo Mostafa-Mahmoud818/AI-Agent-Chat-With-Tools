@@ -1,9 +1,6 @@
 /**
- * Namespaced console logging for the chat UI.
- *
- * Set VITE_LOG_LEVEL to one of: debug | info | warn | error
- * - Default in dev: debug
- * - Default in production build: info
+ * @file Namespaced logging gated by `VITE_LOG_LEVEL`.
+ * @module utils/logger
  */
 const LEVEL_RANK = { debug: 10, info: 20, warn: 30, error: 40 }
 
@@ -24,7 +21,8 @@ function emit(level, scope, message, ...args) {
 }
 
 /**
- * @param {string} scope short label (e.g. 'api', 'ChatWindow')
+ * @param {string} scope Short label (e.g. `api`, `ChatWindow`).
+ * @returns {{ debug: Function, info: Function, warn: Function, error: Function }}
  */
 export function createLogger(scope) {
     return {

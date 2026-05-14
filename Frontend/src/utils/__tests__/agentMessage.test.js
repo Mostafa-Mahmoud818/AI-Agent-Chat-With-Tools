@@ -20,6 +20,27 @@ describe('parseAgentMessage', () => {
         expect(payload?.menuitems?.[0]?.label).toBe('Soup')
     })
 
+    it('passes through selectionSignal from enriched backend menuitems', () => {
+        const raw = JSON.stringify({
+            replyType: 'json',
+            textString: 'Pick one',
+            payload: {
+                subtype: 'menu',
+                menuitems: [
+                    {
+                        id: 'c1',
+                        name: 'Drinks',
+                        selectionSignal: '[catering-menu] Selected Category (name: Drinks) (id: c1)',
+                    },
+                ],
+            },
+        })
+        const { payload } = parseAgentMessage(raw)
+        expect(payload?.menuitems?.[0]?.selectionSignal).toBe(
+            '[catering-menu] Selected Category (name: Drinks) (id: c1)',
+        )
+    })
+
     it('preserves product fields (code, status) and drops nameAr on menu items', () => {
         const raw = JSON.stringify({
             replyType: 'json',

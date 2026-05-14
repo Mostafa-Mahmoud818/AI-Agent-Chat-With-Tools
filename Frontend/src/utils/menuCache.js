@@ -1,15 +1,10 @@
 /**
- * In-memory, per-session LRU cache for catering menu levels.
+ * @file LRU menu-level cache keyed by server session id and agent `breadcrumb.levelKey`.
+ * @module utils/menuCache
  *
- * Keys levels by `levelKey` (e.g. "root", "cat/<id>", "sub/<id>"), emitted by the agent
- * in `payload.breadcrumb`. Used so clicking a breadcrumb ancestor replays the cached
- * menu in-place (no backend round-trip) while preserving strict forward drill-down
- * via fresh agent calls when the user keeps navigating downward.
- *
- * BRD constraints:
- *   - NFR-12: capped at MAX_ENTRIES levels OR MAX_BYTES — whichever hits first (LRU eviction).
- *   - BR-14 / design: invalidated on (a) order_confirmation, (b) restart intent, (c) session end.
- *   - MUST NOT survive across sessions — the store is keyed by sessionId and cleared on session change.
+ * Clicking breadcrumb ancestors replays cached `payload` without a round-trip.
+ * Bounded by {@link MENU_CACHE_LIMITS} (NFR-12 style cap). Cleared on session switch and
+ * invalidation triggers (order confirmation, restart intent, session end per BR-14).
  */
 
 const MAX_ENTRIES = 50
@@ -52,7 +47,10 @@ function evictUntilUnderCaps(sessionMap) {
     }
 }
 
-/** Switch the active session — invalidates the previous session's cache per BRD (no cross-session survival). */
+/**
+ * Activates a session for cache reads/writes; evicts the previous session’s map (no cross-session reuse).
+ * @param {string|null|undefined} sessionId Last turn’s `sessionId`, or `conversationId` until known.
+ */
 export function setActiveSession(sessionId) {
     if (activeSessionId && activeSessionId !== sessionId) {
         store.delete(activeSessionId)
@@ -60,7 +58,12 @@ export function setActiveSession(sessionId) {
     activeSessionId = sessionId ?? null
 }
 
-/** Store a level keyed by the agent-emitted levelKey. No-op if key or payload is missing. */
+/**
+ * Stores a parsed menu `payload` for `levelKey` (e.g. `cat/uuid`). LRU bump on re-insert.
+ * @param {string|null|undefined} sessionId
+ * @param {string|null|undefined} levelKey From `payload.breadcrumb` / agent contract.
+ * @param {object} payload Normalized menu payload (same shape as rendered in bubbles).
+ */
 export function cacheLevel(sessionId, levelKey, payload) {
     if (!sessionId || !levelKey || payload == null) return
     const sessionMap = getSessionMap(sessionId)
@@ -70,7 +73,12 @@ export function cacheLevel(sessionId, levelKey, payload) {
     evictUntilUnderCaps(sessionMap)
 }
 
-/** Retrieve a cached level; touching it promotes it to most-recently-used. Returns null on miss. */
+/**
+ * Retrieves a menu payload by `levelKey`, promoting LRU order.
+ * @param {string|null|undefined} sessionId
+ * @param {string|null|undefined} levelKey
+ * @returns {object|null}
+ */
 export function getCachedLevel(sessionId, levelKey) {
     if (!sessionId || !levelKey) return null
     const sessionMap = store.get(sessionId)
@@ -82,22 +90,30 @@ export function getCachedLevel(sessionId, levelKey) {
     return entry.payload
 }
 
-/** Drop the entire cache for a session — call on order_confirmation, restart intent, or session end. */
+/** Drops all cached levels for one session id. */
 export function invalidateSession(sessionId) {
     if (!sessionId) return
     store.delete(sessionId)
 }
 
-/** Heuristic check for user-typed restart intent (BRD BR-14 invalidation trigger). */
+/**
+ * Heuristic for user-typed “start over” style phrases (cache invalidation trigger).
+ * @param {string|null|undefined} text
+ * @returns {boolean}
+ */
 export function isRestartIntent(text) {
     if (!text || typeof text !== 'string') return false
     return RESTART_INTENT_RE.test(text)
 }
 
-/** Test-only: wipe everything (used by unit tests). */
+/** @returns {void} Vitest-only full reset. */
 export function __resetMenuCacheForTests() {
     store.clear()
     activeSessionId = null
 }
 
+/**
+ * Immutable snapshot of LRU caps (`MAX_ENTRIES`, `MAX_BYTES`).
+ * @readonly
+ */
 export const MENU_CACHE_LIMITS = Object.freeze({ MAX_ENTRIES, MAX_BYTES })

@@ -86,13 +86,13 @@
     display: flex;
     justify-content: center;
     align-items: stretch;
-}stretch;
-    align-items: stretch;
 }
 
 .chat-layout-main .chat-window {
     flex: 1;
-    width: 100%
+    width: 100%;
+}
+
 @media (max-width: 900px) {
     .chat-layout {
         padding: 0 8px;

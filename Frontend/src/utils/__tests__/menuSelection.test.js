@@ -4,7 +4,7 @@ import { formatMenuSelectionMessage, resolveMenuPrefixFromHandledBy, MENU_PREFIX
 describe('formatMenuSelectionMessage', () => {
     it('formats category selection with [catering-menu] prefix + displayText', () => {
         const result = formatMenuSelectionMessage({ id: 'cat-1', label: 'Drinks' })
-        expect(result.agentInput).toBe('[catering-menu] Selected category "Drinks" (id: cat-1).')
+        expect(result.agentInput).toBe('[catering-menu] Selected Category (name: Drinks) (id: cat-1).')
         expect(result.displayText).toBe('Drinks')
     })
 
@@ -14,7 +14,7 @@ describe('formatMenuSelectionMessage', () => {
             label: 'Cold',
             categoryId: 'cat-1',
         })
-        expect(result.agentInput).toBe('[catering-menu] Selected subcategory "Cold" (id: sub-1).')
+        expect(result.agentInput).toBe('[catering-menu] Selected Subcategory (name: Cold) (id: sub-1).')
         expect(result.displayText).toBe('Cold')
     })
 
@@ -25,13 +25,13 @@ describe('formatMenuSelectionMessage', () => {
             code: '999',
             price: 0,
         })
-        expect(result.agentInput).toBe('[catering-menu] Selected product "Water" (id: p-1) (code: 999).')
+        expect(result.agentInput).toBe('[catering-menu] Selected Product (name: Water) (id: p-1) (code: 999).')
         expect(result.displayText).toBe('Water')
     })
 
-    it('omits label in agentInput when item has no label or name but keeps id', () => {
+    it('omits name clause when item has no label or name but keeps id', () => {
         const result = formatMenuSelectionMessage({ id: 'cat-1', categoryId: null, code: null })
-        expect(result.agentInput).toBe('[catering-menu] Selected category (id: cat-1).')
+        expect(result.agentInput).toBe('[catering-menu] Selected Category (id: cat-1).')
         expect(result.displayText).toBeNull()
     })
 
@@ -40,26 +40,26 @@ describe('formatMenuSelectionMessage', () => {
         expect(result).toEqual({ agentInput: 'hello', displayText: null })
     })
 
-    it('uses [it-support-menu] for IT area row (no categoryId)', () => {
+    it('uses [it_support-menu] for IT area row (no categoryId)', () => {
         const result = formatMenuSelectionMessage({ id: 'sub-a', label: 'VPN' }, 'IT_SUPPORT')
-        expect(result.agentInput).toBe('[it-support-menu] Selected category "VPN" (id: sub-a).')
+        expect(result.agentInput).toBe('[it_support-menu] Selected Subcategory (name: VPN) (id: sub-a).')
         expect(result.displayText).toBe('VPN')
     })
 
-    it('uses [it-support-menu] for IT leaf row (categoryId = parent subcategory)', () => {
+    it('uses [it_support-menu] for IT leaf row (categoryId = parent subcategory)', () => {
         const result = formatMenuSelectionMessage(
             { id: 'item-9', label: 'VPN dropouts', categoryId: 'sub-a' },
             'IT_SUPPORT',
         )
         expect(result.agentInput).toBe(
-            '[it-support-menu] Selected service item "VPN dropouts" (id: item-9) (subcategoryId: sub-a).',
+            '[it_support-menu] Selected Item (name: VPN dropouts) (id: item-9).',
         )
     })
 
     it('uses [facilities-menu] for F&M when handledBy is FACILITIES_MAINTENANCE', () => {
         const result = formatMenuSelectionMessage({ id: 'x', label: 'Cleaning' }, 'FACILITIES_MAINTENANCE')
         expect(result.agentInput).toContain('[facilities-menu]')
-        expect(result.agentInput).toContain('Selected category')
+        expect(result.agentInput).toContain('Selected Subcategory')
     })
 
     it('resolveMenuPrefixFromHandledBy maps SSE and enum labels', () => {

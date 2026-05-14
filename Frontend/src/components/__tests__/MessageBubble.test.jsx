@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import MessageBubble from '../MessageBubble'
+import MessageBubble from '../chat/MessageBubble'
 
 function makeItems(count, { product = false } = {}) {
     return Array.from({ length: count }, (_, i) => ({

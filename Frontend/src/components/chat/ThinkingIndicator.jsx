@@ -1,4 +1,9 @@
-import SparkIcon from './SparkIcon'
+/**
+ * @file Animated “agent thinking” row (typing dots).
+ * @module components/chat/ThinkingIndicator
+ */
+
+import SparkIcon from '../ui/SparkIcon'
 import './ThinkingIndicator.css'
 
 export default function ThinkingIndicator() {

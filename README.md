@@ -48,7 +48,7 @@ cp .env.example .env
 Then edit `Frontend/.env`:
 
 ```env
-# Backend API origin (Modulith Service); default: http://localhost:8085
+# Modulith base URL (no trailing slash). Or leave unset and set VITE_API_BACKEND=local | remote-dev | remote-test (see Frontend/.env.example).
 VITE_API_ORIGIN=http://localhost:8085
 
 # Log level (optional): debug | info | warn | error

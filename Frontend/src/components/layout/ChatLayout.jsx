@@ -1,51 +1,76 @@
+/**
+ * Root layout: conversation list + main chat (secure bearer or public guest API).
+ * @module components/layout/ChatLayout
+ */
+
 import { useState, useEffect, useCallback } from 'react'
-import { getConversations, isSecureMode, ApiError } from '../services/api'
-import { createLogger } from '../utils/logger.js'
-import ConversationSidebar from './ConversationSidebar'
-import ChatWindow from './ChatWindow'
+import { getConversations, ApiError } from '../../services/api'
+import { bumpConversationLastActivity, sortConversationsForSidebar } from '../../utils/conversationSidebarOrder.js'
+import { createLogger } from '../../utils/logger.js'
+import { shouldUseLocalOtpFlow } from '../../auth/localAccessTokenFlow.js'
+import { getAccessToken } from '../../auth/tokenStore.js'
+import { isGuestChatAuth } from '../../config/chatAuth.js'
+import { syncGuestCookie } from '../../auth/guestClientId.js'
+import ConversationSidebar from '../sidebar/ConversationSidebar.jsx'
+import ChatWindow from '../chat/ChatWindow.jsx'
+import LocalAuthDialog from '../auth/LocalAuthDialog.jsx'
 import './ChatLayout.css'
 
 const log = createLogger('ChatLayout')
 
+const guestMode = isGuestChatAuth(import.meta.env)
+
 export default function ChatLayout() {
+    const [authenticated, setAuthenticated] = useState(Boolean(getAccessToken()))
     const [conversations, setConversations] = useState([])
     const [convosLoading, setConvosLoading] = useState(true)
     const [convosError, setConvosError] = useState(null)
     const [selectedConversationId, setSelectedConversationId] = useState(null)
     const [sidebarOpen, setSidebarOpen] = useState(false)
-    const [authKey, setAuthKey] = useState(() => (isSecureMode() ? 'secure' : 'guest'))
     const [resetKey, setResetKey] = useState(0)
 
-    const loadConversations = useCallback(async () => {
-        setConvosLoading(true)
-        setConvosError(null)
+    const chatApiReady = guestMode || authenticated
+
+    useEffect(() => {
+        if (guestMode) syncGuestCookie()
+    }, [])
+
+    const loadConversations = useCallback(async (opts = {}) => {
+        const silent = opts.silent === true
+        if (!chatApiReady) {
+            if (!silent) setConvosLoading(false)
+            setConversations([])
+            return
+        }
+        if (!silent) {
+            setConvosLoading(true)
+            setConvosError(null)
+        }
         try {
             const data = await getConversations({ page: 0, size: 100 })
-            setConversations(data.content ?? [])
+            setConversations(sortConversationsForSidebar(data.content ?? []))
+            if (!silent) setConvosError(null)
         } catch (e) {
             const msg = e instanceof ApiError ? e.message : 'Failed to load conversations'
             log.warn('loadConversations failed', e)
-            setConvosError(msg)
-            setConversations([])
+            if (!silent) {
+                setConvosError(msg)
+                setConversations([])
+            }
         } finally {
-            setConvosLoading(false)
+            if (!silent) setConvosLoading(false)
         }
-    }, [])
+    }, [chatApiReady])
 
     useEffect(() => {
         loadConversations()
-    }, [loadConversations, authKey])
+    }, [loadConversations])
 
     useEffect(() => {
-        const onStorage = (ev) => {
-            if (ev.key === 'ankabut_jwt') {
-                setAuthKey(isSecureMode() ? 'secure' : 'guest')
-                setSelectedConversationId(null)
-            }
-        }
-        window.addEventListener('storage', onStorage)
-        return () => window.removeEventListener('storage', onStorage)
+        setAuthenticated(Boolean(getAccessToken()))
     }, [])
+
+    const requiresLocalAuth = shouldUseLocalOtpFlow(import.meta.env) && !authenticated && !guestMode
 
     const handleSelectConversation = useCallback((id) => {
         setSelectedConversationId(id)
@@ -57,7 +82,6 @@ export default function ChatLayout() {
     }, [])
 
     const handleSidebarNewChat = useCallback(() => {
-        // Increment reset key to force ChatWindow to reset even if selectedConversationId is already null
         setResetKey((k) => k + 1)
         setSelectedConversationId(null)
     }, [])
@@ -66,8 +90,27 @@ export default function ChatLayout() {
         loadConversations()
     }, [loadConversations])
 
+    const handleConversationActivity = useCallback(
+        (conversationId, atIso = new Date().toISOString()) => {
+            if (conversationId == null || String(conversationId).trim() === '') return
+            const cid = String(conversationId)
+            setConversations((prev) => {
+                const exists = prev.some((c) => String(c.id) === cid)
+                if (!exists) {
+                    loadConversations({ silent: true })
+                    return prev
+                }
+                return bumpConversationLastActivity(prev, cid, atIso)
+            })
+        },
+        [loadConversations],
+    )
+
     return (
         <div className="chat-layout">
+            {requiresLocalAuth && (
+                <LocalAuthDialog onAuthenticated={() => setAuthenticated(true)} />
+            )}
             <button
                 type="button"
                 className="chat-layout-sidebar-toggle"
@@ -98,7 +141,7 @@ export default function ChatLayout() {
             >
                 <ConversationSidebar
                     conversations={conversations}
-                    loading={convosLoading}
+                    loading={convosLoading || requiresLocalAuth}
                     error={convosError}
                     selectedId={selectedConversationId}
                     onSelect={handleSelectConversation}
@@ -113,6 +156,7 @@ export default function ChatLayout() {
                     key={resetKey}
                     onNewChat={handleNewChat}
                     onConversationCreated={handleConversationCreated}
+                    onConversationActivity={handleConversationActivity}
                 />
             </main>
         </div>

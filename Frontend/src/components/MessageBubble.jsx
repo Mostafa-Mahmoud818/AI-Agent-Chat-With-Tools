@@ -2,8 +2,8 @@ import { memo, useEffect, useState } from 'react'
 import PropTypes from 'prop-types'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import SparkIcon from './SparkIcon'
-import MenuBreadcrumb from './MenuBreadcrumb'
+import SparkIcon from './ui/SparkIcon.jsx'
+import MenuBreadcrumb from './navigation/MenuBreadcrumb.jsx'
 import './MessageBubble.css'
 
 const MENU_PAGE_SIZE = 6

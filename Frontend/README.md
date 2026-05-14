@@ -15,13 +15,18 @@ npm install
 npm run dev
 ```
 
-Opens http://localhost:5173 and connects to the backend on `http://localhost:8085/api/v1/public/chatting` (or `/api/v1/secure/chatting` if authenticated).
+Opens http://localhost:5173.
+
+**Default (secure):** calls **`/api/v1/secure/chatting/*`** against `VITE_API_ORIGIN` or the `VITE_API_BACKEND` preset, with **`Authorization: Bearer …`** from `VITE_API_BEARER_TOKEN` (or local OTP when enabled).
+
+**Guest (Ankabut public API):** set **`VITE_CHAT_AUTH=guest`** to use **`/api/v1/public/chatting/*`**. The UI generates a stable UUID `clientId` (localStorage), sets the **`ankabut_guest_id`** cookie (plain UUID when the server has no HMAC secret), and appends **`?clientId=`** on requests so cross-origin works without credentialed cookies. Pair with **`VITE_API_RELATIVE=1`** so `npm run dev` proxies **`/api`** to the modulith (see `vite.config.js`).
 
 ## Backend Requirements
 
-- **Backend running**: Modulith Service on port 8085
-- **PostgreSQL**: Database with dxp-chatting schema
-- **Camunda 8 SaaS cluster**: Configured for AI orchestration
+- **Backend reachable**: CORS must allow your dev origin when using a full `VITE_API_ORIGIN` (e.g. `http://localhost:8085`)
+- **Secure mode**: `VITE_API_BEARER_TOKEN` (or local OTP) required
+- **Guest mode**: no JWT; modulith must expose public chatting + orchestration routes
+- **PostgreSQL / Camunda**: as configured on that modulith environment
 
 ## Features
 
@@ -64,9 +69,25 @@ src/
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `VITE_API_ORIGIN` | `http://localhost:8085` | Modulith Service backend URL (no trailing slash) |
-| `VITE_LOG_LEVEL` | `info` | Log verbosity: debug\|info\|warn\|error |
-| `VITE_DEFAULT_CATERING_RESOURCE_ID` | _(unset)_ | Optional resource id sent on orchestration start (catering ACL) |
+| `VITE_API_ORIGIN` | _(see `VITE_API_BACKEND` if unset)_ | Modulith base URL, no trailing slash |
+| `VITE_API_RELATIVE` | off | When `1` / `true`, API base URL is empty → same-origin **`/api/...`** (Vite dev proxy) |
+| `VITE_API_BACKEND` | `remote-dev` | Preset when origin not set: `local` → `http://localhost:8085`, `remote-dev` → `https://dev-modulith.naitive.ai`, `remote-test` → `https://test-modulith.naitive.ai` |
+| `VITE_CHAT_AUTH` | _(unset = secure)_ | Set to **`guest`** for **`/api/v1/public/chatting`** + UUID `clientId` (no bearer) |
+| `VITE_GUEST_COOKIE_NAME` | `ankabut_guest_id` | Must match modulith `chatting.guest-cookie-name` if you override it |
+| `VITE_API_BEARER_TOKEN` | _(none)_ | Bearer JWT for secure chatting + SSE (not used in guest mode) |
+| `VITE_LOG_LEVEL` | `info` in prod / `debug` in dev | Log verbosity: debug\|info\|warn\|error |
+| `VITE_DEFAULT_RESOURCE_ID` | _(unset)_ | Optional `resourceId` on orchestration **start** (max 128 chars server-side) |
+
+**Auth:** secure mode — set `VITE_API_BEARER_TOKEN` and restart `npm run dev`. Guest mode — set `VITE_CHAT_AUTH=guest` (and usually `VITE_API_RELATIVE=1` for local docker/modulith). Vite inlines env into the bundle; do not ship production builds with long-lived secrets.
+
+### API alignment (Ankabut modulith)
+
+| Flow | Secure path | Public (guest) path |
+|------|-------------|---------------------|
+| List / create conversations, turns | `/api/v1/secure/chatting/...` | `/api/v1/public/chatting/...` |
+| Start orchestration, user-messages, assistant SSE | `/api/v1/secure/chatting/orchestration/...` | `/api/v1/public/chatting/orchestration/...` |
+
+Create conversation (guest) uses body **`{ clientId, req: { initialTitle, initialSummary } }`** per `CreateConversationWithIdentityRequest`. Orchestration payloads match **`ChattingOrchestrationStartRequest`** / **`ChattingOrchestrationFollowUpRequest`**. SSE events are JSON **`ChattingOrchestrationRoundResponseDto`** (`status`: `ready` \| `processing` \| `error` \| `expired`, `message`, `handledBy`).
 
 ## Technology Stack
 
@@ -81,35 +102,23 @@ src/
 The TypeScript/JSDoc source of truth for request/response shapes is [`src/services/api.js`](src/services/api.js).  
 Backend process variables and BPMN alignment: see the Ankabut repo [`docs/bpmn-variables.md`](../../../ANKABUT/Ankabut-DXP-Services/docs/bpmn-variables.md) (example relative URL from this demo app when the backend repo lives at `D:\ANKABUT\Ankabut-DXP-Services`; clone location may differ).
 
-### Main endpoints (modulith service)
+### Main endpoints (modulith — secure chatting)
 
-Guest mode (anonymous):
-```
-POST   /api/v1/public/chatting/conversations
-POST   /api/v1/public/chatting/orchestration/sessions/{id}/start
-POST   /api/v1/public/chatting/orchestration/sessions/{id}/user-messages
-GET    /api/v1/public/chatting/orchestration/sessions/{id}/assistant-round/stream
-```
+All URLs are resolved as `{VITE_API_ORIGIN}/api/v1/secure/chatting/...`:
 
-Secure mode (JWT authenticated):
 ```
 POST   /api/v1/secure/chatting/conversations
-POST   /api/v1/secure/chatting/orchestration/sessions/{id}/start
-POST   /api/v1/secure/chatting/orchestration/sessions/{id}/user-messages
-GET    /api/v1/secure/chatting/orchestration/sessions/{id}/assistant-round/stream
+GET    /api/v1/secure/chatting/conversations
+GET    /api/v1/secure/chatting/conversations/{conversationId}/turns
+POST   /api/v1/secure/chatting/orchestration/conversations/{conversationId}/start
+POST   /api/v1/secure/chatting/orchestration/conversations/{conversationId}/user-messages
+GET    /api/v1/secure/chatting/orchestration/conversations/{conversationId}/assistant-round/stream
 ```
 
 ### Authentication
 
-**Guest Mode (Default)**
-- Uses `ankabut_guest_id` cookie (auto-generated UUID)
-- No login required
-- All API requests include `clientId` parameter or cookie
-
-**Secure Mode**
-- Uses JWT token from `Authorization: Bearer <token>` header
-- Token stored in `localStorage.ankabut_jwt`
-- API: `/api/v1/secure/chatting/*`
+- Every request sends `Authorization: Bearer <VITE_API_BEARER_TOKEN>`.
+- Server-Sent Events use `fetch` with the same header (no guest `EventSource`).
 
 ## Relevant Backend Paths
 
@@ -125,14 +134,15 @@ GET    /api/v1/secure/chatting/orchestration/sessions/{id}/assistant-round/strea
 - Pagination defaults (50 conversations, 200 turns) may differ from backend defaults (20)
 - Quick prompts are static demos — actual routing determined by backend
 - No message editing/deletion (designed by backend as append-only)
-- Session resumption requires explicit previous session ID
+- Session rollover and Camunda `previousSessionId` are handled only by the modulith (`ensureActiveOrchestrationSession`); clients do not send `previousSessionId` on start
 
 ## Troubleshooting
 
 Common issues:
-1. **"Network error"** → Check backend is running on port 8085 or update `VITE_API_ORIGIN`
-2. **"Session expired"** → Backend may have timeout configured, check `/orchestration/sessions/` endpoint
-3. **SSE not connecting** → Verify JWT token in localStorage (secure mode) or proxy config
+1. **Missing token / API errors** → Set `VITE_API_BEARER_TOKEN` in `.env` and restart the dev server  
+2. **"Network error" / CORS** → Modulith must allow `http://localhost:5173` (or your dev origin); check `VITE_API_ORIGIN`  
+3. **"Session expired"** → Backend timeout; SSE is keyed by **conversation**  
+4. **SSE not connecting** → Confirm token and that the stream URL returns 200 with `text/event-stream`
 
 ## Performance & Monitoring
 
@@ -142,10 +152,9 @@ Common issues:
 
 ## Production Deployment
 
-1. Update `VITE_API_ORIGIN` to production backend URL
-2. Run `npm run build` → generates `dist/`
-3. Serve `dist/` via static file server (Nginx, Apache, etc.)
-4. Ensure CORS headers allow frontend origin if on different domain
+1. Set `VITE_API_ORIGIN` to the production modulith URL (if not using the default dev host)  
+2. Prefer **not** baking a long-lived `VITE_API_BEARER_TOKEN` into public builds; use a BFF or user login that mints short-lived tokens  
+3. Run `npm run build` → `dist/` for static hosting
 
 ## Links
 

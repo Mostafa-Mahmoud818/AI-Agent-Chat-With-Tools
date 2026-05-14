@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import MenuBreadcrumb from '../MenuBreadcrumb'
+import MenuBreadcrumb from '../navigation/MenuBreadcrumb'
 
 describe('MenuBreadcrumb', () => {
     it('renders nothing when crumbs is missing or empty', () => {

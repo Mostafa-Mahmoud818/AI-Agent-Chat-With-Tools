@@ -1,21 +1,21 @@
 /**
- * Builds the user message after a menu card click so the classifier and specialist agent
- * see a stable, self-describing line in `currentInput` (ids + optional labels).
+ * Builds user-visible orchestration lines after a menu card click so BPMN/classifiers receive stable text.
  *
- * Prefixes:
- * - `[catering-menu] ` — catering catalog (categories / subcategories / products)
- * - `[it-support-menu] ` — IT service areas and request items
- * - `[facilities-menu] ` — Facilities & Maintenance areas and request items
+ * Prefer backend `selectionSignal` on each `menuitem`; this module formats a fallback aligned with BPMN wording.
  *
- * Router BPMN treats these prefixes deterministically (classifier + classifier-failure recovery).
+ * Prefixes match router expectations (underscore for IT — `HandleClassifierFailure`):
+ * - `[catering-menu] `
+ * - `[it_support-menu] `
+ * - `[facilities-menu] `
  *
- * @param {object} item - normalized menu item ({ id, label, code?, categoryId?, … })
- * @param {string|null|undefined} handledBy - message.handledBy from the AI bubble (e.g. IT_SUPPORT, CATERING, or SSE label)
- * @returns {{ agentInput: string, displayText: string|null }}
+ * @file
+ * @module utils/menuSelection
  */
+
+/** BPMN-aligned user-input prefixes including trailing space. */
 export const MENU_PREFIX = {
     catering: '[catering-menu] ',
-    it_support: '[it-support-menu] ',
+    it_support: '[it_support-menu] ',
     facilities_maintenance: '[facilities-menu] ',
 }
 
@@ -33,14 +33,31 @@ export function resolveMenuPrefixFromHandledBy(handledBy) {
     return MENU_PREFIX.catering
 }
 
-function escapeForQuote(s) {
-    return String(s).replaceAll('\\', '\\\\').replaceAll('"', '\\"')
+/** Same sanitisation axis as AgentResponsePostProcessor.selectionSignal */
+function safeMenuName(name) {
+    return String(name ?? '')
+        .replace(/\n/g, ' ')
+        .replace(/\r/g, ' ')
+        .replace(/\t/g, ' ')
+}
+
+function nameClause(displayLabel) {
+    const n = safeMenuName(displayLabel).trim()
+    if (!n) return ''
+    return ` (name: ${n})`
 }
 
 function isServiceRequestPrefix(prefix) {
     return prefix === MENU_PREFIX.it_support || prefix === MENU_PREFIX.facilities_maintenance
 }
 
+/**
+ * Fallback formatter when `MenuBubble` forwards a click without backend `selectionSignal`.
+ *
+ * @param {object|string|null} item Clicked menu row (`id`, optional `label`/`name`, `categoryId`, `code`).
+ * @param {string|null|undefined} handledBy Persisted/SSE route (`CATERING`, `IT_SUPPORT`, …).
+ * @returns {{ agentInput: string, displayText: string|null }} Orchestration body (`agentInput`) and bubble label hint.
+ */
 export function formatMenuSelectionMessage(item, handledBy) {
     const prefix = resolveMenuPrefixFromHandledBy(handledBy)
 
@@ -55,40 +72,37 @@ export function formatMenuSelectionMessage(item, handledBy) {
         return { agentInput: `${prefix}Missing item id.`, displayText }
     }
 
-    // IT / F&M: area rows have categoryId null; leaf rows set categoryId to parent subcategory UUID.
+    // IT / F&M BPMN: Subcategory row vs Item leaf.
     if (isServiceRequestPrefix(prefix)) {
         const parentId = item.categoryId != null && item.categoryId !== '' ? String(item.categoryId).trim() : ''
-        const labelPart = rawLabel ? ` "${escapeForQuote(rawLabel)}"` : ''
         if (parentId) {
             return {
-                agentInput: `${prefix}Selected service item${labelPart} (id: ${id}) (subcategoryId: ${parentId}).`,
+                agentInput: `${prefix}Selected Item${nameClause(rawLabel)} (id: ${id}).`,
                 displayText,
             }
         }
         return {
-            agentInput: `${prefix}Selected category${labelPart} (id: ${id}).`,
+            agentInput: `${prefix}Selected Subcategory${nameClause(rawLabel)} (id: ${id}).`,
             displayText,
         }
     }
 
+    // Catering BPMN depth: Category → Subcategory → Product.
     if (item.code != null && item.code !== '') {
         const code = String(item.code).trim()
-        const labelPart = rawLabel ? ` "${escapeForQuote(rawLabel)}"` : ''
         return {
-            agentInput: `${prefix}Selected product${labelPart} (id: ${id}) (code: ${code}).`,
+            agentInput: `${prefix}Selected Product${nameClause(rawLabel)} (id: ${id}) (code: ${code}).`,
             displayText,
         }
     }
     if (item.categoryId != null && item.categoryId !== '') {
-        const labelPart = rawLabel ? ` "${escapeForQuote(rawLabel)}"` : ''
         return {
-            agentInput: `${prefix}Selected subcategory${labelPart} (id: ${id}).`,
+            agentInput: `${prefix}Selected Subcategory${nameClause(rawLabel)} (id: ${id}).`,
             displayText,
         }
     }
-    const labelPart = rawLabel ? ` "${escapeForQuote(rawLabel)}"` : ''
     return {
-        agentInput: `${prefix}Selected category${labelPart} (id: ${id}).`,
+        agentInput: `${prefix}Selected Category${nameClause(rawLabel)} (id: ${id}).`,
         displayText,
     }
 }
