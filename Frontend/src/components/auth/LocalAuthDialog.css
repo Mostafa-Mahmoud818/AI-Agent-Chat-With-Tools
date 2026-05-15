@@ -57,6 +57,169 @@
     box-shadow: 0 0 0 3px rgba(165, 110, 255, 0.15);
 }
 
+.local-auth-form textarea {
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    padding: 10px 12px;
+    font-size: 13px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    line-height: 1.4;
+    resize: vertical;
+    min-height: 92px;
+    outline: none;
+}
+
+.local-auth-form textarea:focus {
+    border-color: var(--border-accent);
+    box-shadow: 0 0 0 3px rgba(165, 110, 255, 0.15);
+}
+
+.local-auth-env-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.local-auth-env-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    border: 1px solid var(--border-subtle);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-secondary);
+}
+
+.local-auth-env-badge[data-env='dev'] {
+    color: #fcd34d;
+    border-color: rgba(252, 211, 77, 0.45);
+    background: rgba(252, 211, 77, 0.12);
+}
+
+.local-auth-env-badge[data-env='test'] {
+    color: #7dd3fc;
+    border-color: rgba(125, 211, 252, 0.45);
+    background: rgba(125, 211, 252, 0.12);
+}
+
+.local-auth-env-badge[data-env='local'] {
+    color: #86efac;
+    border-color: rgba(134, 239, 172, 0.45);
+    background: rgba(134, 239, 172, 0.12);
+}
+
+.local-auth-env-origin {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.local-auth-link {
+    background: transparent;
+    border: none;
+    color: var(--accent-primary);
+    font-size: 12px;
+    font-weight: 600;
+    text-decoration: underline;
+    cursor: pointer;
+    padding: 2px 6px;
+}
+
+.local-auth-link:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.local-auth-env-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+    margin-top: 8px;
+}
+
+.local-auth-env-card {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    padding: 14px 16px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-subtle);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    text-align: left;
+}
+
+.local-auth-env-card:hover {
+    background: rgba(165, 110, 255, 0.08);
+    border-color: var(--border-accent);
+}
+
+.local-auth-env-card[data-env='dev']:hover {
+    background: rgba(252, 211, 77, 0.12);
+    border-color: rgba(252, 211, 77, 0.55);
+}
+
+.local-auth-env-card[data-env='test']:hover {
+    background: rgba(125, 211, 252, 0.12);
+    border-color: rgba(125, 211, 252, 0.55);
+}
+
+.local-auth-env-card[data-env='local']:hover {
+    background: rgba(134, 239, 172, 0.12);
+    border-color: rgba(134, 239, 172, 0.55);
+}
+
+.local-auth-env-card-label {
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+}
+
+.local-auth-env-card[data-env='dev'] .local-auth-env-card-label {
+    color: #fcd34d;
+}
+
+.local-auth-env-card[data-env='test'] .local-auth-env-card-label {
+    color: #7dd3fc;
+}
+
+.local-auth-env-card[data-env='local'] .local-auth-env-card-label {
+    color: #86efac;
+}
+
+.local-auth-env-card-desc {
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.local-auth-env-card-url {
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    opacity: 0.7;
+}
+
+.local-auth-optional {
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 400;
+}
+
 .local-auth-form button {
     border: 1px solid var(--border-accent);
     border-radius: var(--radius-md);

@@ -7,7 +7,6 @@ import { useState, useEffect, useCallback } from 'react'
 import { getConversations, ApiError } from '../../services/api'
 import { bumpConversationLastActivity, sortConversationsForSidebar } from '../../utils/conversationSidebarOrder.js'
 import { createLogger } from '../../utils/logger.js'
-import { shouldUseLocalOtpFlow } from '../../auth/localAccessTokenFlow.js'
 import { getAccessToken } from '../../auth/tokenStore.js'
 import { isGuestChatAuth } from '../../config/chatAuth.js'
 import { syncGuestCookie } from '../../auth/guestClientId.js'
@@ -70,7 +69,7 @@ export default function ChatLayout() {
         setAuthenticated(Boolean(getAccessToken()))
     }, [])
 
-    const requiresLocalAuth = shouldUseLocalOtpFlow(import.meta.env) && !authenticated && !guestMode
+    const requiresAuth = import.meta.env.MODE !== 'test' && !authenticated && !guestMode
 
     const handleSelectConversation = useCallback((id) => {
         setSelectedConversationId(id)
@@ -108,7 +107,7 @@ export default function ChatLayout() {
 
     return (
         <div className="chat-layout">
-            {requiresLocalAuth && (
+            {requiresAuth && (
                 <LocalAuthDialog onAuthenticated={() => setAuthenticated(true)} />
             )}
             <button
@@ -141,7 +140,7 @@ export default function ChatLayout() {
             >
                 <ConversationSidebar
                     conversations={conversations}
-                    loading={convosLoading || requiresLocalAuth}
+                    loading={convosLoading || requiresAuth}
                     error={convosError}
                     selectedId={selectedConversationId}
                     onSelect={handleSelectConversation}

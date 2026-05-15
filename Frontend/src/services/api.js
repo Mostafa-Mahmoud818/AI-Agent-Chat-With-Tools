@@ -23,6 +23,7 @@ import { resolveApiOrigin } from '../config/apiOrigin.js'
 import { getAccessToken } from '../auth/tokenStore.js'
 import { isGuestChatAuth } from '../config/chatAuth.js'
 import { getOrCreateGuestClientId } from '../auth/guestClientId.js'
+import { getRuntimeResourceId } from '../config/runtimeSettings.js'
 
 const log = createLogger('api')
 
@@ -118,8 +119,13 @@ function resolveOrchestrationResourceId(explicit) {
     if (explicit != null && String(explicit).trim() !== '') {
         s = String(explicit).trim()
     } else {
-        const raw = import.meta.env.VITE_DEFAULT_RESOURCE_ID
-        s = typeof raw === 'string' ? raw.trim() : ''
+        const runtime = getRuntimeResourceId()
+        if (runtime) {
+            s = runtime
+        } else {
+            const raw = import.meta.env.VITE_DEFAULT_RESOURCE_ID
+            s = typeof raw === 'string' ? raw.trim() : ''
+        }
     }
     if (!s) return null
     if (s.length > MAX_RESOURCE_ID_LEN) {
