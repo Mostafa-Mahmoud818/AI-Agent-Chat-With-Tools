@@ -19,6 +19,9 @@ Thumbs.db
 *.local
 !.env.example
 !Backend/.env.example
+# Frontend .env is checked in: it holds non-secret DEV defaults only.
+# Never paste a real bearer token here — use the in-app dialog instead.
+!Frontend/.env
 
 # App config (may contain secrets / credentials)
 # application.yaml.template IS committed — it contains no real values
