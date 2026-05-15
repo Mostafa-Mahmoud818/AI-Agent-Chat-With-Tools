@@ -44,10 +44,34 @@ const QUICK_PROMPTS = [
     'I need cleaning scheduled for my office',
 ]
 
-/** Optional Spanterk/restaurant resource id — sent as `resourceId` on orchestration start (see .env.example). */
-function getCateringResourceId() {
-    const v = import.meta.env.VITE_DEFAULT_CATERING_RESOURCE_ID
-    return v != null && String(v).trim() !== '' ? String(v).trim() : undefined
+/**
+ * Visit persona placeholder used when `VITE_DEFAULT_VISIT_ID` is not provided.
+ * The Phase-1 backend resolver ignores the actual `visitId` value (it returns a hardcoded
+ * `resourceId`), so an all-zero UUID is fine for dev. In production the visitId will be
+ * sourced from the visit/session context, not from env.
+ */
+const FALLBACK_VISIT_ID = '00000000-0000-0000-0000-000000000000'
+
+/**
+ * Builds the `chatContext` envelope sent on orchestration start.
+ *
+ * Today only the VISIT persona is supported by the backend. The visitId is taken from
+ * `VITE_DEFAULT_VISIT_ID` when set; otherwise a fallback all-zero UUID is used and a
+ * warning is logged so devs can see it.
+ *
+ * @returns {{ schemaVersion: string, contextType: 'VISIT', contextData: { visitId: string } }}
+ */
+function getChatContext() {
+    const raw = import.meta.env.VITE_DEFAULT_VISIT_ID
+    const visitId = raw != null && String(raw).trim() !== '' ? String(raw).trim() : null
+    if (!visitId) {
+        log.warn('VITE_DEFAULT_VISIT_ID not set — using placeholder visitId', { visitId: FALLBACK_VISIT_ID })
+    }
+    return {
+        schemaVersion: '1.0',
+        contextType: 'VISIT',
+        contextData: { visitId: visitId ?? FALLBACK_VISIT_ID },
+    }
 }
 
 function isSessionGone(err) {
@@ -347,11 +371,10 @@ export default function ChatWindow({
                 setFirstOutgoingNeedsStart(false)
                 setResumePreviousSessionId(null)
                 onConversationCreated?.()
-                await startOrchestration(sessId, text, null, getCateringResourceId(), opts.displayText ?? null)
+                await startOrchestration(sessId, text, getChatContext(), opts.displayText ?? null)
                 startStreaming(sessId)
             } else if (firstOutgoingNeedsStart) {
-                const prev = resumePreviousSessionId || undefined
-                await startOrchestration(sessionId, text, prev, getCateringResourceId(), opts.displayText ?? null)
+                await startOrchestration(sessionId, text, getChatContext(), opts.displayText ?? null)
                 setFirstOutgoingNeedsStart(false)
                 setResumePreviousSessionId(null)
                 startStreaming(sessionId)
@@ -505,8 +528,8 @@ export default function ChatWindow({
                         <p>
                             I'm an AI agent that can help you explore the catering catalog (categories, subcategories, and
                             products), submit IT-support tickets, and report facilities &amp; maintenance issues.
-                            Set <code className="env-hint">VITE_DEFAULT_CATERING_RESOURCE_ID</code> in{' '}
-                            <code className="env-hint">.env</code> when testing catering orders against your ACL resource.
+                            Set <code className="env-hint">VITE_DEFAULT_VISIT_ID</code> in{' '}
+                            <code className="env-hint">.env</code> to anchor the chat to a specific visit context.
                         </p>
                         <div className="quick-prompts">
                             {QUICK_PROMPTS.map((prompt) => (

@@ -31,6 +31,16 @@ import './ChatWindow.css'
 
 const log = createLogger('ChatWindow')
 
+// TODO: Replace with a real visit-derived chatContext once the visit/session
+// context is plumbed through to the chat surface. Backend currently runs the
+// HARDCODED resolver, so any valid UUID for visitId resolves to the fixed
+// dev resourceId.
+const FIXED_CHAT_CONTEXT = {
+    schemaVersion: '1.0',
+    contextType: 'VISIT',
+    contextData: { visitId: '00000000-0000-0000-0000-000000000000' },
+}
+
 const QUICK_PROMPTS = [
     'Show me the catering products menu',
     'Show me the catering product categories',
@@ -255,10 +265,10 @@ export default function ChatWindow({
                 setMenuCacheSessionKey(convId)
                 setFirstOutgoingNeedsStart(false)
                 onConversationCreated?.()
-                await startOrchestration(convId, text, undefined, opts.displayText ?? null)
+                await startOrchestration(convId, text, FIXED_CHAT_CONTEXT, opts.displayText ?? null)
                 startStreaming(convId, convId)
             } else if (firstOutgoingNeedsStart) {
-                await startOrchestration(conversationId, text, undefined, opts.displayText ?? null)
+                await startOrchestration(conversationId, text, FIXED_CHAT_CONTEXT, opts.displayText ?? null)
                 setFirstOutgoingNeedsStart(false)
                 startStreaming(conversationId, menuCacheSessionKey ?? conversationId)
             } else {

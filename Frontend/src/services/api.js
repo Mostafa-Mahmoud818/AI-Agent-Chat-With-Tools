@@ -9,10 +9,17 @@
  *
  * Base URL: {@code VITE_API_ORIGIN}, or {@code VITE_API_RELATIVE=1} for same-origin `/api` (Vite proxy), or {@code VITE_API_BACKEND} preset — see {@link resolveApiOrigin}.
  *
- * **`resourceId` on orchestration start:** optional; blank falls back to {@code VITE_DEFAULT_RESOURCE_ID} when set.
+ * **`chatContext` on orchestration start:** required. Persona envelope — see
+ * {@link startOrchestration}. Backend resolves it internally to a `resourceId`; the
+ * frontend never deals with `resourceId` directly.
  *
- * **Turn history:** {@code GET .../conversations/{id}/turns?limit=N} — {@code ConversationTurnDto[]} newest-first;
- * {@code limit} defaults to 100, max 500. {@link fetchAllConversationTurns} reverses to chronological order for the transcript.
+ * **Turn history:** {@code GET .../conversations/{id}/turns}. Two backend implementations are supported,
+ * selected at runtime by {@code VITE_TURNS_API_MODE}:
+ *   - {@code limit} (default) — newer: {@code ?limit=N}, {@code ApiResponse<ConversationTurnDto[]>} newest-first.
+ *   - {@code paged}            — legacy: {@code ?page=0&size=N}, {@code ApiResponse<PagedResponse<ConversationTurnDto>>}
+ *                                with {@code content[]} oldest-first.
+ * {@link getConversationTurns} normalizes both to a newest-first array;
+ * {@link fetchAllConversationTurns} reverses to chronological order for the transcript.
  *
  * **SSE payload:** {@code ChattingOrchestrationRoundResponseDto} — {@code status}: ready | processing | error | expired;
  * {@code message}, {@code handledBy}.
@@ -35,6 +42,26 @@ const REQUEST_TIMEOUT_MS = 15_000
 
 /** Backend {@code ChattingSecureController} / open: {@code @Max(500)} on {@code limit}. */
 const MAX_CONVERSATION_TURNS_LIMIT = 500
+
+const TURNS_API_MODE_LIMIT = 'limit'
+const TURNS_API_MODE_PAGED = 'paged'
+
+/**
+ * Selects which `/turns` backend implementation to call.
+ * - `limit` (default): newer endpoint, single `?limit=N` query, returns a plain array newest-first.
+ * - `paged`:           legacy endpoint, `?page=0&size=N`, returns `PagedResponse` with `content` oldest-first.
+ *
+ * @returns {'limit'|'paged'}
+ */
+function getTurnsApiMode() {
+    const raw = import.meta.env.VITE_TURNS_API_MODE
+    const v = typeof raw === 'string' ? raw.trim().toLowerCase() : ''
+    if (v === TURNS_API_MODE_PAGED) return TURNS_API_MODE_PAGED
+    if (v && v !== TURNS_API_MODE_LIMIT) {
+        log.warn('Unknown VITE_TURNS_API_MODE — falling back to default', { value: raw, default: TURNS_API_MODE_LIMIT })
+    }
+    return TURNS_API_MODE_LIMIT
+}
 
 const IS_TEST = import.meta.env.MODE === 'test'
 
@@ -104,29 +131,6 @@ async function unwrapResponse(res) {
         throw new ApiError(res.status, 'api_error', json.message || 'Request failed')
     }
     return json.data
-}
-
-/** Backend `ChattingOrchestrationStartRequest.resourceId`: `@Size(max = 128)`, nullable. */
-const MAX_RESOURCE_ID_LEN = 128
-
-/**
- * @param {string|null|undefined} explicit Passed from callers (omit to use env only).
- * @returns {string|null}
- */
-function resolveOrchestrationResourceId(explicit) {
-    let s = ''
-    if (explicit != null && String(explicit).trim() !== '') {
-        s = String(explicit).trim()
-    } else {
-        const raw = import.meta.env.VITE_DEFAULT_RESOURCE_ID
-        s = typeof raw === 'string' ? raw.trim() : ''
-    }
-    if (!s) return null
-    if (s.length > MAX_RESOURCE_ID_LEN) {
-        log.warn('resourceId longer than backend max — truncating', { max: MAX_RESOURCE_ID_LEN })
-        s = s.slice(0, MAX_RESOURCE_ID_LEN)
-    }
-    return s
 }
 
 // ── HTTP helpers ────────────────────────────────────────────────────
@@ -233,7 +237,8 @@ export async function getConversations({ page = 0, size = 50 } = {}) {
 }
 
 /**
- * Latest turns for a conversation (API order: newest first).
+ * Latest turns for a conversation, always returned as a newest-first array regardless of
+ * which backend implementation is active (selected by {@link getTurnsApiMode}).
  *
  * @param {string} conversationId
  * @param {{ limit?: number }} [opts] capped to {@link MAX_CONVERSATION_TURNS_LIMIT}; backend default when omitted is 100.
@@ -242,10 +247,24 @@ export async function getConversations({ page = 0, size = 50 } = {}) {
 export async function getConversationTurns(conversationId, { limit = 100 } = {}) {
     const base = getApiBase()
     const n = Math.min(Math.max(1, Number(limit) || 100), MAX_CONVERSATION_TURNS_LIMIT)
-    const qp = new URLSearchParams({ limit: String(n) })
     const cid = encodeURIComponent(conversationId)
+    const mode = getTurnsApiMode()
+
+    if (mode === TURNS_API_MODE_PAGED) {
+        // Legacy: ?page=0&size=N; ApiResponse<PagedResponse<ConversationTurnDto>>; content is oldest-first.
+        const qp = new URLSearchParams({ page: '0', size: String(n) })
+        const res = await get(`${base}/conversations/${cid}/turns?${qp}`)
+        const data = await unwrapResponse(res)
+        const content = Array.isArray(data?.content) ? data.content : []
+        // Normalize to newest-first to match the limit-mode contract.
+        return [...content].reverse()
+    }
+
+    // Default: ?limit=N; ApiResponse<ConversationTurnDto[]> newest-first.
+    const qp = new URLSearchParams({ limit: String(n) })
     const res = await get(`${base}/conversations/${cid}/turns?${qp}`)
-    return unwrapResponse(res)
+    const data = await unwrapResponse(res)
+    return Array.isArray(data) ? data : []
 }
 
 /**
@@ -296,24 +315,39 @@ export async function createConversation(inputText, _displayText = null) {
 }
 
 /**
+ * Starts agent orchestration for the given conversation.
+ *
+ * The backend requires a `chatContext` envelope (persona / scenario). The frontend
+ * has no knowledge of `resourceId` — the backend resolves it internally from the
+ * supplied context.
+ *
  * @param {string} conversationId
  * @param {string} inputText
- * @param {string|null|undefined} [resourceId]
+ * @param {{ schemaVersion?: string, contextType: string, contextData: object }} chatContext
+ *        Required. Shape: `{ schemaVersion?: "1.0", contextType: "VISIT",
+ *        contextData: { visitId: "<uuid>" } }`.
  * @param {string|null} [displayText]
  * @returns {Promise<object>}
  */
-export async function startOrchestration(conversationId, inputText, resourceId = undefined, displayText = null) {
+export async function startOrchestration(conversationId, inputText, chatContext, displayText = null) {
+    if (!chatContext || !chatContext.contextType) {
+        throw new ApiError(0, 'invalid_chat_context', 'chatContext is required on orchestration start')
+    }
     const base = getOrchestrationBase()
     const cid = encodeURIComponent(conversationId)
     const body = {
         inputText,
-        resourceId: resolveOrchestrationResourceId(resourceId),
+        chatContext,
         ...(displayText && displayText.trim() ? { displayText: displayText.trim() } : {}),
     }
 
     const res = await post(`${base}/conversations/${cid}/start`, body)
     const data = await unwrapResponse(res)
-    log.info('Orchestration started', { conversationId, processInstanceKey: data?.processInstanceKey })
+    log.info('Orchestration started', {
+        conversationId,
+        contextType: chatContext.contextType,
+        processInstanceKey: data?.processInstanceKey,
+    })
     return data
 }
 
