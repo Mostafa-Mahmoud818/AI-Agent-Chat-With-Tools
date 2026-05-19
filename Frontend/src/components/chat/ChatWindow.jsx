@@ -16,6 +16,13 @@ import {
 import { parseAgentMessage, turnsToMessages } from '../../utils/agentMessage.js'
 import { formatMenuSelectionMessage } from '../../utils/menuSelection.js'
 import {
+    parseSelectionSignal,
+    updateChainOnSelection,
+    reconcileChainWithResponse,
+    deriveBreadcrumb,
+    rebuildChainFromMessages,
+} from '../../utils/breadcrumb.js'
+import {
     cacheLevel,
     getCachedLevel,
     invalidateSession,
@@ -32,8 +39,8 @@ import './ChatWindow.css'
 const log = createLogger('ChatWindow')
 
 const QUICK_PROMPTS = [
+    'What can you do?',
     'Show me the catering products menu',
-    'Show me the catering product categories',
     'Create a support ticket for my laptop issue',
     'I need help with my VPN connection',
     'Submit a facilities & maintenance request',
@@ -69,6 +76,7 @@ export default function ChatWindow({
     const messagesEndRef = useRef(null)
     const chatInputRef = useRef(null)
     const esRef = useRef(null)
+    const selectionChainRef = useRef([])
 
     const scrollToBottom = useCallback(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -137,6 +145,7 @@ export default function ChatWindow({
         setSending(false)
         setConversationLoading(false)
         setFirstOutgoingNeedsStart(false)
+        selectionChainRef.current = []
     }, [sidebarConversationId, stopStreaming])
 
     useEffect(() => {
@@ -152,6 +161,7 @@ export default function ChatWindow({
                 if (cancelled) return
                 const loadedMessages = turnsToMessages(turns)
                 const cacheKey = menuCacheKeyFromTurns(sidebarConversationId, turns)
+                selectionChainRef.current = rebuildChainFromMessages(loadedMessages)
                 setMessages(loadedMessages)
                 setConversationId(sidebarConversationId)
                 setMenuCacheSessionKey(cacheKey)
@@ -198,8 +208,14 @@ export default function ChatWindow({
                     terminalHandled = true
                     stopStreaming()
                     const { text, payload } = parseAgentMessage(data.message)
-                    applyCacheSideEffects(resolveCacheKey(), payload)
-                    addMessage('ai', text, data.handledBy, payload)
+                    let finalPayload = payload
+                    if (payload?.subtype === 'menu' && Array.isArray(payload.menuitems) && payload.menuitems.length > 0) {
+                        const chain = reconcileChainWithResponse(selectionChainRef.current, payload.menuitems, data.handledBy)
+                        selectionChainRef.current = chain
+                        finalPayload = { ...payload, breadcrumb: deriveBreadcrumb(data.handledBy, chain) }
+                    }
+                    applyCacheSideEffects(resolveCacheKey(), finalPayload)
+                    addMessage('ai', text, data.handledBy, finalPayload)
                     notifySidebarActivity()
                     setPhase('ready')
                     setError(null)
@@ -243,7 +259,10 @@ export default function ChatWindow({
     const handleSendMessage = useCallback(async (text, opts = {}) => {
         if (sending || conversationLoading) return
         const cacheKey = menuCacheSessionKey
-        if (cacheKey && isRestartIntent(text)) invalidateSession(cacheKey)
+        if (cacheKey && isRestartIntent(text)) {
+            invalidateSession(cacheKey)
+            selectionChainRef.current = []
+        }
         setError(null)
         setSending(true)
         addMessage('user', text, { displayText: opts.displayText ?? null })
@@ -285,11 +304,16 @@ export default function ChatWindow({
 
     const handleMenuItemClick = useCallback((item, menuHandledBy) => {
         if (item?.selectionSignal && typeof item.selectionSignal === 'string') {
+            const signal = item.selectionSignal.trim()
+            const parsed = parseSelectionSignal(signal)
+            if (parsed) selectionChainRef.current = updateChainOnSelection(selectionChainRef.current, parsed)
             const displayLabel = item.label ?? item.name ?? null
-            handleSendMessage(item.selectionSignal.trim(), { displayText: displayLabel })
+            handleSendMessage(signal, { displayText: displayLabel })
             return
         }
         const { agentInput, displayText } = formatMenuSelectionMessage(item, menuHandledBy)
+        const fallbackParsed = parseSelectionSignal(agentInput)
+        if (fallbackParsed) selectionChainRef.current = updateChainOnSelection(selectionChainRef.current, fallbackParsed)
         handleSendMessage(agentInput, { displayText })
     }, [handleSendMessage])
 
@@ -321,6 +345,7 @@ export default function ChatWindow({
         setSending(false)
         setConversationLoading(false)
         setFirstOutgoingNeedsStart(false)
+        selectionChainRef.current = []
         onNewChatParent?.()
     }, [menuCacheSessionKey, stopStreaming, onNewChatParent])
 
