@@ -42,20 +42,24 @@ describe('parseSelectionSignal', () => {
 
 describe('rootCrumbFor', () => {
     it('maps SSE display labels to root crumb', () => {
+        expect(rootCrumbFor('Visitor Experience Agent')).toEqual({ label: 'Assistant', levelKey: 'root' })
         expect(rootCrumbFor('Catering Agent')).toEqual({ label: 'Menu', levelKey: 'root' })
         expect(rootCrumbFor('IT Support Agent')).toEqual({ label: 'IT Support', levelKey: 'root' })
         expect(rootCrumbFor('Facilities & Maintenance Agent')).toEqual({ label: 'Facilities & Maintenance', levelKey: 'root' })
     })
 
     it('maps persisted routeCategory enum strings to root crumb', () => {
+        expect(rootCrumbFor('VISITOR_EXPERIENCE')).toEqual({ label: 'Assistant', levelKey: 'root' })
         expect(rootCrumbFor('CATERING')).toEqual({ label: 'Menu', levelKey: 'root' })
         expect(rootCrumbFor('IT_SUPPORT')).toEqual({ label: 'IT Support', levelKey: 'root' })
         expect(rootCrumbFor('FACILITIES_MAINTENANCE')).toEqual({ label: 'Facilities & Maintenance', levelKey: 'root' })
+        expect(rootCrumbFor('ERROR')).toEqual({ label: 'Assistant', levelKey: 'root' })
+        expect(rootCrumbFor('error')).toEqual({ label: 'Assistant', levelKey: 'root' })
     })
 
-    it('defaults to Menu for unknown handlers', () => {
-        expect(rootCrumbFor(null)).toEqual({ label: 'Menu', levelKey: 'root' })
-        expect(rootCrumbFor('Unknown')).toEqual({ label: 'Menu', levelKey: 'root' })
+    it('defaults to Assistant for unknown handlers', () => {
+        expect(rootCrumbFor(null)).toEqual({ label: 'Assistant', levelKey: 'root' })
+        expect(rootCrumbFor('Unknown')).toEqual({ label: 'Assistant', levelKey: 'root' })
     })
 })
 

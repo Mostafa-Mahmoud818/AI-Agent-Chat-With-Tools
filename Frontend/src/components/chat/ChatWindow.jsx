@@ -27,8 +27,9 @@ import {
     getCachedLevel,
     invalidateSession,
     isRestartIntent,
-    setActiveSession,
+    setActiveConversation,
 } from '../../utils/menuCache.js'
+import { getChatContextForStart } from '../../config/chatContext.js'
 import { createLogger } from '../../utils/logger.js'
 import MessageBubble from './MessageBubble.jsx'
 import ChatInput from './ChatInput.jsx'
@@ -37,16 +38,6 @@ import SparkIcon from '../ui/SparkIcon.jsx'
 import './ChatWindow.css'
 
 const log = createLogger('ChatWindow')
-
-// TODO: Replace with a real visit-derived chatContext once the visit/session
-// context is plumbed through to the chat surface. Backend currently runs the
-// HARDCODED resolver, so any valid UUID for visitId resolves to the fixed
-// dev resourceId.
-const FIXED_CHAT_CONTEXT = {
-    schemaVersion: '1.0',
-    contextType: 'VISIT',
-    contextData: { visitId: '00000000-0000-0000-0000-000000000000' },
-}
 
 const QUICK_PROMPTS = [
     'What can you do?',
@@ -63,12 +54,6 @@ function isSessionGone(err) {
         (err.errorCode === 'session_expired' || err.status === 410)
 }
 
-function menuCacheKeyFromTurns(conversationId, turns) {
-    const last = turns?.length ? turns[turns.length - 1] : null
-    const sid = last?.sessionId != null ? String(last.sessionId) : null
-    return sid || String(conversationId)
-}
-
 export default function ChatWindow({
     sidebarConversationId = null,
     onNewChat: onNewChatParent,
@@ -77,7 +62,7 @@ export default function ChatWindow({
 }) {
     const [messages, setMessages] = useState([])
     const [conversationId, setConversationId] = useState(null)
-    const [menuCacheSessionKey, setMenuCacheSessionKey] = useState(null)
+    const [menuCacheConversationKey, setMenuCacheConversationKey] = useState(null)
     const [phase, setPhase] = useState('idle')
     const [error, setError] = useState(null)
     const [sending, setSending] = useState(false)
@@ -101,8 +86,8 @@ export default function ChatWindow({
     }, [phase])
 
     useEffect(() => {
-        setActiveSession(menuCacheSessionKey)
-    }, [menuCacheSessionKey])
+        setActiveConversation(menuCacheConversationKey)
+    }, [menuCacheConversationKey])
 
     useEffect(() => {
         return () => {
@@ -149,7 +134,7 @@ export default function ChatWindow({
         stopStreaming()
         setMessages([])
         setConversationId(null)
-        setMenuCacheSessionKey(null)
+        setMenuCacheConversationKey(null)
         setPhase('idle')
         setError(null)
         setSending(false)
@@ -170,11 +155,11 @@ export default function ChatWindow({
                 const turns = await fetchAllConversationTurns(sidebarConversationId)
                 if (cancelled) return
                 const loadedMessages = turnsToMessages(turns)
-                const cacheKey = menuCacheKeyFromTurns(sidebarConversationId, turns)
+                const cacheKey = String(sidebarConversationId)
                 selectionChainRef.current = rebuildChainFromMessages(loadedMessages)
                 setMessages(loadedMessages)
                 setConversationId(sidebarConversationId)
-                setMenuCacheSessionKey(cacheKey)
+                setMenuCacheConversationKey(cacheKey)
                 for (const m of loadedMessages) if (m.role === 'ai') applyCacheSideEffects(cacheKey, m.payload)
                 setFirstOutgoingNeedsStart((turns?.length ?? 0) === 0)
                 setPhase(turns.length > 0 ? 'ready' : 'idle')
@@ -185,7 +170,7 @@ export default function ChatWindow({
                 setError(err instanceof ApiError ? err.message : 'Failed to load conversation')
                 setMessages([])
                 setConversationId(null)
-                setMenuCacheSessionKey(null)
+                setMenuCacheConversationKey(null)
                 setPhase('idle')
             } finally {
                 if (!cancelled) setConversationLoading(false)
@@ -200,7 +185,7 @@ export default function ChatWindow({
         const es = createResponseStream(convId)
         esRef.current = es
         let terminalHandled = false
-        const resolveCacheKey = () => eventsCacheKey ?? menuCacheSessionKey
+        const resolveCacheKey = () => eventsCacheKey ?? menuCacheConversationKey
         const notifySidebarActivity = () => { try { onConversationActivity?.(convId) } catch (err) { log.warn('onConversationActivity failed', err) } }
         const setReadyWithError = (message) => {
             terminalHandled = true
@@ -264,11 +249,11 @@ export default function ChatWindow({
             if (terminalHandled) return
             if (es.readyState === EventSource.CLOSED) setReadyWithError('Connection lost. Please try again.')
         }
-    }, [addMessage, stopStreaming, handleSessionExpired, applyCacheSideEffects, menuCacheSessionKey, onConversationActivity])
+    }, [addMessage, stopStreaming, handleSessionExpired, applyCacheSideEffects, menuCacheConversationKey, onConversationActivity])
 
     const handleSendMessage = useCallback(async (text, opts = {}) => {
         if (sending || conversationLoading) return
-        const cacheKey = menuCacheSessionKey
+        const cacheKey = menuCacheConversationKey
         if (cacheKey && isRestartIntent(text)) {
             invalidateSession(cacheKey)
             selectionChainRef.current = []
@@ -281,18 +266,18 @@ export default function ChatWindow({
             if (!conversationId) {
                 const { conversationId: convId } = await createConversation(text, opts.displayText ?? null)
                 setConversationId(convId)
-                setMenuCacheSessionKey(convId)
+                setMenuCacheConversationKey(convId)
                 setFirstOutgoingNeedsStart(false)
                 onConversationCreated?.()
-                await startOrchestration(convId, text, FIXED_CHAT_CONTEXT, opts.displayText ?? null)
+                await startOrchestration(convId, text, getChatContextForStart(), opts.displayText ?? null)
                 startStreaming(convId, convId)
             } else if (firstOutgoingNeedsStart) {
-                await startOrchestration(conversationId, text, FIXED_CHAT_CONTEXT, opts.displayText ?? null)
+                await startOrchestration(conversationId, text, getChatContextForStart(), opts.displayText ?? null)
                 setFirstOutgoingNeedsStart(false)
-                startStreaming(conversationId, menuCacheSessionKey ?? conversationId)
+                startStreaming(conversationId, menuCacheConversationKey ?? conversationId)
             } else {
                 await sendReply(conversationId, text, opts.displayText ?? null)
-                startStreaming(conversationId, menuCacheSessionKey ?? conversationId)
+                startStreaming(conversationId, menuCacheConversationKey ?? conversationId)
             }
         } catch (err) {
             if (isSessionGone(err)) return handleSessionExpired()
@@ -310,7 +295,7 @@ export default function ChatWindow({
         } finally {
             setSending(false)
         }
-    }, [conversationId, menuCacheSessionKey, sending, conversationLoading, firstOutgoingNeedsStart, addMessage, startStreaming, handleSessionExpired, onConversationCreated])
+    }, [conversationId, menuCacheConversationKey, sending, conversationLoading, firstOutgoingNeedsStart, addMessage, startStreaming, handleSessionExpired, onConversationCreated])
 
     const handleMenuItemClick = useCallback((item, menuHandledBy) => {
         if (item?.selectionSignal && typeof item.selectionSignal === 'string') {
@@ -329,7 +314,7 @@ export default function ChatWindow({
 
     const handleBreadcrumbClick = useCallback((crumb) => {
         if (!crumb?.levelKey) return
-        const cached = menuCacheSessionKey ? getCachedLevel(menuCacheSessionKey, crumb.levelKey) : null
+        const cached = menuCacheConversationKey ? getCachedLevel(menuCacheConversationKey, crumb.levelKey) : null
         if (!cached) return handleSendMessage(`Go back to ${crumb.label}`)
         setMessages((prev) => {
             for (let i = prev.length - 1; i >= 0; i--) {
@@ -342,14 +327,14 @@ export default function ChatWindow({
             }
             return prev
         })
-    }, [menuCacheSessionKey, handleSendMessage])
+    }, [menuCacheConversationKey, handleSendMessage])
 
     const handleNewChat = useCallback(() => {
-        if (menuCacheSessionKey) invalidateSession(menuCacheSessionKey)
+        if (menuCacheConversationKey) invalidateSession(menuCacheConversationKey)
         stopStreaming()
         setMessages([])
         setConversationId(null)
-        setMenuCacheSessionKey(null)
+        setMenuCacheConversationKey(null)
         setPhase('idle')
         setError(null)
         setSending(false)
@@ -357,10 +342,10 @@ export default function ChatWindow({
         setFirstOutgoingNeedsStart(false)
         selectionChainRef.current = []
         onNewChatParent?.()
-    }, [menuCacheSessionKey, stopStreaming, onNewChatParent])
+    }, [menuCacheConversationKey, stopStreaming, onNewChatParent])
 
     const showEmptyState = messages.length === 0 && phase === 'idle' && !conversationLoading
-    const showNewChatBtn = messages.length > 0 || conversationId != null || menuCacheSessionKey != null
+    const showNewChatBtn = messages.length > 0 || conversationId != null || menuCacheConversationKey != null
 
     return (
         <div className="chat-window glass">

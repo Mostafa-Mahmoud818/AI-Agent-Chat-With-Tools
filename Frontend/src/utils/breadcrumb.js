@@ -38,6 +38,8 @@ const ROOT_LABEL_BY_HANDLER = {
     CATERING: 'Menu',
     IT_SUPPORT: 'IT Support',
     FACILITIES_MAINTENANCE: 'Facilities & Maintenance',
+    ERROR: 'Assistant',
+    error: 'Assistant',
 }
 
 /**
@@ -45,7 +47,8 @@ const ROOT_LABEL_BY_HANDLER = {
  * @returns {{ label: string, levelKey: string }}
  */
 export function rootCrumbFor(handledBy) {
-    const label = (handledBy && ROOT_LABEL_BY_HANDLER[handledBy]) || 'Menu'
+    const key = handledBy != null ? String(handledBy).trim() : ''
+    const label = (key && ROOT_LABEL_BY_HANDLER[key]) || 'Assistant'
     return { label, levelKey: 'root' }
 }
 

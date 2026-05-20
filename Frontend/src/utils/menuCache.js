@@ -1,9 +1,12 @@
 /**
- * @file LRU menu-level cache keyed by server session id and agent `breadcrumb.levelKey`.
+ * @file LRU menu-level cache keyed by conversation id and agent `breadcrumb.levelKey`.
  * @module utils/menuCache
  *
+ * {@code ConversationTurnDto} does not expose server {@code sessionId}; cache scope is the
+ * conversation UUID (same id used for SSE and orchestration correlation).
+ *
  * Clicking breadcrumb ancestors replays cached `payload` without a round-trip.
- * Bounded by {@link MENU_CACHE_LIMITS} (NFR-12 style cap). Cleared on session switch and
+ * Bounded by {@link MENU_CACHE_LIMITS} (NFR-12 style cap). Cleared on conversation switch and
  * invalidation triggers (order confirmation, restart intent, session end per BR-14).
  */
 
@@ -11,9 +14,9 @@ const MAX_ENTRIES = 50
 const MAX_BYTES = 1_000_000 // 1 MB
 const RESTART_INTENT_RE = /\b(start over|restart|reset|new order|go back to the (start|beginning)|begin again)\b/i
 
-/** sessionId -> Map<levelKey, { payload, bytes }>. Map preserves insertion order → used for LRU. */
+/** conversationId -> Map<levelKey, { payload, bytes }>. Map preserves insertion order → used for LRU. */
 const store = new Map()
-let activeSessionId = null
+let activeConversationId = null
 
 function estimateBytes(payload) {
     try {
@@ -23,12 +26,12 @@ function estimateBytes(payload) {
     }
 }
 
-function getSessionMap(sessionId) {
-    if (!sessionId) return null
-    let m = store.get(sessionId)
+function getConversationMap(conversationId) {
+    if (!conversationId) return null
+    let m = store.get(conversationId)
     if (!m) {
         m = new Map()
-        store.set(sessionId, m)
+        store.set(conversationId, m)
     }
     return m
 }
@@ -48,52 +51,56 @@ function evictUntilUnderCaps(sessionMap) {
 }
 
 /**
- * Activates a session for cache reads/writes; evicts the previous session’s map (no cross-session reuse).
- * @param {string|null|undefined} sessionId Last turn’s `sessionId`, or `conversationId` until known.
+ * Activates a conversation for cache reads/writes; evicts the previous conversation’s map.
+ * @param {string|null|undefined} conversationId Conversation UUID string.
  */
-export function setActiveSession(sessionId) {
-    if (activeSessionId && activeSessionId !== sessionId) {
-        store.delete(activeSessionId)
+export function setActiveConversation(conversationId) {
+    if (activeConversationId && activeConversationId !== conversationId) {
+        store.delete(activeConversationId)
     }
-    activeSessionId = sessionId ?? null
+    activeConversationId = conversationId ?? null
+}
+
+/** @deprecated Use {@link setActiveConversation}. */
+export function setActiveSession(conversationId) {
+    setActiveConversation(conversationId)
 }
 
 /**
  * Stores a parsed menu `payload` for `levelKey` (e.g. `cat/uuid`). LRU bump on re-insert.
- * @param {string|null|undefined} sessionId
+ * @param {string|null|undefined} conversationId
  * @param {string|null|undefined} levelKey From `payload.breadcrumb` / agent contract.
  * @param {object} payload Normalized menu payload (same shape as rendered in bubbles).
  */
-export function cacheLevel(sessionId, levelKey, payload) {
-    if (!sessionId || !levelKey || payload == null) return
-    const sessionMap = getSessionMap(sessionId)
-    // Re-insert to mark most-recently-used (Map preserves insertion order).
-    sessionMap.delete(levelKey)
-    sessionMap.set(levelKey, { payload, bytes: estimateBytes(payload) })
-    evictUntilUnderCaps(sessionMap)
+export function cacheLevel(conversationId, levelKey, payload) {
+    if (!conversationId || !levelKey || payload == null) return
+    const conversationMap = getConversationMap(conversationId)
+    conversationMap.delete(levelKey)
+    conversationMap.set(levelKey, { payload, bytes: estimateBytes(payload) })
+    evictUntilUnderCaps(conversationMap)
 }
 
 /**
  * Retrieves a menu payload by `levelKey`, promoting LRU order.
- * @param {string|null|undefined} sessionId
+ * @param {string|null|undefined} conversationId
  * @param {string|null|undefined} levelKey
  * @returns {object|null}
  */
-export function getCachedLevel(sessionId, levelKey) {
-    if (!sessionId || !levelKey) return null
-    const sessionMap = store.get(sessionId)
-    if (!sessionMap) return null
-    const entry = sessionMap.get(levelKey)
+export function getCachedLevel(conversationId, levelKey) {
+    if (!conversationId || !levelKey) return null
+    const conversationMap = store.get(conversationId)
+    if (!conversationMap) return null
+    const entry = conversationMap.get(levelKey)
     if (!entry) return null
-    sessionMap.delete(levelKey)
-    sessionMap.set(levelKey, entry)
+    conversationMap.delete(levelKey)
+    conversationMap.set(levelKey, entry)
     return entry.payload
 }
 
-/** Drops all cached levels for one session id. */
-export function invalidateSession(sessionId) {
-    if (!sessionId) return
-    store.delete(sessionId)
+/** Drops all cached levels for one conversation id. */
+export function invalidateSession(conversationId) {
+    if (!conversationId) return
+    store.delete(conversationId)
 }
 
 /**
@@ -109,7 +116,7 @@ export function isRestartIntent(text) {
 /** @returns {void} Vitest-only full reset. */
 export function __resetMenuCacheForTests() {
     store.clear()
-    activeSessionId = null
+    activeConversationId = null
 }
 
 /**

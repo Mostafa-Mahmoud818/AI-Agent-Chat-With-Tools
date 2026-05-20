@@ -1,13 +1,14 @@
 /**
- * @file Runtime overrides chosen via the UI (env picker + resourceId).
+ * @file Runtime overrides chosen via the UI (env picker).
  * Persisted in localStorage so the developer/tester does not need to edit `.env` to switch targets.
  * These overrides win over `import.meta.env` when present.
+ *
+ * Visit id for orchestration `chatContext` lives in {@link ./chatContext.js}.
  *
  * @module config/runtimeSettings
  */
 
 const KEY_BACKEND_ENV = 'ankabut.chat.backendEnv'
-const KEY_RESOURCE_ID = 'ankabut.chat.resourceId'
 
 /** Maps UI labels to the `VITE_API_BACKEND` preset keys used by {@link resolveApiOrigin}. */
 export const BACKEND_PRESETS = {
@@ -71,19 +72,4 @@ export function setRuntimeBackendEnv(label) {
 export function getRuntimeBackendPreset() {
     const label = getRuntimeBackendEnv()
     return label ? BACKEND_PRESETS[label] : ''
-}
-
-/**
- * @returns {string} runtime override for the orchestration resourceId, or empty string.
- */
-export function getRuntimeResourceId() {
-    return (safeGet(KEY_RESOURCE_ID) ?? '').trim()
-}
-
-/**
- * @param {string} id
- */
-export function setRuntimeResourceId(id) {
-    const trimmed = typeof id === 'string' ? id.trim() : ''
-    safeSet(KEY_RESOURCE_ID, trimmed || null)
 }

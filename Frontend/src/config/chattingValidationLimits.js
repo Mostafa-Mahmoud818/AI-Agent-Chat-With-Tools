@@ -1,0 +1,52 @@
+/**
+ * @file Client-side limits aligned with backend {@code ChattingValidationLimits}.
+ * @module config/chattingValidationLimits
+ */
+
+/** User/orchestration primary text ({@code inputText}, {@code followUpInput}). */
+export const CHAT_INPUT_MAX = 8000
+
+/** Optional UI companion text on start/follow-up. */
+export const DISPLAY_TEXT_MAX = 4000
+
+/** Conversation {@code initialTitle}. */
+export const CONVERSATION_TITLE_MAX = 255
+
+/**
+ * @param {unknown} text
+ * @param {number} max
+ * @returns {string}
+ */
+export function clampToMax(text, max) {
+    if (text == null) return ''
+    const s = String(text)
+    return s.length <= max ? s : s.slice(0, max)
+}
+
+/**
+ * @param {unknown} text
+ * @returns {string}
+ */
+export function clampChatInput(text) {
+    return clampToMax(text, CHAT_INPUT_MAX)
+}
+
+/**
+ * @param {unknown} text
+ * @returns {string|null} trimmed display text or null when empty
+ */
+export function clampDisplayText(text) {
+    if (text == null) return null
+    const s = clampToMax(String(text).trim(), DISPLAY_TEXT_MAX)
+    return s === '' ? null : s
+}
+
+/**
+ * @param {unknown} titleSeed
+ * @returns {string}
+ */
+export function clampConversationTitle(titleSeed) {
+    const s = clampToMax(titleSeed, CONVERSATION_TITLE_MAX)
+    if (s.length <= 50) return s
+    return s.slice(0, 50) + '…'
+}

@@ -17,7 +17,7 @@ npm run dev
 
 Opens http://localhost:5173.
 
-On first load you'll see an **environment picker dialog** (DEV / TEST / LOCAL). After picking, you're asked for a **bearer token** (DEV/TEST) or **email + OTP** (LOCAL), with an optional **Resource ID** field. Everything is persisted to `localStorage`, so subsequent reloads skip the dialog. A **"Change"** link in the badge row re-opens the picker any time.
+On first load you'll see an **environment picker dialog** (DEV / TEST / LOCAL). After picking, you're asked for a **bearer token** (DEV/TEST) or **email + OTP** (LOCAL), with an optional **Visit ID** (UUID for orchestration `chatContext`). Everything is persisted to `localStorage`, so subsequent reloads skip the dialog. A **"Change"** link in the badge row re-opens the picker any time.
 
 > Testers no longer need to edit `.env` — pick env + paste token in the UI.
 
@@ -36,7 +36,7 @@ On first load you'll see an **environment picker dialog** (DEV / TEST / LOCAL). 
 4. `VITE_API_BACKEND` → named preset (`local`, `remote-dev`, `remote-test`).
 5. Default: `remote-dev`.
 
-Resource ID precedence (used by `POST .../orchestration/conversations/{id}/start`): explicit caller arg → `localStorage: ankabut.chat.resourceId` (set in the UI) → `VITE_DEFAULT_RESOURCE_ID`.
+**Visit ID** for orchestration start (`chatContext.contextData.visitId`): URL `?visitId=` → `localStorage: ankabut.chat.visitId` (auth dialog) → `VITE_DEFAULT_VISIT_ID` → all-zero placeholder. See [`src/config/chatContext.js`](src/config/chatContext.js).
 
 Bearer-token precedence: the dialog writes to `localStorage: ankabut.chat.accessToken`. On boot, `initTokenStore()` prefers a non-empty `VITE_API_BEARER_TOKEN` (and mirrors it to localStorage); otherwise it loads from localStorage.
 
@@ -55,7 +55,7 @@ Bearer-token precedence: the dialog writes to `localStorage: ankabut.chat.access
 - Markdown rendering of agent responses
 - Structured menu display (catering agent)
 - In-browser environment switcher (DEV / TEST / LOCAL) — no `.env` edits required
-- Per-browser token and `resourceId` overrides
+- Per-browser token and visit-id overrides for orchestration start
 - Responsive React/Vite UI
 
 ## Development
@@ -78,7 +78,7 @@ src/
 │   ├── localAccessTokenFlow.js   # LOCAL email + OTP flow (provision → eligibility → token)
 │   └── guestClientId.js          # UUID clientId + ankabut_guest_id cookie
 ├── components/
-│   ├── auth/LocalAuthDialog.*    # Env picker + token / OTP / resourceId dialog
+│   ├── auth/LocalAuthDialog.*    # Env picker + token / OTP / visitId dialog
 │   ├── layout/ChatLayout.*       # Sidebar + main pane shell, auth gating
 │   ├── chat/                     # ChatWindow, ChatInput, MessageBubble, ThinkingIndicator
 │   ├── sidebar/                  # ConversationSidebar
@@ -87,14 +87,16 @@ src/
 ├── config/
 │   ├── apiOrigin.js              # resolveApiOrigin() + getBackendEnvLabel()
 │   ├── chatAuth.js               # isGuestChatAuth()
-│   └── runtimeSettings.js        # localStorage-backed env + resourceId overrides
+│   ├── chatContext.js            # VISIT chatContext envelope + visitId resolution
+│   ├── chattingValidationLimits.js
+│   └── runtimeSettings.js        # localStorage-backed backend env override
 ├── services/api.js               # HTTP + SSE client
 └── utils/                        # agentMessage, menuSelection, logger, etc.
 ```
 
 ### Environment Variables
 
-All env vars are optional — the UI can supply backend env, token, and resourceId at runtime.
+All env vars are optional — the UI can supply backend env, token, and visit id at runtime.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -102,7 +104,7 @@ All env vars are optional — the UI can supply backend env, token, and resource
 | `VITE_API_ORIGIN` | _(unset)_ | Explicit modulith base URL (no trailing slash). Wins over `VITE_API_BACKEND`, loses to the UI picker. |
 | `VITE_API_RELATIVE` | off | `1` / `true` → empty origin → same-origin `/api/...` via Vite dev proxy (see `vite.config.js`). |
 | `VITE_API_BEARER_TOKEN` | _(none)_ | Optional bootstrap bearer. Inlined into the bundle and copied to localStorage on first load. Prefer the in-app dialog for testers. |
-| `VITE_DEFAULT_RESOURCE_ID` | _(unset)_ | Default `resourceId` forwarded on orchestration start. Backend caps at 128 chars. UI input overrides this. |
+| `VITE_DEFAULT_VISIT_ID` | _(unset)_ | Default visit UUID inside `chatContext` on orchestration start. UI / `?visitId=` overrides this. |
 | `VITE_CHAT_AUTH` | _(unset = secure)_ | Set to `guest` to use `/api/v1/public/chatting/*` (no bearer; UUID clientId). |
 | `VITE_GUEST_COOKIE_NAME` | `ankabut_guest_id` | Must match modulith `chatting.guest-cookie-name` if overridden. |
 | `VITE_LOCAL_AUTH_EMAIL` | _(unset)_ | Pre-fills the LOCAL OTP email input. |
@@ -116,7 +118,7 @@ All env vars are optional — the UI can supply backend env, token, and resource
 |-----|--------|---------|
 | `ankabut.chat.backendEnv` | Env picker | `DEV` \| `TEST` \| `LOCAL` — overrides `VITE_API_BACKEND` |
 | `ankabut.chat.accessToken` | Auth dialog / OTP flow / env bootstrap | Bearer JWT for secure mode |
-| `ankabut.chat.resourceId` | Auth dialog | Overrides `VITE_DEFAULT_RESOURCE_ID` for orchestration start |
+| `ankabut.chat.visitId` | Auth dialog / `?visitId=` | Overrides `VITE_DEFAULT_VISIT_ID` for orchestration `chatContext` |
 | `ankabut.guest.clientId` | Guest bootstrap | Stable UUID `clientId` for public API |
 
 ### API alignment (Ankabut modulith)
@@ -126,7 +128,22 @@ All env vars are optional — the UI can supply backend env, token, and resource
 | List / create conversations, turns | `/api/v1/secure/chatting/...` | `/api/v1/public/chatting/...` |
 | Start orchestration, user-messages, assistant SSE | `/api/v1/secure/chatting/orchestration/...` | `/api/v1/public/chatting/orchestration/...` |
 
-Create conversation (guest) uses body `{ clientId, req: { initialTitle, initialSummary } }` per `CreateConversationWithIdentityRequest`. Orchestration payloads match `ChattingOrchestrationStartRequest` / `ChattingOrchestrationFollowUpRequest`. SSE events are JSON `ChattingOrchestrationRoundResponseDto` (`status`: `ready` \| `processing` \| `error` \| `expired`, `message`, `handledBy`).
+Create conversation (guest) uses body `{ clientId, req: { initialTitle, initialSummary } }` per `CreateConversationWithIdentityRequest`. Orchestration start sends `{ inputText, chatContext: { schemaVersion, contextType: "VISIT", contextData: { visitId } }, displayText? }`. Follow-ups send `{ followUpInput, displayText?, clientMessageId? }` only. SSE events are JSON `ChattingOrchestrationRoundResponseDto` (`status`: `ready` \| `processing` \| `error` \| `expired`, `message`, `handledBy`).
+
+## Camunda BPMN alignment
+
+Agent JSON shapes are defined in the Ankabut modulith repo:
+
+- BPMN: `ankabut-dxp-modulith-service/src/main/resources/camunda/bpmns/` (`ai-agent-chat-router`, `ai-agent-catering`, `ai-agent-it_support`, `ai-agent-facilities_maintenance`, `ai-agent-visitor-experience`)
+- Prompts: `camunda/prompts/*.md`
+
+The UI parses persisted/SSE agent text in [`src/utils/agentMessage.js`](src/utils/agentMessage.js) (`replyType`, `textContent` / `textString`, `payload.subtype`: `menu`, `ticket`, `order_confirmation`, `error`, `none`). After changing BPMN connectors or prompt contracts:
+
+1. Update fixtures in `src/utils/__tests__/agentMessage.test.js` and component tests if new subtypes appear.
+2. Run `npm test`.
+3. Manually smoke-test menu navigation, ticket confirmation, and visitor-experience greetings.
+
+Route labels in SSE `handledBy` map via backend `AgentVariableSupport`; persisted turns use `RouteCategory` enums — breadcrumbs handle both in [`src/utils/breadcrumb.js`](src/utils/breadcrumb.js).
 
 ## Technology Stack
 

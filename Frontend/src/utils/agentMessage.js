@@ -202,8 +202,7 @@ function toBreadcrumb(raw) {
 /**
  * Maps chronological `TurnDto` rows to alternating user/assistant messages for the transcript.
  *
- * @param {object[]|null|undefined} turns Chronological rows (oldest first), e.g. from {@link fetchAllConversationTurns};
- *     raw `getConversationTurns` returns newest-first and must be reversed before calling this.
+ * @param {object[]|null|undefined} turns Chronological rows (oldest first), e.g. from {@link fetchAllConversationTurns} or {@link getConversationTurns}.
  * @returns {Array<{ id: string, role: 'user'|'ai', text: string, displayText?: string|null, timestamp: Date, handledBy?: string|null, payload?: object|null }>}
  */
 export function turnsToMessages(turns) {

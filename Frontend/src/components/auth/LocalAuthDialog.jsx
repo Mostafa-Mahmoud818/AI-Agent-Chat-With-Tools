@@ -11,10 +11,12 @@ import { getBackendEnvLabel, resolveApiOrigin, API_BACKENDS } from '../../config
 import {
     getRuntimeBackendEnv,
     setRuntimeBackendEnv,
-    getRuntimeResourceId,
-    setRuntimeResourceId,
     BACKEND_PRESETS,
 } from '../../config/runtimeSettings.js'
+import {
+    getRuntimeVisitId,
+    setRuntimeVisitId,
+} from '../../config/chatContext.js'
 import './LocalAuthDialog.css'
 
 const log = createLogger('LocalAuthDialog')
@@ -39,8 +41,8 @@ export default function LocalAuthDialog({ onAuthenticated }) {
     const [email, setEmail] = useState(env.VITE_LOCAL_AUTH_EMAIL ?? '')
     const [code, setCode] = useState('')
     const [token, setToken] = useState('')
-    const [resourceId, setResourceId] = useState(
-        () => getRuntimeResourceId() || (env.VITE_DEFAULT_RESOURCE_ID ?? ''),
+    const [visitId, setVisitId] = useState(
+        () => getRuntimeVisitId() || (env.VITE_DEFAULT_VISIT_ID ?? ''),
     )
 
     const [loading, setLoading] = useState(false)
@@ -99,7 +101,7 @@ export default function LocalAuthDialog({ onAuthenticated }) {
         setError(null)
         try {
             await exchangeLocalOtpForToken(env, email, code)
-            persistResourceId()
+            persistVisitId()
             onAuthenticated()
         } catch (err) {
             log.warn('Failed to exchange OTP token', err)
@@ -118,15 +120,15 @@ export default function LocalAuthDialog({ onAuthenticated }) {
             return
         }
         setAccessToken(trimmed)
-        persistResourceId()
+        persistVisitId()
         log.info('Remote access token stored', { env: envLabel })
         onAuthenticated()
     }
 
-    const persistResourceId = () => {
-        const trimmed = String(resourceId).trim()
-        setRuntimeResourceId(trimmed)
-        log.info('Resource ID stored', { hasValue: Boolean(trimmed) })
+    const persistVisitId = () => {
+        const trimmed = String(visitId).trim()
+        setRuntimeVisitId(trimmed)
+        log.info('Visit ID stored', { hasValue: Boolean(trimmed) })
     }
 
     if (step === 'env') {
@@ -204,9 +206,9 @@ export default function LocalAuthDialog({ onAuthenticated }) {
                                 required
                                 disabled={loading}
                             />
-                            <ResourceIdField
-                                value={resourceId}
-                                onChange={setResourceId}
+                            <VisitIdField
+                                value={visitId}
+                                onChange={setVisitId}
                                 disabled={loading}
                             />
                             <button type="submit" disabled={loading}>
@@ -225,9 +227,9 @@ export default function LocalAuthDialog({ onAuthenticated }) {
                                 required
                                 disabled={loading}
                             />
-                            <ResourceIdField
-                                value={resourceId}
-                                onChange={setResourceId}
+                            <VisitIdField
+                                value={visitId}
+                                onChange={setVisitId}
                                 disabled={loading}
                             />
                             <div className="local-auth-actions">
@@ -254,9 +256,9 @@ export default function LocalAuthDialog({ onAuthenticated }) {
                             spellCheck={false}
                             autoComplete="off"
                         />
-                        <ResourceIdField
-                            value={resourceId}
-                            onChange={setResourceId}
+                        <VisitIdField
+                            value={visitId}
+                            onChange={setVisitId}
                             disabled={loading}
                         />
                         <button type="submit" disabled={loading}>
@@ -275,28 +277,31 @@ export default function LocalAuthDialog({ onAuthenticated }) {
     )
 }
 
-function ResourceIdField({ value, onChange, disabled }) {
+function VisitIdField({ value, onChange, disabled }) {
     return (
         <>
-            <label htmlFor="local-auth-resource-id">
-                Resource ID <span className="local-auth-optional">(optional)</span>
+            <label htmlFor="local-auth-visit-id">
+                Visit ID <span className="local-auth-optional">(optional UUID)</span>
             </label>
             <input
-                id="local-auth-resource-id"
+                id="local-auth-visit-id"
                 type="text"
                 value={value}
                 onChange={(e) => onChange(e.target.value)}
                 placeholder="e.g. e6175e50-3928-440b-a66b-a3f00366bbf7"
-                maxLength={128}
+                maxLength={36}
                 disabled={disabled}
                 spellCheck={false}
                 autoComplete="off"
             />
+            <p className="local-auth-hint">
+                Used in orchestration <code>chatContext</code> on first message. Leave blank for the default placeholder visit.
+            </p>
         </>
     )
 }
 
-ResourceIdField.propTypes = {
+VisitIdField.propTypes = {
     value: PropTypes.string.isRequired,
     onChange: PropTypes.func.isRequired,
     disabled: PropTypes.bool,

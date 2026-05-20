@@ -5,6 +5,7 @@
 
 import { useState, useRef, useCallback, forwardRef, useImperativeHandle } from 'react'
 import PropTypes from 'prop-types'
+import { CHAT_INPUT_MAX } from '../../config/chattingValidationLimits.js'
 import './ChatInput.css'
 
 const ChatInput = forwardRef(function ChatInput({ onSend, placeholder, disabled }, ref) {
@@ -59,6 +60,7 @@ const ChatInput = forwardRef(function ChatInput({ onSend, placeholder, disabled 
                     onKeyDown={handleKeyDown}
                     placeholder={placeholder}
                     rows={1}
+                    maxLength={CHAT_INPUT_MAX}
                     disabled={disabled}
                     autoFocus
                 />
