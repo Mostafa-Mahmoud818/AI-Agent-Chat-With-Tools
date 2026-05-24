@@ -2,11 +2,10 @@ import { useState } from 'react'
 import PropTypes from 'prop-types'
 import { createLogger } from '../../utils/logger.js'
 import {
-    exchangeLocalOtpForToken,
-    prepareLocalOtpChallenge,
-    shouldUseLocalOtpFlow,
-} from '../../auth/localAccessTokenFlow.js'
-import { setAccessToken } from '../../auth/tokenStore.js'
+    exchangeOtpForToken,
+    prepareOtpChallenge,
+} from '../../auth/otpAccessTokenFlow.js'
+import { clearSecureAuthSession } from '../../auth/secureAuthSession.js'
 import { getBackendEnvLabel, resolveApiOrigin, API_BACKENDS } from '../../config/apiOrigin.js'
 import {
     getRuntimeBackendEnv,
@@ -16,19 +15,27 @@ import {
 import {
     getRuntimeVisitId,
     setRuntimeVisitId,
+    normalizeVisitId,
 } from '../../config/chatContext.js'
 import './LocalAuthDialog.css'
 
 const log = createLogger('LocalAuthDialog')
 
 const ENV_OPTIONS = [
-    { label: 'DEV', description: 'dev-modulith.naitive.ai' },
-    { label: 'TEST', description: 'test-modulith.naitive.ai' },
-    { label: 'LOCAL', description: 'localhost:8085 (OTP)' },
+    { label: 'DEV', description: 'dev-modulith.naitive.ai — email + OTP' },
+    { label: 'TEST', description: 'test-modulith.naitive.ai — email + OTP' },
+    { label: 'LOCAL', description: 'localhost:8085 — email + OTP' },
 ]
 
 function initialStep() {
     return getRuntimeBackendEnv() ? 'auth' : 'env'
+}
+
+function otpSentHint(envLabel) {
+    if (envLabel === 'LOCAL') {
+        return 'OTP sent. If email is not configured locally, read the latest code from the otp_challenges table.'
+    }
+    return 'OTP sent. Check your email inbox for the verification code.'
 }
 
 export default function LocalAuthDialog({ onAuthenticated }) {
@@ -38,31 +45,25 @@ export default function LocalAuthDialog({ onAuthenticated }) {
     const [origin, setOrigin] = useState(() => resolveApiOrigin(env))
 
     const [otpStep, setOtpStep] = useState('email')
-    const [email, setEmail] = useState(env.VITE_LOCAL_AUTH_EMAIL ?? '')
+    const [email, setEmail] = useState(env.VITE_LOCAL_AUTH_EMAIL ?? env.VITE_AUTH_EMAIL ?? '')
     const [code, setCode] = useState('')
-    const [token, setToken] = useState('')
-    const [visitId, setVisitId] = useState(
-        () => getRuntimeVisitId() || (env.VITE_DEFAULT_VISIT_ID ?? ''),
-    )
+    const [resolvedVisitId, setResolvedVisitId] = useState(() => getRuntimeVisitId())
+    const [manualVisitId, setManualVisitId] = useState('')
+    const [showManualVisit, setShowManualVisit] = useState(false)
 
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState(null)
     const [hint, setHint] = useState(null)
 
-    const isLocalOtp = shouldUseLocalOtpFlow(env)
-
     const handlePickEnv = (label) => {
         const previous = getRuntimeBackendEnv()
         setRuntimeBackendEnv(label)
-        // If env actually changed, token from the old env is no longer valid.
         if (previous && previous !== label) {
-            setAccessToken('')
-            log.info('Backend env changed — clearing stored token', { from: previous, to: label })
+            clearSecureAuthSession()
+            log.info('Backend env changed — clearing stored token and visit id', { from: previous, to: label })
             window.location.reload()
             return
         }
-        // First-time selection (or same as previous) — reload so api.js modules
-        // pick up the new origin cleanly.
         if (!previous) {
             window.location.reload()
             return
@@ -84,51 +85,57 @@ export default function LocalAuthDialog({ onAuthenticated }) {
         setError(null)
         setHint(null)
         try {
-            await prepareLocalOtpChallenge(env, email)
+            await prepareOtpChallenge(env, email)
             setOtpStep('otp')
-            setHint('OTP sent. If email is not configured locally, read the latest code from otp_challenges table.')
+            setHint(otpSentHint(envLabel))
         } catch (err) {
             log.warn('Failed to prepare OTP challenge', err)
-            setError(err instanceof Error ? err.message : 'Failed to prepare OTP challenge.')
+            const message = err instanceof Error ? err.message : 'Failed to prepare OTP challenge.'
+            if (envLabel === 'TEST' && message.includes('unexpected error')) {
+                setError(
+                    `${message} The test-modulith check-eligibility endpoint may be misconfigured — confirm DB migrations and ACL proxy on TEST, or ask the backend team to check server logs.`,
+                )
+            } else {
+                setError(message)
+            }
         } finally {
             setLoading(false)
         }
+    }
+
+    const submitManualVisit = (e) => {
+        e.preventDefault()
+        const normalized = normalizeVisitId(manualVisitId)
+        if (!normalized) {
+            setError('Enter a valid Visit UUID.')
+            return
+        }
+        setRuntimeVisitId(normalized)
+        setResolvedVisitId(normalized)
+        setShowManualVisit(false)
+        setError(null)
+        setHint(`Visit set manually: ${normalized}`)
+        onAuthenticated({ visitId: normalized })
     }
 
     const submitOtp = async (e) => {
         e.preventDefault()
         setLoading(true)
         setError(null)
+        setHint('Loading your visits from the server…')
         try {
-            await exchangeLocalOtpForToken(env, email, code)
-            persistVisitId()
-            onAuthenticated()
+            const { visitId } = await exchangeOtpForToken(env, email, code)
+            setResolvedVisitId(visitId)
+            setHint(`Visit resolved: ${visitId}`)
+            onAuthenticated({ visitId })
         } catch (err) {
             log.warn('Failed to exchange OTP token', err)
             setError(err instanceof Error ? err.message : 'Failed to authenticate.')
+            setShowManualVisit(true)
+            setHint(null)
         } finally {
             setLoading(false)
         }
-    }
-
-    const submitToken = (e) => {
-        e.preventDefault()
-        setError(null)
-        const trimmed = String(token).trim()
-        if (!trimmed) {
-            setError('Access token is required')
-            return
-        }
-        setAccessToken(trimmed)
-        persistVisitId()
-        log.info('Remote access token stored', { env: envLabel })
-        onAuthenticated()
-    }
-
-    const persistVisitId = () => {
-        const trimmed = String(visitId).trim()
-        setRuntimeVisitId(trimmed)
-        log.info('Visit ID stored', { hasValue: Boolean(trimmed) })
     }
 
     if (step === 'env') {
@@ -160,27 +167,22 @@ export default function LocalAuthDialog({ onAuthenticated }) {
                     </div>
 
                     <p className="local-auth-hint">
-                        DEV / TEST require a bearer token issued for that environment. LOCAL uses the
-                        built-in email + OTP flow.
+                        All environments sign in with email + OTP. Your visit id loads automatically after verification.
                     </p>
                 </div>
             </div>
         )
     }
 
-    const title = isLocalOtp ? 'Local Sign In' : `${envLabel} Sign In`
-    const subtitle = isLocalOtp
-        ? 'Authenticate with email OTP to access secure chatting endpoints.'
-        : `Paste a bearer access token to authenticate against the ${envLabel} modulith.`
+    const title = `${envLabel} Sign In`
+    const subtitle =
+        'Enter your email, verify the OTP, and your visit id loads automatically from the server.'
 
     return (
         <div className="local-auth-overlay" role="dialog" aria-modal="true" aria-labelledby="local-auth-title">
             <div className="local-auth-card glass">
                 <div className="local-auth-env-row">
-                    <span
-                        className="local-auth-env-badge"
-                        data-env={envLabel.toLowerCase()}
-                    >
+                    <span className="local-auth-env-badge" data-env={envLabel.toLowerCase()}>
                         {envLabel}
                     </span>
                     <span className="local-auth-env-origin" title={origin || '(relative)'}>
@@ -193,118 +195,73 @@ export default function LocalAuthDialog({ onAuthenticated }) {
                 <h2 id="local-auth-title">{title}</h2>
                 <p className="local-auth-subtitle">{subtitle}</p>
 
-                {isLocalOtp ? (
-                    otpStep === 'email' ? (
-                        <form onSubmit={submitEmail} className="local-auth-form">
-                            <label htmlFor="local-auth-email">Email</label>
-                            <input
-                                id="local-auth-email"
-                                type="email"
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
-                                placeholder="name@example.com"
-                                required
-                                disabled={loading}
-                            />
-                            <VisitIdField
-                                value={visitId}
-                                onChange={setVisitId}
-                                disabled={loading}
-                            />
-                            <button type="submit" disabled={loading}>
-                                {loading ? 'Preparing OTP...' : 'Send OTP'}
-                            </button>
-                        </form>
-                    ) : (
-                        <form onSubmit={submitOtp} className="local-auth-form">
-                            <label htmlFor="local-auth-otp">OTP code</label>
-                            <input
-                                id="local-auth-otp"
-                                type="text"
-                                value={code}
-                                onChange={(e) => setCode(e.target.value)}
-                                placeholder="Enter OTP"
-                                required
-                                disabled={loading}
-                            />
-                            <VisitIdField
-                                value={visitId}
-                                onChange={setVisitId}
-                                disabled={loading}
-                            />
-                            <div className="local-auth-actions">
-                                <button type="button" className="secondary" onClick={() => setOtpStep('email')} disabled={loading}>
-                                    Change email
-                                </button>
-                                <button type="submit" disabled={loading}>
-                                    {loading ? 'Signing in...' : 'Verify & Sign In'}
-                                </button>
-                            </div>
-                        </form>
-                    )
-                ) : (
-                    <form onSubmit={submitToken} className="local-auth-form">
-                        <label htmlFor="local-auth-token">Access token (Bearer)</label>
-                        <textarea
-                            id="local-auth-token"
-                            value={token}
-                            onChange={(e) => setToken(e.target.value)}
-                            placeholder="Paste JWT, e.g. eyJhbGciOi..."
-                            rows={4}
+                {otpStep === 'email' ? (
+                    <form onSubmit={submitEmail} className="local-auth-form">
+                        <label htmlFor="local-auth-email">Email</label>
+                        <input
+                            id="local-auth-email"
+                            type="email"
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            placeholder="name@example.com"
                             required
-                            disabled={loading}
-                            spellCheck={false}
-                            autoComplete="off"
-                        />
-                        <VisitIdField
-                            value={visitId}
-                            onChange={setVisitId}
                             disabled={loading}
                         />
                         <button type="submit" disabled={loading}>
-                            Save &amp; Continue
+                            {loading ? 'Preparing OTP...' : 'Send OTP'}
                         </button>
-                        <p className="local-auth-hint">
-                            Token is held in this browser only (localStorage). Use a token issued for the {envLabel} environment.
-                        </p>
+                    </form>
+                ) : (
+                    <form onSubmit={submitOtp} className="local-auth-form">
+                        <label htmlFor="local-auth-otp">OTP code</label>
+                        <input
+                            id="local-auth-otp"
+                            type="text"
+                            value={code}
+                            onChange={(e) => setCode(e.target.value)}
+                            placeholder="Enter OTP"
+                            required
+                            disabled={loading}
+                        />
+                        <div className="local-auth-actions">
+                            <button type="button" className="secondary" onClick={() => setOtpStep('email')} disabled={loading}>
+                                Change email
+                            </button>
+                            <button type="submit" disabled={loading}>
+                                {loading ? 'Signing in & loading visit…' : 'Verify & Sign In'}
+                            </button>
+                        </div>
                     </form>
                 )}
 
+                {resolvedVisitId && !loading && (
+                    <p className="local-auth-hint">
+                        Active visit id: <code>{resolvedVisitId}</code>
+                    </p>
+                )}
+                {showManualVisit && !loading && (
+                    <form onSubmit={submitManualVisit} className="local-auth-form local-auth-manual-visit">
+                        <label htmlFor="local-auth-visit-id">Visit UUID (manual fallback)</label>
+                        <input
+                            id="local-auth-visit-id"
+                            type="text"
+                            value={manualVisitId}
+                            onChange={(e) => setManualVisitId(e.target.value)}
+                            placeholder="550e8400-e29b-41d4-a716-446655440000"
+                            spellCheck={false}
+                            autoComplete="off"
+                        />
+                        <button type="submit">Use this Visit ID</button>
+                        <p className="local-auth-hint">
+                            Use when my-visits has not synced yet, or paste a known visit UUID for this environment.
+                        </p>
+                    </form>
+                )}
                 {hint && <p className="local-auth-hint">{hint}</p>}
                 {error && <p className="local-auth-error" role="alert">{error}</p>}
             </div>
         </div>
     )
-}
-
-function VisitIdField({ value, onChange, disabled }) {
-    return (
-        <>
-            <label htmlFor="local-auth-visit-id">
-                Visit ID <span className="local-auth-optional">(optional UUID)</span>
-            </label>
-            <input
-                id="local-auth-visit-id"
-                type="text"
-                value={value}
-                onChange={(e) => onChange(e.target.value)}
-                placeholder="e.g. e6175e50-3928-440b-a66b-a3f00366bbf7"
-                maxLength={36}
-                disabled={disabled}
-                spellCheck={false}
-                autoComplete="off"
-            />
-            <p className="local-auth-hint">
-                Used in orchestration <code>chatContext</code> on first message. Leave blank for the default placeholder visit.
-            </p>
-        </>
-    )
-}
-
-VisitIdField.propTypes = {
-    value: PropTypes.string.isRequired,
-    onChange: PropTypes.func.isRequired,
-    disabled: PropTypes.bool,
 }
 
 LocalAuthDialog.propTypes = {

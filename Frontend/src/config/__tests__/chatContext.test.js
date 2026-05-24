@@ -3,6 +3,10 @@ import {
     buildVisitChatContext,
     DEFAULT_VISIT_ID,
     getRuntimeVisitId,
+    getVisitIdRequiredMessage,
+    getVisitIdComposerPlaceholder,
+    hasConfiguredVisitId,
+    isPlaceholderVisitId,
     isValidVisitId,
     normalizeVisitId,
     resolveVisitId,
@@ -47,13 +51,40 @@ describe('chatContext', () => {
         expect(resolveVisitId()).toBe('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')
     })
 
-    it('falls back to default nil UUID', () => {
-        expect(resolveVisitId()).toBe(DEFAULT_VISIT_ID)
+    it('falls back to default nil UUID when no query, storage, or env', () => {
+        const env = { VITE_DEFAULT_VISIT_ID: undefined }
+        expect(resolveVisitId(env)).toBe(DEFAULT_VISIT_ID)
+    })
+
+    it('isPlaceholderVisitId treats nil UUID as unconfigured', () => {
+        expect(isPlaceholderVisitId(DEFAULT_VISIT_ID)).toBe(true)
+        expect(isPlaceholderVisitId('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee')).toBe(false)
+        expect(isPlaceholderVisitId(null)).toBe(true)
+    })
+
+    it('hasConfiguredVisitId is false without storage or env', () => {
+        const env = { VITE_DEFAULT_VISIT_ID: undefined }
+        expect(hasConfiguredVisitId(env)).toBe(false)
+    })
+
+    it('hasConfiguredVisitId is true when visit id is stored', () => {
+        setRuntimeVisitId('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee')
+        expect(hasConfiguredVisitId()).toBe(true)
     })
 
     it('persists runtime visit id in localStorage', () => {
         setRuntimeVisitId('cccccccc-cccc-cccc-cccc-cccccccccccc')
         expect(getRuntimeVisitId()).toBe('cccccccc-cccc-cccc-cccc-cccccccccccc')
         expect(localStorage.getItem(STORAGE_KEY)).toBe('cccccccc-cccc-cccc-cccc-cccccccccccc')
+    })
+
+    it('getVisitIdRequiredMessage distinguishes guest vs secure', () => {
+        expect(getVisitIdRequiredMessage({}, false)).toMatch(/Sign in/)
+        expect(getVisitIdRequiredMessage({}, true)).toMatch(/Visit ID below/)
+    })
+
+    it('getVisitIdComposerPlaceholder distinguishes guest vs secure', () => {
+        expect(getVisitIdComposerPlaceholder({}, true)).toMatch(/bar above/)
+        expect(getVisitIdComposerPlaceholder({}, false)).toMatch(/Sign in/)
     })
 })

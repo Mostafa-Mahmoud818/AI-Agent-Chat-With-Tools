@@ -225,8 +225,10 @@ function formatHandledBy(value) {
     if (normalized === 'IT_SUPPORT') return 'IT Support'
     if (normalized === 'CATERING') return 'Catering'
     if (normalized === 'FACILITIES_MAINTENANCE') return 'Facilities & Maintenance'
+    if (normalized === 'VISITOR_EXPERIENCE') return 'Assistant'
     if (normalized === 'ERROR') return 'Error'
     // SSE labels from backend (AgentVariableSupport) — shorten for UI consistency with history
+    if (normalized === 'VISITOR EXPERIENCE AGENT') return 'Assistant'
     if (normalized === 'IT SUPPORT AGENT') return 'IT Support'
     if (normalized === 'CATERING AGENT') return 'Catering'
     if (normalized === 'FACILITIES & MAINTENANCE AGENT') return 'Facilities & Maintenance'

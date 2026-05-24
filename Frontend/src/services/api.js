@@ -3,15 +3,16 @@
  * @module services/api
  *
  * @summary
- * **Secure (default):** {@code /api/v1/secure/chatting} + Bearer {@code VITE_API_BEARER_TOKEN} (or local OTP).
+ * **Secure (default):** {@code /api/v1/secure/chatting} + Bearer from email OTP sign-in (or {@code VITE_API_BEARER_TOKEN} for CI).
  * **Guest:** set {@code VITE_CHAT_AUTH=guest} → {@code /api/v1/public/chatting} + stable UUID {@code clientId}
  * (localStorage + optional cookie {@code ankabut_guest_id}); no JWT.
  *
  * Base URL: {@code VITE_API_ORIGIN}, or {@code VITE_API_RELATIVE=1} for same-origin `/api` (Vite proxy), or {@code VITE_API_BACKEND} preset — see {@link resolveApiOrigin}.
  *
  * **`chatContext` on orchestration start:** required VISIT envelope — see
- * {@link getChatContextForStart} and {@link startOrchestration}. Backend resolves
- * `visitId` internally to downstream `resourceId`; the client never sends `resourceId`.
+ * {@link getChatContextForStart} and {@link startOrchestration}. Visit id is resolved on the
+ * client via {@code GET /api/v1/secure/visitor-management/my-visits*} (see {@code visitResolution.js}).
+ * Backend resolves `visitId` internally to downstream `resourceId`; the client never sends `resourceId`.
  *
  * **Turn history:** {@code GET .../conversations/{id}/turns?limit=N} →
  * {@code ApiResponse<ConversationTurnDto[]>} chronological (oldest first) within the latest-N window.
@@ -23,7 +24,7 @@
  */
 
 import { createLogger } from '../utils/logger.js'
-import { resolveApiOrigin } from '../config/apiOrigin.js'
+import { resolveApiOrigin, isRelativeApiMode } from '../config/apiOrigin.js'
 import { getAccessToken } from '../auth/tokenStore.js'
 import { isGuestChatAuth } from '../config/chatAuth.js'
 import { getOrCreateGuestClientId } from '../auth/guestClientId.js'
@@ -46,6 +47,13 @@ const REQUEST_TIMEOUT_MS = 15_000
 const MAX_CONVERSATION_TURNS_LIMIT = 500
 
 const IS_TEST = import.meta.env.MODE === 'test'
+
+/** Backend SSE cap message from {@code AgentResponsePushService}. */
+export const SSE_CONCURRENT_STREAMS_ERROR =
+    'Too many concurrent assistant streams for this client.'
+
+/** Max conversations loaded across paginated sidebar fetches. */
+const MAX_CONVERSATIONS_LOAD = 500
 
 /**
  * @returns {boolean}
@@ -140,7 +148,7 @@ function bearerAuthHeaders() {
         throw new ApiError(
             0,
             'missing_bearer_token',
-            'Missing bearer token. Set VITE_API_BEARER_TOKEN, use local OTP auth, or set VITE_CHAT_AUTH=guest for public API.',
+            'Missing bearer token. Sign in via email OTP in the auth dialog, set VITE_API_BEARER_TOKEN for automation, or set VITE_CHAT_AUTH=guest for public API.',
         )
     }
     return { ...JSON_HEADERS, Authorization: `Bearer ${token}` }
@@ -166,11 +174,19 @@ function getOrchestrationBase() {
     return `${API_ORIGIN}${getChattingPathPrefix()}/orchestration`
 }
 
+function buildFetchOptions(options = {}) {
+    const base = { ...options }
+    if (useGuestAuth() && isRelativeApiMode(import.meta.env)) {
+        base.credentials = 'include'
+    }
+    return base
+}
+
 function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
 
-    return fetch(url, { ...options, signal: controller.signal })
+    return fetch(url, buildFetchOptions({ ...options, signal: controller.signal }))
         .catch((err) => {
             if (err.name === 'AbortError') {
                 log.warn('Request timeout', url)
@@ -216,6 +232,30 @@ export async function getConversations({ page = 0, size = 50 } = {}) {
     const qp = new URLSearchParams({ page: String(page), size: String(size) })
     const res = await get(`${base}/conversations?${qp}`)
     return unwrapResponse(res)
+}
+
+/**
+ * Loads all conversation pages up to {@link MAX_CONVERSATIONS_LOAD} rows for the sidebar.
+ *
+ * @param {{ size?: number }} [opts]
+ * @returns {Promise<object[]>}
+ */
+export async function loadAllConversations({ size = 100 } = {}) {
+    const pageSize = Math.min(Math.max(1, size), 100)
+    const all = []
+    let page = 0
+    let last = false
+
+    while (!last && all.length < MAX_CONVERSATIONS_LOAD) {
+        const data = await getConversations({ page, size: pageSize })
+        const chunk = Array.isArray(data.content) ? data.content : []
+        all.push(...chunk)
+        last = data.last === true || chunk.length < pageSize
+        page += 1
+        if (chunk.length === 0) break
+    }
+
+    return all.slice(0, MAX_CONVERSATIONS_LOAD)
 }
 
 /**
@@ -405,10 +445,8 @@ function createFetchEventSource(url) {
 
     ;(async () => {
         try {
-            const res = await fetch(url, {
-                headers,
-                signal: controller.signal,
-            })
+            const fetchOpts = buildFetchOptions({ headers, signal: controller.signal })
+            const res = await fetch(url, fetchOpts)
 
             if (!res.ok) {
                 log.warn('SSE HTTP not OK', { url, status: res.status })

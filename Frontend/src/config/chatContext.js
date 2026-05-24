@@ -10,7 +10,7 @@
  * 1. URL query {@code ?visitId=} or {@code ?visit_id=}
  * 2. {@code localStorage} ({@link STORAGE_KEY}) — set in the auth dialog
  * 3. {@code VITE_DEFAULT_VISIT_ID}
- * 4. All-zero UUID placeholder (Phase-1 backends may ignore visitId)
+ * 4. {@link DEFAULT_VISIT_ID} — treated as unconfigured; orchestration start is blocked
  */
 
 import { createLogger } from '../utils/logger.js'
@@ -21,8 +21,59 @@ export const CHAT_CONTEXT_SCHEMA_VERSION = '1.0'
 export const CHAT_CONTEXT_TYPE_VISIT = 'VISIT'
 export const STORAGE_KEY = 'ankabut.chat.visitId'
 
-/** Phase-1 fallback when no visit is configured. */
+/** Sentinel when no visit is configured; not sent to orchestration start. */
 export const DEFAULT_VISIT_ID = '00000000-0000-0000-0000-000000000000'
+
+/** Shown when {@link hasConfiguredVisitId} is false (secure mode). */
+export const VISIT_ID_REQUIRED_MESSAGE_SECURE =
+    'No visit found for your account. Sign in again so the app can load your visit from the server, or use ?visitId= with a valid UUID.'
+
+/** Shown when {@link hasConfiguredVisitId} is false (guest mode). */
+export const VISIT_ID_REQUIRED_MESSAGE_GUEST =
+    'Set a Visit ID below, use ?visitId=<uuid> in the URL, or configure VITE_DEFAULT_VISIT_ID before starting chat.'
+
+/** @deprecated Use {@link getVisitIdRequiredMessage} */
+export const VISIT_ID_REQUIRED_MESSAGE = VISIT_ID_REQUIRED_MESSAGE_SECURE
+
+/**
+ * @param {ImportMetaEnv} [env]
+ * @param {boolean} [guestMode]
+ * @returns {string}
+ */
+export function getVisitIdRequiredMessage(env = import.meta.env, guestMode = false) {
+    return guestMode ? VISIT_ID_REQUIRED_MESSAGE_GUEST : VISIT_ID_REQUIRED_MESSAGE_SECURE
+}
+
+/**
+ * Composer placeholder when visit id is not yet configured.
+ *
+ * @param {ImportMetaEnv} [env]
+ * @param {boolean} [guestMode]
+ * @returns {string}
+ */
+export function getVisitIdComposerPlaceholder(env = import.meta.env, guestMode = false) {
+    if (guestMode) {
+        return 'Set Visit ID in the bar above to start…'
+    }
+    return 'Sign in to load your visit, or add ?visitId=<uuid>…'
+}
+
+/**
+ * @param {string|null|undefined} visitId
+ * @returns {boolean}
+ */
+export function isPlaceholderVisitId(visitId) {
+    if (visitId == null) return true
+    return String(visitId).trim().toLowerCase() === DEFAULT_VISIT_ID
+}
+
+/**
+ * @param {ImportMetaEnv} [env]
+ * @returns {boolean} true when a non-placeholder visit id is available for orchestration start
+ */
+export function hasConfiguredVisitId(env = import.meta.env) {
+    return !isPlaceholderVisitId(resolveVisitId(env))
+}
 
 /** Loose UUID check (matches Java {@code UUID.fromString} wire shape, including nil UUID). */
 const UUID_RE =

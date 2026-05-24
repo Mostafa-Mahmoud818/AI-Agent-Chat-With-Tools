@@ -41,6 +41,30 @@ describe('MessageBubble', () => {
         expect(screen.getByText('Answered by Facilities & Maintenance')).toBeInTheDocument()
     })
 
+    it('renders VISITOR_EXPERIENCE route as Assistant subtitle', () => {
+        const msg = {
+            id: 'a-vex',
+            role: 'ai',
+            text: 'Hi! I can help you reach our specialists.',
+            timestamp: new Date(),
+            handledBy: 'VISITOR_EXPERIENCE',
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText('Answered by Assistant')).toBeInTheDocument()
+    })
+
+    it('renders Visitor Experience Agent SSE label as Assistant', () => {
+        const msg = {
+            id: 'a-vex-sse',
+            role: 'ai',
+            text: 'Hello!',
+            timestamp: new Date(),
+            handledBy: 'Visitor Experience Agent',
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText('Answered by Assistant')).toBeInTheDocument()
+    })
+
     it('renders system message with status role', () => {
         const msg = { id: 's1', role: 'system', text: 'Session expired', timestamp: new Date() }
         render(<MessageBubble message={msg} />)

@@ -1,0 +1,64 @@
+.guest-visit-bar {
+    margin: 0 1rem 0.75rem;
+    padding: 0.75rem 1rem;
+    border-radius: 10px;
+    background: rgba(255, 193, 7, 0.12);
+    border: 1px solid rgba(255, 193, 7, 0.35);
+}
+
+.guest-visit-bar--configured {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: rgba(76, 175, 80, 0.1);
+    border-color: rgba(76, 175, 80, 0.3);
+}
+
+.guest-visit-bar-hint {
+    margin: 0 0 0.5rem;
+    font-size: 0.85rem;
+    color: var(--text-secondary, #555);
+}
+
+.guest-visit-bar-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.guest-visit-bar-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-secondary, #555);
+}
+
+.guest-visit-bar-form input {
+    flex: 1;
+    min-width: 220px;
+    padding: 0.4rem 0.6rem;
+    border-radius: 6px;
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    font-family: ui-monospace, monospace;
+    font-size: 0.8rem;
+}
+
+.guest-visit-bar-form button {
+    padding: 0.4rem 0.9rem;
+    border-radius: 6px;
+    border: none;
+    background: #6c5ce7;
+    color: #fff;
+    cursor: pointer;
+    font-size: 0.85rem;
+}
+
+.guest-visit-bar-value {
+    font-size: 0.8rem;
+}
+
+.guest-visit-bar-error {
+    margin: 0.4rem 0 0;
+    font-size: 0.8rem;
+    color: #c0392b;
+}

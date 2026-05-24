@@ -14,10 +14,35 @@ export const API_BACKENDS = {
 const DEFAULT_PRESET = 'remote-dev'
 
 /**
+ * Resolves the active backend preset key (`remote-dev`, `remote-test`, `local`).
+ * Same precedence for SPA origin and Vite dev proxy target.
+ *
+ * @param {Record<string, string | boolean | undefined>} env
+ * @returns {string} preset key
+ */
+export function resolveActiveBackendPreset(env) {
+    const runtimePreset = getRuntimeBackendPreset()
+    if (runtimePreset && API_BACKENDS[runtimePreset]) {
+        return runtimePreset
+    }
+
+    const explicit = typeof env.VITE_API_ORIGIN === 'string' ? env.VITE_API_ORIGIN.trim() : ''
+    if (explicit) {
+        if (/dev-modulith/i.test(explicit)) return 'remote-dev'
+        if (/test-modulith/i.test(explicit)) return 'remote-test'
+        if (/localhost|127\.0\.0\.1/i.test(explicit)) return 'local'
+        return DEFAULT_PRESET
+    }
+
+    const key = typeof env.VITE_API_BACKEND === 'string' ? env.VITE_API_BACKEND.trim().toLowerCase() : DEFAULT_PRESET
+    return API_BACKENDS[key] ? key : DEFAULT_PRESET
+}
+
+/**
  * Resolves the modulith base URL for the browser bundle (fetch/SSE).
  * Priority:
- * 1. UI runtime override (env picker, persisted in localStorage)
- * 2. {@code VITE_API_RELATIVE=1|true} → empty string (same-origin; use Vite `/api` proxy in dev)
+ * 1. UI runtime override (env picker, persisted in localStorage) — always absolute URL
+ * 2. {@code VITE_API_RELATIVE=1|true} → empty string when no runtime picker (Vite dev proxy)
  * 3. Non-empty {@code VITE_API_ORIGIN}
  * 4. {@code VITE_API_BACKEND} preset ({@code local} | {@code remote-dev} | {@code remote-test})
  *
@@ -36,9 +61,8 @@ export function resolveApiOrigin(env) {
     const explicit = typeof env.VITE_API_ORIGIN === 'string' ? env.VITE_API_ORIGIN.trim() : ''
     if (explicit) return explicit.replace(/\/$/, '')
 
-    const key = typeof env.VITE_API_BACKEND === 'string' ? env.VITE_API_BACKEND.trim().toLowerCase() : DEFAULT_PRESET
-    const base = API_BACKENDS[key] ?? API_BACKENDS[DEFAULT_PRESET]
-    return base.replace(/\/$/, '')
+    const preset = resolveActiveBackendPreset(env)
+    return API_BACKENDS[preset].replace(/\/$/, '')
 }
 
 /**
@@ -65,18 +89,16 @@ export function getBackendEnvLabel(env) {
         return 'CUSTOM'
     }
 
-    const key = typeof env.VITE_API_BACKEND === 'string'
-        ? env.VITE_API_BACKEND.trim().toLowerCase()
-        : DEFAULT_PRESET
-    if (key === 'remote-dev') return 'DEV'
-    if (key === 'remote-test') return 'TEST'
-    if (key === 'local') return 'LOCAL'
+    const preset = resolveActiveBackendPreset(env)
+    if (preset === 'remote-dev') return 'DEV'
+    if (preset === 'remote-test') return 'TEST'
+    if (preset === 'local') return 'LOCAL'
     return 'DEV'
 }
 
 /**
- * Absolute modulith origin for the Vite dev server `/api` proxy (never empty).
- * When {@code VITE_API_RELATIVE=1}, the SPA uses relative URLs but the proxy still forwards to a real host.
+ * Absolute modulith origin for the Vite dev server proxy (never empty).
+ * Uses the same preset resolution as {@link resolveApiOrigin} (including runtime env picker).
  *
  * @param {Record<string, string | boolean | undefined>} env
  * @returns {string}
@@ -85,7 +107,27 @@ export function resolveDevProxyTarget(env) {
     const explicit = typeof env.VITE_API_ORIGIN === 'string' ? env.VITE_API_ORIGIN.trim() : ''
     if (explicit) return explicit.replace(/\/$/, '')
 
-    const key = typeof env.VITE_API_BACKEND === 'string' ? env.VITE_API_BACKEND.trim().toLowerCase() : DEFAULT_PRESET
-    const base = API_BACKENDS[key] ?? API_BACKENDS[DEFAULT_PRESET]
-    return base.replace(/\/$/, '')
+    const preset = resolveActiveBackendPreset(env)
+    return API_BACKENDS[preset].replace(/\/$/, '')
+}
+
+/**
+ * True when the SPA uses same-origin relative URLs (Vite dev proxy).
+ *
+ * @param {Record<string, string | boolean | undefined>} env
+ * @returns {boolean}
+ */
+export function isRelativeApiMode(env) {
+    return env.VITE_API_RELATIVE === 'true' || env.VITE_API_RELATIVE === '1'
+}
+
+/**
+ * Base URL prefix for modulith HTTP calls (OTP, identity, visitor-management).
+ * Empty string when {@link isRelativeApiMode} (Vite dev proxy); otherwise absolute preset origin.
+ *
+ * @param {Record<string, string | boolean | undefined>} env
+ * @returns {string}
+ */
+export function resolveModulithRequestBase(env) {
+    return resolveApiOrigin(env)
 }

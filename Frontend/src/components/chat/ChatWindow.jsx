@@ -29,7 +29,16 @@ import {
     isRestartIntent,
     setActiveConversation,
 } from '../../utils/menuCache.js'
-import { getChatContextForStart } from '../../config/chatContext.js'
+import {
+    getChatContextForStart,
+    hasConfiguredVisitId,
+    getVisitIdRequiredMessage,
+    getVisitIdComposerPlaceholder,
+} from '../../config/chatContext.js'
+import { getAccessToken } from '../../auth/tokenStore.js'
+import { isGuestChatAuth } from '../../config/chatAuth.js'
+import { resolveVisitIdForCurrentUser } from '../../auth/visitResolution.js'
+import { SSE_CONCURRENT_STREAMS_ERROR } from '../../services/api.js'
 import { createLogger } from '../../utils/logger.js'
 import MessageBubble from './MessageBubble.jsx'
 import ChatInput from './ChatInput.jsx'
@@ -38,6 +47,8 @@ import SparkIcon from '../ui/SparkIcon.jsx'
 import './ChatWindow.css'
 
 const log = createLogger('ChatWindow')
+
+const guestMode = isGuestChatAuth(import.meta.env)
 
 const QUICK_PROMPTS = [
     'What can you do?',
@@ -219,7 +230,11 @@ export default function ChatWindow({
                 }
                 if (data.status === 'error') {
                     notifySidebarActivity()
-                    return setReadyWithError(data.message || 'An error occurred while processing your request.')
+                    const msg = data.message || 'An error occurred while processing your request.'
+                    if (msg === SSE_CONCURRENT_STREAMS_ERROR) {
+                        return setReadyWithError('Too many open chat streams. Close other tabs and try again.')
+                    }
+                    return setReadyWithError(msg)
                 }
                 if (data.status === 'expired') {
                     terminalHandled = true
@@ -231,28 +246,62 @@ export default function ChatWindow({
             }
         }
 
-        es.addEventListener('error', (event) => {
-            if (!event.data) return
-            try {
-                const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data
-                if (data.status === 'expired') {
-                    terminalHandled = true
-                    stopStreaming()
-                    handleSessionExpired()
-                    return
-                }
-                if (data.status === 'error' || data.message) setReadyWithError(data.message || 'An error occurred.')
-            } catch {}
-        })
-
         es.onerror = () => {
             if (terminalHandled) return
             if (es.readyState === EventSource.CLOSED) setReadyWithError('Connection lost. Please try again.')
         }
+
+        return es
     }, [addMessage, stopStreaming, handleSessionExpired, applyCacheSideEffects, menuCacheConversationKey, onConversationActivity])
+
+    const reconcileTranscriptFromServer = useCallback(async (convId) => {
+        const turns = await fetchAllConversationTurns(convId)
+        const loadedMessages = turnsToMessages(turns)
+        const cacheKey = String(convId)
+        selectionChainRef.current = rebuildChainFromMessages(loadedMessages)
+        setMessages(loadedMessages)
+        setMenuCacheConversationKey(cacheKey)
+        for (const m of loadedMessages) {
+            if (m.role === 'ai') applyCacheSideEffects(cacheKey, m.payload)
+        }
+        setPhase('ready')
+    }, [applyCacheSideEffects])
+
+    /**
+     * Opens SSE before POST so the client is subscribed before Camunda emits the terminal event.
+     */
+    const runOrchestrationRound = useCallback(async (convId, eventsCacheKey, postFn) => {
+        startStreaming(convId, eventsCacheKey)
+        try {
+            await postFn()
+        } catch (err) {
+            stopStreaming()
+            throw err
+        }
+    }, [startStreaming, stopStreaming])
+
+    const visitIdConfigured = hasConfiguredVisitId()
 
     const handleSendMessage = useCallback(async (text, opts = {}) => {
         if (sending || conversationLoading) return
+        const needsOrchestrationStart = !conversationId || firstOutgoingNeedsStart
+        if (needsOrchestrationStart && !hasConfiguredVisitId() && !isGuestChatAuth(import.meta.env)) {
+            const token = getAccessToken()
+            if (token) {
+                try {
+                    await resolveVisitIdForCurrentUser(import.meta.env, token)
+                } catch (err) {
+                    setError(err instanceof Error ? err.message : getVisitIdRequiredMessage(import.meta.env, guestMode))
+                    setPhase(conversationId ? 'ready' : 'idle')
+                    return
+                }
+            }
+        }
+        if (needsOrchestrationStart && !hasConfiguredVisitId()) {
+            setError(getVisitIdRequiredMessage(import.meta.env, guestMode))
+            setPhase(conversationId ? 'ready' : 'idle')
+            return
+        }
         const cacheKey = menuCacheConversationKey
         if (cacheKey && isRestartIntent(text)) {
             invalidateSession(cacheKey)
@@ -269,15 +318,26 @@ export default function ChatWindow({
                 setMenuCacheConversationKey(convId)
                 setFirstOutgoingNeedsStart(false)
                 onConversationCreated?.()
-                await startOrchestration(convId, text, getChatContextForStart(), opts.displayText ?? null)
-                startStreaming(convId, convId)
+                await runOrchestrationRound(
+                    convId,
+                    convId,
+                    () => startOrchestration(convId, text, getChatContextForStart(), opts.displayText ?? null),
+                )
             } else if (firstOutgoingNeedsStart) {
-                await startOrchestration(conversationId, text, getChatContextForStart(), opts.displayText ?? null)
+                const cacheKey = menuCacheConversationKey ?? conversationId
+                await runOrchestrationRound(
+                    conversationId,
+                    cacheKey,
+                    () => startOrchestration(conversationId, text, getChatContextForStart(), opts.displayText ?? null),
+                )
                 setFirstOutgoingNeedsStart(false)
-                startStreaming(conversationId, menuCacheConversationKey ?? conversationId)
             } else {
-                await sendReply(conversationId, text, opts.displayText ?? null)
-                startStreaming(conversationId, menuCacheConversationKey ?? conversationId)
+                const cacheKey = menuCacheConversationKey ?? conversationId
+                await runOrchestrationRound(
+                    conversationId,
+                    cacheKey,
+                    () => sendReply(conversationId, text, opts.displayText ?? null),
+                )
             }
         } catch (err) {
             if (isSessionGone(err)) return handleSessionExpired()
@@ -286,8 +346,13 @@ export default function ChatWindow({
                 setPhase(conversationId ? 'ready' : 'idle')
                 return
             }
-            if (err instanceof ApiError && err.status === 409) {
-                setPhase(conversationId ? 'ready' : 'idle')
+            if (err instanceof ApiError && err.status === 409 && conversationId) {
+                try {
+                    await reconcileTranscriptFromServer(conversationId)
+                } catch (reconcileErr) {
+                    log.warn('409 reconcile failed', reconcileErr)
+                    setPhase('ready')
+                }
                 return
             }
             setError(conversationId ? 'Failed to send message. The session may have expired.' : 'Failed to start conversation. Is the backend running?')
@@ -295,7 +360,7 @@ export default function ChatWindow({
         } finally {
             setSending(false)
         }
-    }, [conversationId, menuCacheConversationKey, sending, conversationLoading, firstOutgoingNeedsStart, addMessage, startStreaming, handleSessionExpired, onConversationCreated])
+    }, [conversationId, menuCacheConversationKey, sending, conversationLoading, firstOutgoingNeedsStart, addMessage, runOrchestrationRound, handleSessionExpired, onConversationCreated, reconcileTranscriptFromServer])
 
     const handleMenuItemClick = useCallback((item, menuHandledBy) => {
         if (item?.selectionSignal && typeof item.selectionSignal === 'string') {
@@ -377,10 +442,20 @@ export default function ChatWindow({
                     <div className="empty-state">
                         <div className="empty-icon"><SparkIcon size={48} withCircle /></div>
                         <h2>How can I help you today?</h2>
-                        <p>I'm an AI agent that can help you explore the catering catalog (categories, subcategories, and products), submit IT-support tickets, and report facilities &amp; maintenance issues.</p>
+                        <p>Start with our Visitor Experience assistant for greetings and capabilities, then explore the catering catalog, submit IT-support tickets, or report facilities &amp; maintenance issues.</p>
+                        {!visitIdConfigured && (
+                            <div className="visit-id-hint" role="status">
+                                {getVisitIdRequiredMessage(import.meta.env, guestMode)}
+                            </div>
+                        )}
                         <div className="quick-prompts">
                             {QUICK_PROMPTS.map((prompt) => (
-                                <button key={prompt} className="quick-prompt" onClick={() => handleSendMessage(prompt)}>
+                                <button
+                                    key={prompt}
+                                    className="quick-prompt"
+                                    disabled={!visitIdConfigured || sending}
+                                    onClick={() => handleSendMessage(prompt)}
+                                >
                                     {prompt}
                                 </button>
                             ))}
@@ -409,7 +484,18 @@ export default function ChatWindow({
 
             <div className="chat-bottom">
                 {(phase === 'idle' || phase === 'ready') && !conversationLoading && (
-                    <ChatInput ref={chatInputRef} onSend={handleSendMessage} disabled={sending} placeholder={phase === 'idle' ? 'Type your message...' : 'Type a follow-up...'} />
+                    <ChatInput
+                        ref={chatInputRef}
+                        onSend={handleSendMessage}
+                        disabled={sending || (visitIdConfigured ? false : (!conversationId || firstOutgoingNeedsStart))}
+                        placeholder={
+                            !visitIdConfigured && (!conversationId || firstOutgoingNeedsStart)
+                                ? getVisitIdComposerPlaceholder(import.meta.env, guestMode)
+                                : phase === 'idle'
+                                  ? 'Type your message...'
+                                  : 'Type a follow-up...'
+                        }
+                    />
                 )}
                 {phase === 'thinking' && <div className="waiting-hint"><span>Agent is working on your request...</span></div>}
                 {phase === 'expired' && (

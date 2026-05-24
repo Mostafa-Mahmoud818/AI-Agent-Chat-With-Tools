@@ -4,10 +4,12 @@
  */
 
 import { useState, useEffect, useCallback } from 'react'
-import { getConversations, ApiError } from '../../services/api'
+import { loadAllConversations, ApiError } from '../../services/api'
+import GuestVisitIdBar from './GuestVisitIdBar.jsx'
 import { bumpConversationLastActivity, sortConversationsForSidebar } from '../../utils/conversationSidebarOrder.js'
 import { createLogger } from '../../utils/logger.js'
 import { getAccessToken } from '../../auth/tokenStore.js'
+import { tryResolveVisitIdForCurrentUser } from '../../auth/visitResolution.js'
 import { isGuestChatAuth } from '../../config/chatAuth.js'
 import { syncGuestCookie } from '../../auth/guestClientId.js'
 import ConversationSidebar from '../sidebar/ConversationSidebar.jsx'
@@ -28,6 +30,8 @@ export default function ChatLayout() {
     const [sidebarOpen, setSidebarOpen] = useState(false)
     const [resetKey, setResetKey] = useState(0)
 
+    const [visitBarKey, setVisitBarKey] = useState(0)
+
     const chatApiReady = guestMode || authenticated
 
     useEffect(() => {
@@ -46,8 +50,8 @@ export default function ChatLayout() {
             setConvosError(null)
         }
         try {
-            const data = await getConversations({ page: 0, size: 100 })
-            setConversations(sortConversationsForSidebar(data.content ?? []))
+            const rows = await loadAllConversations({ size: 100 })
+            setConversations(sortConversationsForSidebar(rows))
             if (!silent) setConvosError(null)
         } catch (e) {
             const msg = e instanceof ApiError ? e.message : 'Failed to load conversations'
@@ -70,6 +74,17 @@ export default function ChatLayout() {
     }, [])
 
     const requiresAuth = import.meta.env.MODE !== 'test' && !authenticated && !guestMode
+
+    const handleAuthenticated = useCallback(async ({ visitId: visitFromDialog } = {}) => {
+        setAuthenticated(true)
+        if (!visitFromDialog) {
+            const token = getAccessToken()
+            if (token) {
+                await tryResolveVisitIdForCurrentUser(import.meta.env, token)
+            }
+        }
+        loadConversations()
+    }, [loadConversations])
 
     const handleSelectConversation = useCallback((id) => {
         setSelectedConversationId(id)
@@ -108,7 +123,7 @@ export default function ChatLayout() {
     return (
         <div className="chat-layout">
             {requiresAuth && (
-                <LocalAuthDialog onAuthenticated={() => setAuthenticated(true)} />
+                <LocalAuthDialog onAuthenticated={handleAuthenticated} />
             )}
             <button
                 type="button"
@@ -150,6 +165,12 @@ export default function ChatLayout() {
             </div>
 
             <main className="chat-layout-main">
+                {guestMode && (
+                    <GuestVisitIdBar
+                        key={visitBarKey}
+                        onVisitConfigured={() => setVisitBarKey((k) => k + 1)}
+                    />
+                )}
                 <ChatWindow
                     sidebarConversationId={selectedConversationId}
                     key={resetKey}

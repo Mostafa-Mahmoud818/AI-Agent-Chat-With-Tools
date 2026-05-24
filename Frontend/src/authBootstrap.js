@@ -1,5 +1,5 @@
 /**
- * @file Startup validation for secure chatting env (`VITE_API_BEARER_TOKEN`, optional `VITE_API_ORIGIN` / `VITE_API_BACKEND`).
+ * @file Startup validation for secure chatting env (email OTP auth or optional bootstrap token).
  * @module authBootstrap
  */
 
@@ -26,8 +26,6 @@ export async function applySecureChatEnv() {
 
     const token = getAccessToken()
     if (!token) {
-        log.error(
-            'Missing bearer token. Provide VITE_API_BEARER_TOKEN, authenticate via local OTP UI, or set VITE_CHAT_AUTH=guest.',
-        )
+        log.info('No bearer token yet — sign in via email OTP in the auth dialog.')
     }
 }
