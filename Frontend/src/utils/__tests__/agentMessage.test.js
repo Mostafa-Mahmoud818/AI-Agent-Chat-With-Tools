@@ -226,6 +226,79 @@ describe('parseAgentMessage', () => {
     })
 })
 
+describe('parseAgentMessage navigation subtypes', () => {
+    it('preserves outdoor_navigation object with numeric coordinates (no navigationType field)', () => {
+        const raw = JSON.stringify({
+            replyType: 'json',
+            textString: 'Your destination is at Head Quarter.',
+            payload: {
+                subtype: 'outdoor_navigation',
+                menuitems: [],
+                order: null,
+                navigation: {
+                    locationName: 'Head Quarter',
+                    resourceId: 'HQ-001',
+                    resourceName: 'Head Quarter',
+                    latitude: 24.4473667,
+                    longitude: 54.3949106,
+                },
+            },
+        })
+        const { text, payload } = parseAgentMessage(raw)
+        expect(text).toBe('Your destination is at Head Quarter.')
+        expect(payload?.subtype).toBe('outdoor_navigation')
+        expect(payload?.navigation).toEqual({
+            locationName: 'Head Quarter',
+            resourceId: 'HQ-001',
+            resourceName: 'Head Quarter',
+            latitude: 24.4473667,
+            longitude: 54.3949106,
+        })
+    })
+
+    it('forces indoor_navigation coordinates to null and keeps resource fields', () => {
+        const raw = JSON.stringify({
+            replyType: 'json',
+            textString: 'Your meeting is in Meeting Room A3.',
+            payload: {
+                subtype: 'indoor_navigation',
+                menuitems: [],
+                order: null,
+                navigation: {
+                    locationName: 'Building 1',
+                    resourceId: 'ROOM-123',
+                    resourceName: 'Meeting Room A3',
+                    latitude: 24.1,
+                    longitude: 54.1,
+                },
+            },
+        })
+        const { payload } = parseAgentMessage(raw)
+        expect(payload?.subtype).toBe('indoor_navigation')
+        expect(payload?.navigation?.latitude).toBeNull()
+        expect(payload?.navigation?.longitude).toBeNull()
+        expect(payload?.navigation?.resourceId).toBe('ROOM-123')
+        expect(payload?.navigation?.resourceName).toBe('Meeting Room A3')
+        expect(payload?.navigation).not.toHaveProperty('navigationType')
+    })
+
+    it('defensively parses a navigation payload even if replyType is "text" (not promoted to menu)', () => {
+        const raw = JSON.stringify({
+            replyType: 'text',
+            textString: 'Here is your location.',
+            payload: {
+                subtype: 'outdoor_navigation',
+                menuitems: [],
+                order: null,
+                navigation: { locationName: 'HQ', resourceId: null, resourceName: null, latitude: 1, longitude: 2 },
+            },
+        })
+        const { payload } = parseAgentMessage(raw)
+        expect(payload?.subtype).toBe('outdoor_navigation')
+        expect(payload?.menuitems).toEqual([])
+    })
+})
+
 describe('turnsToMessages', () => {
     it('maps user and agent rows from turns', () => {
         const turns = [

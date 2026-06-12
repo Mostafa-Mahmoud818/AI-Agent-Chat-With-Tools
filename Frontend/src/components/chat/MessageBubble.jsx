@@ -110,11 +110,16 @@ function resolveMenuItems(payload) {
     return []
 }
 
+// Internal identifiers (UUIDs) must never be rendered to the user; user-facing
+// reference codes (e.g. IT-2026-00042) are the only identifiers allowed on screen.
+const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
+
 function OrderConfirmationCard({ payload }) {
     // Schema: payload.order holds the nested order object.
     // Fall back to reading fields directly from payload for any legacy flat structure.
     const order = payload.order ?? null
-    const orderId       = order?.id           ?? payload.orderId    ?? payload.id    ?? null
+    const referenceCode = order?.referenceCode ?? payload.referenceCode             ?? null
+    const rawOrderId    = order?.id           ?? payload.orderId    ?? payload.id    ?? null
     const customerName  = order?.customerName ?? payload.customerName                ?? null
     const status        = order?.status       ?? payload.status                      ?? null
     const totalPrice    = order?.totalPrice   ?? payload.totalPrice                  ?? null
@@ -122,7 +127,11 @@ function OrderConfirmationCard({ payload }) {
     const items = Array.isArray(order?.items) ? order.items
                 : Array.isArray(payload.items) ? payload.items : []
 
-    const hasMeta = orderId || customerName || status || totalPrice != null || createdAt
+    // Prefer the user-facing reference code; never show a UUID-shaped internal id.
+    const orderRef = referenceCode
+        ?? (rawOrderId && !UUID_RE.test(String(rawOrderId)) ? rawOrderId : null)
+
+    const hasMeta = orderRef || customerName || status || totalPrice != null || createdAt
     return (
         <div className="order-confirmation-card">
             <div className="order-confirmation-header">
@@ -134,10 +143,10 @@ function OrderConfirmationCard({ payload }) {
             </div>
             {hasMeta && (
                 <div className="order-confirmation-meta">
-                    {orderId && (
+                    {orderRef && (
                         <span className="order-meta-item">
-                            <span className="order-meta-label">Order ID</span>
-                            <span className="order-meta-value">{String(orderId)}</span>
+                            <span className="order-meta-label">Reference</span>
+                            <span className="order-meta-value">{String(orderRef)}</span>
                         </span>
                     )}
                     {customerName && (
@@ -199,7 +208,8 @@ function OrderConfirmationCard({ payload }) {
 }
 
 function TicketCard({ payload }) {
-    const ticketId = payload.ticketId ?? null
+    // Security: payload.ticketId is an internal UUID kept for machine use only — never rendered.
+    // The user-facing referenceCode arrives in the message text.
     const ticketStatus = payload.ticketStatus ?? null
     return (
         <div className="ticket-card">
@@ -210,9 +220,50 @@ function TicketCard({ payload }) {
                 <span>Support Ticket Created</span>
             </div>
             <div className="ticket-card-meta">
-                {ticketId && <span className="ticket-meta-item"><span className="ticket-meta-label">Ticket ID</span><span className="ticket-meta-value">{String(ticketId)}</span></span>}
                 {ticketStatus && <span className="ticket-meta-item"><span className="ticket-meta-label">Status</span><span className="ticket-meta-value ticket-status">{String(ticketStatus)}</span></span>}
             </div>
+        </div>
+    )
+}
+
+function NavigationCard({ navigation, outdoor }) {
+    if (!navigation || typeof navigation !== 'object') return null
+    // Security: navigation.resourceId stays in the payload for the app's wayfinding — never rendered.
+    const { locationName, resourceName, latitude, longitude } = navigation
+    const isOutdoor = outdoor
+    const hasCoords = Number.isFinite(latitude) && Number.isFinite(longitude)
+    const mapsUrl = hasCoords
+        ? `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`
+        : null
+    const title = resourceName || locationName || 'Destination'
+    const showSub = locationName && locationName !== title
+
+    return (
+        <div className={`navigation-card ${isOutdoor ? 'outdoor' : 'indoor'}`}>
+            <div className="navigation-card-header">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                    <circle cx="12" cy="10" r="3" />
+                </svg>
+                <span>{isOutdoor ? 'Outdoor Navigation' : 'Indoor Navigation'}</span>
+            </div>
+            <div className="navigation-card-body">
+                <span className="navigation-card-title">{title}</span>
+                {showSub && <span className="navigation-card-sub">{locationName}</span>}
+                {isOutdoor && hasCoords && (
+                    <span className="navigation-card-coords">{latitude}, {longitude}</span>
+                )}
+            </div>
+            {isOutdoor && mapsUrl && (
+                <a
+                    className="navigation-card-action"
+                    href={mapsUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                >
+                    Open in Maps
+                </a>
+            )}
         </div>
     )
 }
@@ -248,6 +299,8 @@ function MessageBubble({ message, onMenuItemClick, onBreadcrumbClick }) {
     const isErrorPayload = isAI && subtype === 'error'
     const hasOrderConfirmation = isAI && subtype === 'order_confirmation'
     const hasTicket = isAI && subtype === 'ticket'
+    const isOutdoorNav = isAI && subtype === 'outdoor_navigation'
+    const hasNavigation = isOutdoorNav || (isAI && subtype === 'indoor_navigation')
     const handledByLabel = formatHandledBy(message.handledBy)
 
     if (isSystem) {
@@ -305,6 +358,9 @@ function MessageBubble({ message, onMenuItemClick, onBreadcrumbClick }) {
                     {hasTicket && (
                         <TicketCard payload={message.payload} />
                     )}
+                    {hasNavigation && (
+                        <NavigationCard navigation={message.payload?.navigation} outdoor={isOutdoorNav} />
+                    )}
                 </div>
                 {isAI && handledByLabel && (
                     <span className="handled-by">Answered by {handledByLabel}</span>
@@ -322,8 +378,16 @@ MessageBubble.propTypes = {
         handledBy: PropTypes.string,
         timestamp: PropTypes.instanceOf(Date),
         payload: PropTypes.shape({
-            subtype: PropTypes.oneOf(['menu', 'order_confirmation', 'ticket', 'none', 'error']),
+            subtype: PropTypes.oneOf(['menu', 'order_confirmation', 'ticket', 'indoor_navigation', 'outdoor_navigation', 'none', 'error']),
             menuitems: PropTypes.array,
+            // Visitor Experience navigation card — shared contract (indoor/outdoor encoded by subtype)
+            navigation: PropTypes.shape({
+                locationName: PropTypes.string,
+                resourceId: PropTypes.string,
+                resourceName: PropTypes.string,
+                latitude: PropTypes.number,
+                longitude: PropTypes.number,
+            }),
             items: PropTypes.array,
             breadcrumb: PropTypes.arrayOf(PropTypes.shape({
                 label: PropTypes.string.isRequired,

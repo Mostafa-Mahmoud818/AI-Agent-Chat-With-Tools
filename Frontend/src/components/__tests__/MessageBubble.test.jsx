@@ -188,6 +188,129 @@ describe('MessageBubble', () => {
         expect(screen.getByText('No items are currently available. Please try again later or contact support.')).toBeInTheDocument()
     })
 
+    it('renders OUTDOOR navigation card with an Open in Maps link from coordinates', () => {
+        const msg = {
+            id: 'loc-out',
+            role: 'ai',
+            text: 'Your destination is at Head Quarter.',
+            timestamp: new Date(),
+            handledBy: 'VISITOR_EXPERIENCE',
+            payload: {
+                subtype: 'outdoor_navigation',
+                navigation: {
+                    locationName: 'Head Quarter',
+                    resourceId: 'HQ-001',
+                    resourceName: 'Head Quarter',
+                    latitude: 24.4473667,
+                    longitude: 54.3949106,
+                },
+            },
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText('Your destination is at Head Quarter.')).toBeInTheDocument()
+        expect(screen.getByText('Outdoor Navigation')).toBeInTheDocument()
+        const link = screen.getByText('Open in Maps')
+        expect(link).toHaveAttribute('href', 'https://www.google.com/maps/search/?api=1&query=24.4473667,54.3949106')
+        expect(link).toHaveAttribute('target', '_blank')
+        expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+    })
+
+    it('renders INDOOR navigation card with room/building and no maps link', () => {
+        const msg = {
+            id: 'loc-in',
+            role: 'ai',
+            text: 'Your meeting is in Meeting Room A3, located at Building 1.',
+            timestamp: new Date(),
+            handledBy: 'VISITOR_EXPERIENCE',
+            payload: {
+                subtype: 'indoor_navigation',
+                navigation: {
+                    locationName: 'Building 1',
+                    resourceId: 'ROOM-123',
+                    resourceName: 'Meeting Room A3',
+                    latitude: null,
+                    longitude: null,
+                },
+            },
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText('Indoor Navigation')).toBeInTheDocument()
+        expect(screen.getByText('Meeting Room A3')).toBeInTheDocument()
+        expect(screen.getByText('Building 1')).toBeInTheDocument()
+        expect(screen.queryByText('Open in Maps')).not.toBeInTheDocument()
+        // Security: internal resourceId stays in the payload but is never rendered
+        expect(screen.queryByText(/Resource ID/i)).not.toBeInTheDocument()
+        expect(screen.queryByText(/ROOM-123/)).not.toBeInTheDocument()
+    })
+
+    it('ticket card never renders the internal ticketId UUID', () => {
+        const msg = {
+            id: 't-sec',
+            role: 'ai',
+            text: 'Your IT ticket IT-2026-00042 was created.',
+            timestamp: new Date(),
+            handledBy: 'IT_SUPPORT',
+            payload: {
+                subtype: 'ticket',
+                menuitems: [],
+                order: null,
+                ticketId: '9f4c2d8e-1234-4abc-9def-1234567890ab',
+                ticketStatus: 'PENDING',
+            },
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText('Support Ticket Created')).toBeInTheDocument()
+        expect(screen.getByText('PENDING')).toBeInTheDocument()
+        expect(screen.queryByText(/9f4c2d8e/)).not.toBeInTheDocument()
+        expect(screen.queryByText(/Ticket ID/i)).not.toBeInTheDocument()
+    })
+
+    it('order confirmation prefers referenceCode and suppresses UUID-shaped order ids', () => {
+        const msg = {
+            id: 'o-sec',
+            role: 'ai',
+            text: 'Your order has been placed successfully.',
+            timestamp: new Date(),
+            handledBy: 'CATERING',
+            payload: {
+                subtype: 'order_confirmation',
+                menuitems: [],
+                order: {
+                    id: '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d',
+                    referenceCode: 'CAT-2026-00007',
+                    status: 'PENDING',
+                    totalPrice: 12.5,
+                    createdAt: '2026-06-11T09:00:00Z',
+                    items: [],
+                },
+            },
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText('Reference')).toBeInTheDocument()
+        expect(screen.getByText('CAT-2026-00007')).toBeInTheDocument()
+        expect(screen.queryByText(/0a1b2c3d/)).not.toBeInTheDocument()
+        expect(screen.queryByText(/Order ID/i)).not.toBeInTheDocument()
+    })
+
+    it('order confirmation without referenceCode hides UUID id entirely', () => {
+        const msg = {
+            id: 'o-sec-2',
+            role: 'ai',
+            text: 'Order placed.',
+            timestamp: new Date(),
+            handledBy: 'CATERING',
+            payload: {
+                subtype: 'order_confirmation',
+                menuitems: [],
+                order: { id: '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d', status: 'PENDING', items: [] },
+            },
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText('PENDING')).toBeInTheDocument()
+        expect(screen.queryByText('Reference')).not.toBeInTheDocument()
+        expect(screen.queryByText(/0a1b2c3d/)).not.toBeInTheDocument()
+    })
+
     it('renders error copy when subtype is error and suppresses textString', () => {
         const msg = {
             id: 'm5',

@@ -593,3 +593,85 @@
     letter-spacing: 0.05em;
     color: #818cf8;
 }
+
+/* ===== Navigation (location) Card ===== */
+.navigation-card {
+    margin-top: 10px;
+    padding: 12px 14px;
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+/* Outdoor → map/coordinates accent (teal); Indoor → resource accent (violet). */
+.navigation-card.outdoor {
+    background: rgba(20, 184, 166, 0.06);
+    border: 1px solid rgba(20, 184, 166, 0.25);
+}
+
+.navigation-card.indoor {
+    background: rgba(139, 92, 246, 0.06);
+    border: 1px solid rgba(139, 92, 246, 0.25);
+}
+
+.navigation-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.navigation-card.outdoor .navigation-card-header { color: #2dd4bf; }
+.navigation-card.indoor .navigation-card-header { color: #a78bfa; }
+
+.navigation-card-header svg {
+    flex-shrink: 0;
+}
+
+.navigation-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.navigation-card-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.navigation-card-sub {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.navigation-card-resource {
+    font-size: 11px;
+    color: var(--text-muted);
+    word-break: break-all;
+}
+
+.navigation-card-coords {
+    font-size: 11px;
+    font-family: var(--font-mono, monospace);
+    color: var(--text-muted);
+}
+
+.navigation-card-action {
+    align-self: flex-start;
+    margin-top: 2px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    text-decoration: none;
+    border-radius: var(--radius-md);
+    color: #0f766e;
+    background: #2dd4bf;
+    transition: filter var(--transition-fast);
+}
+
+.navigation-card-action:hover {
+    filter: brightness(1.08);
+}

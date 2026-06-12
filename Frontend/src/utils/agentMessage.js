@@ -3,8 +3,9 @@
  * @module utils/agentMessage
  *
  * Catering, IT, and F&amp;M agents share a catering-shaped envelope (`replyType`, `textString` or `textContent`,
- * `payload.subtype` menu | ticket | error | order_confirmation | none). This module normalizes fences,
- * flattened legacy shapes, breadcrumbs, and menu item fields (including optional `selectionSignal`).
+ * `payload.subtype` menu | ticket | error | order_confirmation | location | none). This module normalizes
+ * fences, flattened legacy shapes, breadcrumbs, menu item fields (including optional `selectionSignal`),
+ * and the Visitor Experience `location` navigation object.
  */
 /**
  * Prefer `textContent` (IT/F&M BPMN) then `textString` (catering BPMN).
@@ -27,6 +28,20 @@ function primaryAssistantText(parsed, fallback) {
 /** @param {string|null|undefined} replyType */
 function isStructuredAgentReply(replyType) {
     return replyType === 'json'
+}
+
+/** Subtypes that carry a structured card and must be normalized regardless of `replyType`. */
+const STRUCTURED_SUBTYPES = new Set(['menu', 'ticket', 'order_confirmation', 'indoor_navigation', 'outdoor_navigation'])
+
+/**
+ * True when the payload declares a known structured subtype. Structured cards are canonically sent
+ * with `replyType:"json"`, but detection stays defensive: a navigation reply carries a structured
+ * `navigation` payload and a human `textString`, so a model slip to `replyType:"text"` must still
+ * surface the card. We therefore do not rely on `replyType === "json"` alone.
+ * @param {*} payload
+ */
+function hasStructuredSubtype(payload) {
+    return payload != null && typeof payload === 'object' && STRUCTURED_SUBTYPES.has(payload.subtype)
 }
 
 /**
@@ -84,7 +99,7 @@ export function parseAgentMessage(raw) {
         if (parsed && typeof parsed === 'object') {
             if (parsed.replyType) {
                 text = primaryAssistantText(parsed, raw)
-                if (isStructuredAgentReply(parsed.replyType) && parsed.payload != null) {
+                if (parsed.payload != null && (isStructuredAgentReply(parsed.replyType) || hasStructuredSubtype(parsed.payload))) {
                     payload = normalizePayload(parsed.payload, parsed.replyType)
                 }
             } else if (parsed.textString != null || parsed.textContent != null || parsed.payload != null) {
@@ -128,6 +143,14 @@ function normalizePayload(payload, replyType) {
     // Ticket — preserve subtype.
     if (payload.subtype === 'ticket') {
         return { ...payload, subtype: 'ticket' }
+    }
+
+    // Navigation cards (Visitor Experience). The subtype encodes indoor vs outdoor — the client
+    // reads it directly (no nested type field). Must come BEFORE the generic menuitems checks so
+    // an empty menuitems:[] isn't promoted to subtype "menu".
+    if (payload.subtype === 'indoor_navigation' || payload.subtype === 'outdoor_navigation') {
+        const isOutdoor = payload.subtype === 'outdoor_navigation'
+        return { ...payload, navigation: toNavigation(payload.navigation, isOutdoor), menuitems: [], order: null }
     }
 
     if (payload.subtype === 'menu' && Array.isArray(payload.menuitems)) {
@@ -182,6 +205,37 @@ function toMenuItems(items) {
             }
         })
         .filter(Boolean)
+}
+
+/**
+ * Normalizes a navigation reply's `payload.navigation` object into the shared contract shape.
+ * Indoor vs outdoor comes from the reply subtype (passed as `isOutdoor`), not a nested field.
+ * All five fields are always present (null when absent); coordinates are coerced to finite numbers
+ * and forced null for indoor (mirroring the backend tool, which returns coordinates only for outdoor).
+ *
+ * @param {*} raw
+ * @param {boolean} isOutdoor whether the reply subtype is `outdoor_navigation`
+ * @returns {{locationName: string|null, resourceId: string|null, resourceName: string|null, latitude: number|null, longitude: number|null}|null}
+ */
+function toNavigation(raw, isOutdoor) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+    const str = (v) => {
+        if (v == null) return null
+        const s = String(v).trim()
+        return s === '' ? null : s
+    }
+    const num = (v) => {
+        if (v == null || v === '') return null
+        const n = Number(v)
+        return Number.isFinite(n) ? n : null
+    }
+    return {
+        locationName: str(raw.locationName),
+        resourceId: str(raw.resourceId),
+        resourceName: str(raw.resourceName),
+        latitude: isOutdoor ? num(raw.latitude) : null,
+        longitude: isOutdoor ? num(raw.longitude) : null,
+    }
 }
 
 /** Normalizes `payload.breadcrumb` into a trimmed [{label, levelKey}] list; returns null on invalid shape. */
