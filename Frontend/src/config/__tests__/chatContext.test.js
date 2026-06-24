@@ -6,6 +6,7 @@ import {
     getVisitIdRequiredMessage,
     getVisitIdComposerPlaceholder,
     hasConfiguredVisitId,
+    isOtherVisitConversation,
     isPlaceholderVisitId,
     isValidVisitId,
     normalizeVisitId,
@@ -32,13 +33,13 @@ describe('chatContext', () => {
         )
     })
 
-    it('buildVisitChatContext uses VISIT envelope', () => {
+    it('buildVisitChatContext uses VISIT envelope with generic id', () => {
         setRuntimeVisitId('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee')
         const ctx = buildVisitChatContext()
         expect(ctx).toEqual({
             schemaVersion: '1.0',
             contextType: 'VISIT',
-            contextData: { visitId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' },
+            contextData: { id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' },
         })
     })
 
@@ -86,5 +87,33 @@ describe('chatContext', () => {
     it('getVisitIdComposerPlaceholder distinguishes guest vs secure', () => {
         expect(getVisitIdComposerPlaceholder({}, true)).toMatch(/bar above/)
         expect(getVisitIdComposerPlaceholder({}, false)).toMatch(/Sign in/)
+    })
+
+    describe('isOtherVisitConversation', () => {
+        const CURRENT = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+        const OTHER = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+
+        beforeEach(() => setRuntimeVisitId(CURRENT))
+
+        it('is true for a VISIT conversation from a different visit', () => {
+            expect(isOtherVisitConversation({ contextType: 'VISIT', contextTypeId: OTHER })).toBe(true)
+        })
+
+        it('is false for a VISIT conversation matching the current visit', () => {
+            expect(isOtherVisitConversation({ contextType: 'VISIT', contextTypeId: CURRENT })).toBe(false)
+        })
+
+        it('is false for null / new / non-VISIT / id-less conversations', () => {
+            expect(isOtherVisitConversation(null)).toBe(false)
+            expect(isOtherVisitConversation({})).toBe(false)
+            expect(isOtherVisitConversation({ contextType: 'STUDENT', contextTypeId: OTHER })).toBe(false)
+            expect(isOtherVisitConversation({ contextType: 'VISIT', contextTypeId: null })).toBe(false)
+        })
+
+        it('is false when no current visit is configured (cannot gate)', () => {
+            setRuntimeVisitId('')
+            const env = { VITE_DEFAULT_VISIT_ID: undefined }
+            expect(isOtherVisitConversation({ contextType: 'VISIT', contextTypeId: OTHER }, env)).toBe(false)
+        })
     })
 })

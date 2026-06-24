@@ -3,7 +3,7 @@
  * @module config/chatContext
  *
  * Mirrors backend {@code ChatContext} + {@code VisitContextData}:
- * {@code { schemaVersion: "1.0", contextType: "VISIT", contextData: { visitId: "<uuid>" } } }.
+ * {@code { schemaVersion: "1.0", contextType: "VISIT", contextData: { id: "<uuid>" } } }.
  * Sent only on {@code POST .../orchestration/conversations/{id}/start}; follow-ups omit it.
  *
  * **visitId resolution (first match wins):**
@@ -13,7 +13,7 @@
  * 4. {@link DEFAULT_VISIT_ID} — treated as unconfigured; orchestration start is blocked
  */
 
-import { createLogger } from '../utils/logger.js'
+import {createLogger} from '../utils/logger.js'
 
 const log = createLogger('chatContext')
 
@@ -31,6 +31,13 @@ export const VISIT_ID_REQUIRED_MESSAGE_SECURE =
 /** Shown when {@link hasConfiguredVisitId} is false (guest mode). */
 export const VISIT_ID_REQUIRED_MESSAGE_GUEST =
     'Set a Visit ID below, use ?visitId=<uuid> in the URL, or configure VITE_DEFAULT_VISIT_ID before starting chat.'
+
+/** Shown when the selected conversation belongs to a different (ended) visit — chatting is blocked. */
+export const OTHER_VISIT_READONLY_MESSAGE =
+    "This visit has ended. You can view this conversation's history but can't continue chatting."
+
+/** Composer placeholder when the selected conversation is from a different (ended) visit. */
+export const OTHER_VISIT_COMPOSER_PLACEHOLDER = 'This visit has ended — history only.'
 
 /** @deprecated Use {@link getVisitIdRequiredMessage} */
 export const VISIT_ID_REQUIRED_MESSAGE = VISIT_ID_REQUIRED_MESSAGE_SECURE
@@ -151,7 +158,7 @@ function readEnvVisitId(env = import.meta.env) {
     const raw = env?.VITE_DEFAULT_VISIT_ID
     const v = normalizeVisitId(raw)
     if (raw != null && String(raw).trim() !== '' && !v) {
-        log.warn('VITE_DEFAULT_VISIT_ID is not a valid UUID — ignored', { raw })
+        log.warn('VITE_DEFAULT_VISIT_ID is not a valid UUID — ignored', {raw})
     }
     return v
 }
@@ -174,14 +181,14 @@ export function resolveVisitId(env = import.meta.env) {
 
 /**
  * @param {ImportMetaEnv} [env]
- * @returns {{ schemaVersion: string, contextType: string, contextData: { visitId: string } }}
+ * @returns {{ schemaVersion: string, contextType: string, contextData: { id: string } }}
  */
 export function buildVisitChatContext(env = import.meta.env) {
     const visitId = resolveVisitId(env)
     return {
         schemaVersion: CHAT_CONTEXT_SCHEMA_VERSION,
         contextType: CHAT_CONTEXT_TYPE_VISIT,
-        contextData: { visitId },
+        contextData: {id: visitId},
     }
 }
 
@@ -190,7 +197,7 @@ export function buildVisitChatContext(env = import.meta.env) {
  * Persists a query-param visit id into localStorage when present.
  *
  * @param {ImportMetaEnv} [env]
- * @returns {{ schemaVersion: string, contextType: string, contextData: { visitId: string } }}
+ * @returns {{ schemaVersion: string, contextType: string, contextData: { id: string } }}
  */
 export function getChatContextForStart(env = import.meta.env) {
     const fromQuery = readQueryVisitId(env)
@@ -198,4 +205,25 @@ export function getChatContextForStart(env = import.meta.env) {
         setRuntimeVisitId(fromQuery)
     }
     return buildVisitChatContext(env)
+}
+
+/**
+ * Client-side gate: true when a conversation is anchored to a VISIT *other than* the current one,
+ * so chatting must be blocked while history viewing stays allowed. Returns false for new chats,
+ * non-VISIT conversations, conversations without a context id, when no current visit is configured,
+ * or when the conversation's visit matches the current visit.
+ *
+ * Mirrors backend exposure: {@code ConversationDto.contextType} / {@code ConversationDto.contextTypeId}.
+ *
+ * @param {{ contextType?: string|null, contextTypeId?: string|null }|null|undefined} conversation
+ * @param {ImportMetaEnv} [env]
+ * @returns {boolean}
+ */
+export function isOtherVisitConversation(conversation, env = import.meta.env) {
+    if (!conversation || conversation.contextType !== CHAT_CONTEXT_TYPE_VISIT) return false
+    const conversationVisitId = normalizeVisitId(conversation.contextTypeId)
+    if (!conversationVisitId) return false
+    const currentVisitId = resolveVisitId(env)
+    if (isPlaceholderVisitId(currentVisitId)) return false
+    return conversationVisitId !== currentVisitId
 }

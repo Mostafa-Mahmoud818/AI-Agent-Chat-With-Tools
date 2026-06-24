@@ -23,16 +23,12 @@
  * {@code message}, {@code handledBy}.
  */
 
-import { createLogger } from '../utils/logger.js'
-import { resolveApiOrigin, isRelativeApiMode } from '../config/apiOrigin.js'
-import { getAccessToken } from '../auth/tokenStore.js'
-import { isGuestChatAuth } from '../config/chatAuth.js'
-import { getOrCreateGuestClientId } from '../auth/guestClientId.js'
-import {
-    clampChatInput,
-    clampConversationTitle,
-    clampDisplayText,
-} from '../config/chattingValidationLimits.js'
+import {createLogger} from '../utils/logger.js'
+import {isRelativeApiMode, resolveApiOrigin} from '../config/apiOrigin.js'
+import {getAccessToken} from '../auth/tokenStore.js'
+import {isGuestChatAuth} from '../config/chatAuth.js'
+import {getOrCreateGuestClientId} from '../auth/guestClientId.js'
+import {clampChatInput, clampConversationTitle, clampDisplayText,} from '../config/chattingValidationLimits.js'
 
 const log = createLogger('api')
 
@@ -108,7 +104,7 @@ async function handleResponse(res) {
         }
     }
 
-    log.warn('HTTP error', { status: res.status, errorCode, message })
+    log.warn('HTTP error', {status: res.status, errorCode, message})
     throw new ApiError(res.status, errorCode, message)
 }
 
@@ -125,7 +121,7 @@ async function unwrapResponse(res) {
 
 // ── HTTP helpers ────────────────────────────────────────────────────
 
-const JSON_HEADERS = { 'Content-Type': 'application/json' }
+const JSON_HEADERS = {'Content-Type': 'application/json'}
 
 /**
  * Appends `clientId` for public guest APIs (required when cookie not sent cross-origin).
@@ -143,7 +139,7 @@ function bearerAuthHeaders() {
     const token = getAccessToken()
     if (!token) {
         if (IS_TEST) {
-            return { ...JSON_HEADERS, Authorization: 'Bearer __vitest_bearer_placeholder__' }
+            return {...JSON_HEADERS, Authorization: 'Bearer __vitest_bearer_placeholder__'}
         }
         throw new ApiError(
             0,
@@ -151,12 +147,12 @@ function bearerAuthHeaders() {
             'Missing bearer token. Sign in via email OTP in the auth dialog, set VITE_API_BEARER_TOKEN for automation, or set VITE_CHAT_AUTH=guest for public API.',
         )
     }
-    return { ...JSON_HEADERS, Authorization: `Bearer ${token}` }
+    return {...JSON_HEADERS, Authorization: `Bearer ${token}`}
 }
 
 function buildHeaders() {
     if (useGuestAuth()) {
-        return { ...JSON_HEADERS }
+        return {...JSON_HEADERS}
     }
     return bearerAuthHeaders()
 }
@@ -175,7 +171,7 @@ function getOrchestrationBase() {
 }
 
 function buildFetchOptions(options = {}) {
-    const base = { ...options }
+    const base = {...options}
     if (useGuestAuth() && isRelativeApiMode(import.meta.env)) {
         base.credentials = 'include'
     }
@@ -186,7 +182,7 @@ function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
 
-    return fetch(url, buildFetchOptions({ ...options, signal: controller.signal }))
+    return fetch(url, buildFetchOptions({...options, signal: controller.signal}))
         .catch((err) => {
             if (err.name === 'AbortError') {
                 log.warn('Request timeout', url)
@@ -221,15 +217,31 @@ async function post(url, body) {
     return handleResponse(res)
 }
 
+async function del(url) {
+    const finalUrl = withGuestClientIdQuery(url)
+    log.debug('DELETE', finalUrl)
+    const res = await fetchWithTimeout(finalUrl, {
+        method: 'DELETE',
+        headers: buildHeaders(),
+    })
+    log.debug('DELETE response', finalUrl, res.status)
+    return handleResponse(res)
+}
+
 // ── API functions ───────────────────────────────────────────────────
 
 /**
- * @param {{ page?: number, size?: number }} [opts]
+ * Lists conversations for the current client. `archived=false` (default) returns non-archived
+ * conversations; `archived=true` returns archived ones. Soft-deleted conversations are never returned.
+ *
+ * @param {{ page?: number, size?: number, archived?: boolean }} [opts]
  * @returns {Promise<{ content: ConversationDto[], page: number, size: number, last: boolean }>}
  */
-export async function getConversations({ page = 0, size = 50 } = {}) {
+export async function getConversations({page = 0, size = 50, archived = false} = {}) {
     const base = getApiBase()
-    const qp = new URLSearchParams({ page: String(page), size: String(size) })
+    const qp = new URLSearchParams({page: String(page), size: String(size)})
+    // `archived` is optional on the backend (defaultValue="false"); only send it for the archived view.
+    if (archived) qp.set('archived', 'true')
     const res = await get(`${base}/conversations?${qp}`)
     return unwrapResponse(res)
 }
@@ -237,17 +249,17 @@ export async function getConversations({ page = 0, size = 50 } = {}) {
 /**
  * Loads all conversation pages up to {@link MAX_CONVERSATIONS_LOAD} rows for the sidebar.
  *
- * @param {{ size?: number }} [opts]
+ * @param {{ size?: number, archived?: boolean }} [opts]
  * @returns {Promise<object[]>}
  */
-export async function loadAllConversations({ size = 100 } = {}) {
+export async function loadAllConversations({size = 100, archived = false} = {}) {
     const pageSize = Math.min(Math.max(1, size), 100)
     const all = []
     let page = 0
     let last = false
 
     while (!last && all.length < MAX_CONVERSATIONS_LOAD) {
-        const data = await getConversations({ page, size: pageSize })
+        const data = await getConversations({page, size: pageSize, archived})
         const chunk = Array.isArray(data.content) ? data.content : []
         all.push(...chunk)
         last = data.last === true || chunk.length < pageSize
@@ -266,11 +278,11 @@ export async function loadAllConversations({ size = 100 } = {}) {
  * @param {{ limit?: number }} [opts] capped to {@link MAX_CONVERSATION_TURNS_LIMIT}; backend default when omitted is 100.
  * @returns {Promise<object[]>} {@code ConversationTurnDto[]} chronological (oldest first)
  */
-export async function getConversationTurns(conversationId, { limit = 100 } = {}) {
+export async function getConversationTurns(conversationId, {limit = 100} = {}) {
     const base = getApiBase()
     const n = Math.min(Math.max(1, Number(limit) || 100), MAX_CONVERSATION_TURNS_LIMIT)
     const cid = encodeURIComponent(conversationId)
-    const qp = new URLSearchParams({ limit: String(n) })
+    const qp = new URLSearchParams({limit: String(n)})
     const res = await get(`${base}/conversations/${cid}/turns?${qp}`)
     const data = await unwrapResponse(res)
     return Array.isArray(data) ? data : []
@@ -287,9 +299,9 @@ export async function getConversationTurns(conversationId, { limit = 100 } = {})
  * @returns {Promise<object[]>} {@code ConversationTurnDto[]} chronological (oldest first)
  */
 export async function fetchAllConversationTurns(conversationId, limit = MAX_CONVERSATION_TURNS_LIMIT) {
-    const turns = await getConversationTurns(conversationId, { limit })
+    const turns = await getConversationTurns(conversationId, {limit})
     if (!Array.isArray(turns)) {
-        log.warn('fetchAllConversationTurns: expected array data', { conversationId, turns })
+        log.warn('fetchAllConversationTurns: expected array data', {conversationId, turns})
         return []
     }
     return turns
@@ -315,14 +327,58 @@ export async function createConversation(inputText, _displayText = null) {
             },
         }
     } else {
-        body = { initialTitle: title }
+        body = {initialTitle: title}
     }
 
     const res = await post(`${base}/conversations`, body)
     const conv = await unwrapResponse(res)
     const conversationId = conv.id != null ? String(conv.id) : null
-    log.info('Conversation created', { conversationId })
-    return { conversationId }
+    log.info('Conversation created', {conversationId})
+    return {conversationId}
+}
+
+/**
+ * Soft-deletes a conversation (idempotent; backend returns 204 No Content). The conversation and its
+ * sessions/turns are retained server-side but never returned by any listing afterward.
+ *
+ * @param {string} conversationId
+ * @returns {Promise<void>}
+ */
+export async function deleteConversation(conversationId) {
+    const base = getApiBase()
+    const cid = encodeURIComponent(conversationId)
+    await del(`${base}/conversations/${cid}`)
+    log.info('Conversation soft-deleted', {conversationId})
+}
+
+/**
+ * Archives a conversation (idempotent). Hidden from the default listing; visible via `archived=true`.
+ *
+ * @param {string} conversationId
+ * @returns {Promise<object>} updated {@code ConversationDto} (includes `archivedAt`)
+ */
+export async function archiveConversation(conversationId) {
+    const base = getApiBase()
+    const cid = encodeURIComponent(conversationId)
+    const res = await post(`${base}/conversations/${cid}/archive`, {})
+    const conv = await unwrapResponse(res)
+    log.info('Conversation archived', {conversationId})
+    return conv
+}
+
+/**
+ * Reverses an archive (idempotent); the conversation returns to the default listing.
+ *
+ * @param {string} conversationId
+ * @returns {Promise<object>} updated {@code ConversationDto}
+ */
+export async function unarchiveConversation(conversationId) {
+    const base = getApiBase()
+    const cid = encodeURIComponent(conversationId)
+    const res = await post(`${base}/conversations/${cid}/unarchive`, {})
+    const conv = await unwrapResponse(res)
+    log.info('Conversation unarchived', {conversationId})
+    return conv
 }
 
 /**
@@ -334,7 +390,7 @@ export async function createConversation(inputText, _displayText = null) {
  * @param {string} inputText
  * @param {{ schemaVersion?: string, contextType: string, contextData: object }} chatContext
  *        Required. Shape: `{ schemaVersion: "1.0", contextType: "VISIT",
- *        contextData: { visitId: "<uuid>" } }`.
+ *        contextData: { id: "<uuid>" } }`.
  * @param {string|null} [displayText]
  * @returns {Promise<object>}
  */
@@ -349,7 +405,7 @@ export async function startOrchestration(conversationId, inputText, chatContext,
     const body = {
         inputText: safeInput,
         chatContext,
-        ...(safeDisplay ? { displayText: safeDisplay } : {}),
+        ...(safeDisplay ? {displayText: safeDisplay} : {}),
     }
 
     const res = await post(`${base}/conversations/${cid}/start`, body)
@@ -382,7 +438,7 @@ export async function sendReply(conversationId, followUpInput, displayText = nul
     await post(`${base}/conversations/${cid}/user-messages`, {
         followUpInput: safeInput,
         clientMessageId: messageId,
-        ...(safeDisplay ? { displayText: safeDisplay } : {}),
+        ...(safeDisplay ? {displayText: safeDisplay} : {}),
     })
 }
 
@@ -397,7 +453,7 @@ export function createResponseStream(conversationId) {
     const cid = encodeURIComponent(conversationId)
     let streamUrl = `${base}/conversations/${cid}/assistant-round/stream`
     streamUrl = withGuestClientIdQuery(streamUrl)
-    log.info('SSE open', { conversationId, guest: useGuestAuth() })
+    log.info('SSE open', {conversationId, guest: useGuestAuth()})
     return createFetchEventSource(streamUrl)
 }
 
@@ -428,7 +484,7 @@ function createFetchEventSource(url) {
         emitter.onerror?.(event)
     }
 
-    const headers = { Accept: 'text/event-stream' }
+    const headers = {Accept: 'text/event-stream'}
     if (!useGuestAuth()) {
         const token = getAccessToken()
         if (!token && !IS_TEST) {
@@ -445,11 +501,11 @@ function createFetchEventSource(url) {
 
     ;(async () => {
         try {
-            const fetchOpts = buildFetchOptions({ headers, signal: controller.signal })
+            const fetchOpts = buildFetchOptions({headers, signal: controller.signal})
             const res = await fetch(url, fetchOpts)
 
             if (!res.ok) {
-                log.warn('SSE HTTP not OK', { url, status: res.status })
+                log.warn('SSE HTTP not OK', {url, status: res.status})
                 emitter.readyState = EventSource.CLOSED
                 emitError(new Event('error'))
                 return
@@ -462,10 +518,10 @@ function createFetchEventSource(url) {
             let buffer = ''
 
             while (true) {
-                const { done, value } = await reader.read()
+                const {done, value} = await reader.read()
                 if (done) break
 
-                buffer += decoder.decode(value, { stream: true })
+                buffer += decoder.decode(value, {stream: true})
                 const events = buffer.split('\n\n')
                 buffer = events.pop() ?? ''
 
@@ -478,7 +534,7 @@ function createFetchEventSource(url) {
                         }
                     }
                     if (dataLines.length > 0) {
-                        emitter.onmessage?.({ data: dataLines.join('\n') })
+                        emitter.onmessage?.({data: dataLines.join('\n')})
                     }
                 }
             }
@@ -496,4 +552,4 @@ function createFetchEventSource(url) {
     return emitter
 }
 
-export { ApiError }
+export {ApiError}

@@ -29,6 +29,45 @@
     color: var(--text-primary, #f4f4f5);
 }
 
+.conversation-sidebar-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.conversation-sidebar-toggle-archived {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: none;
+    border-radius: var(--radius-md, 10px);
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-muted, #a1a1aa);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    position: relative;
+    z-index: 10;
+    pointer-events: auto;
+}
+
+.conversation-sidebar-toggle-archived svg {
+    pointer-events: none;
+}
+
+.conversation-sidebar-toggle-archived:hover {
+    background: rgba(255, 255, 255, 0.16);
+    color: var(--text-primary, #f4f4f5);
+    transform: translateY(-1px);
+}
+
+.conversation-sidebar-toggle-archived[aria-pressed='true'] {
+    background: rgba(165, 110, 255, 0.18);
+    color: var(--accent-primary, #a56eff);
+}
+
 .conversation-sidebar-new {
     display: flex;
     align-items: center;
@@ -169,4 +208,69 @@
 .conversation-sidebar-item-meta {
     font-size: 11px;
     color: var(--text-muted, #a1a1aa);
+}
+
+.conversation-sidebar-row {
+    position: relative;
+    display: flex;
+    align-items: stretch;
+}
+
+.conversation-sidebar-row .conversation-sidebar-item {
+    flex: 1;
+    min-width: 0;
+}
+
+/* Reserve room so action buttons never overlap the title/meta text. */
+.conversation-sidebar-row:hover .conversation-sidebar-item-title,
+.conversation-sidebar-row:focus-within .conversation-sidebar-item-title,
+.conversation-sidebar-row:hover .conversation-sidebar-item-meta,
+.conversation-sidebar-row:focus-within .conversation-sidebar-item-meta {
+    padding-right: 60px;
+}
+
+.conversation-sidebar-actions {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--transition-fast);
+}
+
+.conversation-sidebar-row:hover .conversation-sidebar-actions,
+.conversation-sidebar-row:focus-within .conversation-sidebar-actions {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.conversation-sidebar-action {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: none;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-muted, #a1a1aa);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.conversation-sidebar-action svg {
+    pointer-events: none;
+}
+
+.conversation-sidebar-action:hover {
+    background: rgba(255, 255, 255, 0.16);
+    color: var(--text-primary, #f4f4f5);
+}
+
+.conversation-sidebar-action--danger:hover {
+    background: rgba(239, 68, 68, 0.22);
+    color: #fca5a5;
 }

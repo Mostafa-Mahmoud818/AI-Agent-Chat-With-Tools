@@ -3,24 +3,24 @@
  * @module components/chat/ChatWindow
  */
 
-import { useState, useRef, useEffect, useCallback } from 'react'
+import {useCallback, useEffect, useRef, useState} from 'react'
 import PropTypes from 'prop-types'
 import {
+    ApiError,
     createConversation,
-    startOrchestration,
-    sendReply,
     createResponseStream,
     fetchAllConversationTurns,
-    ApiError,
+    sendReply,
+    startOrchestration,
 } from '../../services/api'
-import { parseAgentMessage, turnsToMessages } from '../../utils/agentMessage.js'
-import { formatMenuSelectionMessage } from '../../utils/menuSelection.js'
+import {parseAgentMessage, turnsToMessages} from '../../utils/agentMessage.js'
+import {formatMenuSelectionMessage} from '../../utils/menuSelection.js'
 import {
-    parseSelectionSignal,
-    updateChainOnSelection,
-    reconcileChainWithResponse,
     deriveBreadcrumb,
+    parseSelectionSignal,
     rebuildChainFromMessages,
+    reconcileChainWithResponse,
+    updateChainOnSelection,
 } from '../../utils/breadcrumb.js'
 import {
     cacheLevel,
@@ -31,15 +31,16 @@ import {
 } from '../../utils/menuCache.js'
 import {
     getChatContextForStart,
-    hasConfiguredVisitId,
-    getVisitIdRequiredMessage,
     getVisitIdComposerPlaceholder,
+    getVisitIdRequiredMessage,
+    hasConfiguredVisitId,
+    OTHER_VISIT_READONLY_MESSAGE,
 } from '../../config/chatContext.js'
-import { getAccessToken } from '../../auth/tokenStore.js'
-import { isGuestChatAuth } from '../../config/chatAuth.js'
-import { resolveVisitIdForCurrentUser } from '../../auth/visitResolution.js'
-import { SSE_CONCURRENT_STREAMS_ERROR } from '../../services/api.js'
-import { createLogger } from '../../utils/logger.js'
+import {getAccessToken} from '../../auth/tokenStore.js'
+import {isGuestChatAuth} from '../../config/chatAuth.js'
+import {resolveVisitIdForCurrentUser} from '../../auth/visitResolution.js'
+import {SSE_CONCURRENT_STREAMS_ERROR} from '../../services/api.js'
+import {createLogger} from '../../utils/logger.js'
 import MessageBubble from './MessageBubble.jsx'
 import ChatInput from './ChatInput.jsx'
 import ThinkingIndicator from './ThinkingIndicator.jsx'
@@ -66,11 +67,12 @@ function isSessionGone(err) {
 }
 
 export default function ChatWindow({
-    sidebarConversationId = null,
-    onNewChat: onNewChatParent,
-    onConversationCreated,
-    onConversationActivity,
-}) {
+                                       sidebarConversationId = null,
+                                       conversationReadOnly = false,
+                                       onNewChat: onNewChatParent,
+                                       onConversationCreated,
+                                       onConversationActivity,
+                                   }) {
     const [messages, setMessages] = useState([])
     const [conversationId, setConversationId] = useState(null)
     const [menuCacheConversationKey, setMenuCacheConversationKey] = useState(null)
@@ -85,7 +87,7 @@ export default function ChatWindow({
     const selectionChainRef = useRef([])
 
     const scrollToBottom = useCallback(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+        messagesEndRef.current?.scrollIntoView({behavior: 'smooth'})
     }, [])
 
     useEffect(() => {
@@ -112,7 +114,15 @@ export default function ChatWindow({
     const addMessage = useCallback((role, text, optsOrHandledBy = null, payload = null) => {
         const handledBy = optsOrHandledBy && typeof optsOrHandledBy === 'object' ? null : optsOrHandledBy
         const displayText = optsOrHandledBy && typeof optsOrHandledBy === 'object' ? (optsOrHandledBy.displayText ?? null) : null
-        setMessages((prev) => [...prev, { id: crypto.randomUUID(), role, text, displayText, timestamp: new Date(), handledBy, payload }])
+        setMessages((prev) => [...prev, {
+            id: crypto.randomUUID(),
+            role,
+            text,
+            displayText,
+            timestamp: new Date(),
+            handledBy,
+            payload
+        }])
     }, [])
 
     const applyCacheSideEffects = useCallback((cacheKey, payload) => {
@@ -157,6 +167,7 @@ export default function ChatWindow({
     useEffect(() => {
         if (!sidebarConversationId) return undefined
         let cancelled = false
+
         async function load() {
             stopStreaming()
             setConversationLoading(true)
@@ -187,8 +198,11 @@ export default function ChatWindow({
                 if (!cancelled) setConversationLoading(false)
             }
         }
+
         load()
-        return () => { cancelled = true }
+        return () => {
+            cancelled = true
+        }
     }, [sidebarConversationId, stopStreaming, applyCacheSideEffects])
 
     const startStreaming = useCallback((convId, eventsCacheKey = null) => {
@@ -197,7 +211,13 @@ export default function ChatWindow({
         esRef.current = es
         let terminalHandled = false
         const resolveCacheKey = () => eventsCacheKey ?? menuCacheConversationKey
-        const notifySidebarActivity = () => { try { onConversationActivity?.(convId) } catch (err) { log.warn('onConversationActivity failed', err) } }
+        const notifySidebarActivity = () => {
+            try {
+                onConversationActivity?.(convId)
+            } catch (err) {
+                log.warn('onConversationActivity failed', err)
+            }
+        }
         const setReadyWithError = (message) => {
             terminalHandled = true
             stopStreaming()
@@ -213,12 +233,12 @@ export default function ChatWindow({
                 if (data.status === 'ready' && data.message) {
                     terminalHandled = true
                     stopStreaming()
-                    const { text, payload } = parseAgentMessage(data.message)
+                    const {text, payload} = parseAgentMessage(data.message)
                     let finalPayload = payload
                     if (payload?.subtype === 'menu' && Array.isArray(payload.menuitems) && payload.menuitems.length > 0) {
                         const chain = reconcileChainWithResponse(selectionChainRef.current, payload.menuitems, data.handledBy)
                         selectionChainRef.current = chain
-                        finalPayload = { ...payload, breadcrumb: deriveBreadcrumb(data.handledBy, chain) }
+                        finalPayload = {...payload, breadcrumb: deriveBreadcrumb(data.handledBy, chain)}
                     }
                     applyCacheSideEffects(resolveCacheKey(), finalPayload)
                     addMessage('ai', text, data.handledBy, finalPayload)
@@ -284,6 +304,10 @@ export default function ChatWindow({
 
     const handleSendMessage = useCallback(async (text, opts = {}) => {
         if (sending || conversationLoading) return
+        if (conversationReadOnly) {
+            setError(OTHER_VISIT_READONLY_MESSAGE)
+            return
+        }
         const needsOrchestrationStart = !conversationId || firstOutgoingNeedsStart
         if (needsOrchestrationStart && !hasConfiguredVisitId() && !isGuestChatAuth(import.meta.env)) {
             const token = getAccessToken()
@@ -309,11 +333,11 @@ export default function ChatWindow({
         }
         setError(null)
         setSending(true)
-        addMessage('user', text, { displayText: opts.displayText ?? null })
+        addMessage('user', text, {displayText: opts.displayText ?? null})
         setPhase('thinking')
         try {
             if (!conversationId) {
-                const { conversationId: convId } = await createConversation(text, opts.displayText ?? null)
+                const {conversationId: convId} = await createConversation(text, opts.displayText ?? null)
                 setConversationId(convId)
                 setMenuCacheConversationKey(convId)
                 setFirstOutgoingNeedsStart(false)
@@ -360,7 +384,7 @@ export default function ChatWindow({
         } finally {
             setSending(false)
         }
-    }, [conversationId, menuCacheConversationKey, sending, conversationLoading, firstOutgoingNeedsStart, addMessage, runOrchestrationRound, handleSessionExpired, onConversationCreated, reconcileTranscriptFromServer])
+    }, [conversationId, conversationReadOnly, menuCacheConversationKey, sending, conversationLoading, firstOutgoingNeedsStart, addMessage, runOrchestrationRound, handleSessionExpired, onConversationCreated, reconcileTranscriptFromServer])
 
     const handleMenuItemClick = useCallback((item, menuHandledBy) => {
         if (item?.selectionSignal && typeof item.selectionSignal === 'string') {
@@ -368,13 +392,13 @@ export default function ChatWindow({
             const parsed = parseSelectionSignal(signal)
             if (parsed) selectionChainRef.current = updateChainOnSelection(selectionChainRef.current, parsed)
             const displayLabel = item.label ?? item.name ?? null
-            handleSendMessage(signal, { displayText: displayLabel })
+            handleSendMessage(signal, {displayText: displayLabel})
             return
         }
-        const { agentInput, displayText } = formatMenuSelectionMessage(item, menuHandledBy)
+        const {agentInput, displayText} = formatMenuSelectionMessage(item, menuHandledBy)
         const fallbackParsed = parseSelectionSignal(agentInput)
         if (fallbackParsed) selectionChainRef.current = updateChainOnSelection(selectionChainRef.current, fallbackParsed)
-        handleSendMessage(agentInput, { displayText })
+        handleSendMessage(agentInput, {displayText})
     }, [handleSendMessage])
 
     const handleBreadcrumbClick = useCallback((crumb) => {
@@ -386,7 +410,7 @@ export default function ChatWindow({
                 const m = prev[i]
                 if (m.role === 'ai' && m.payload?.subtype === 'menu') {
                     const next = prev.slice()
-                    next[i] = { ...m, payload: cached }
+                    next[i] = {...m, payload: cached}
                     return next
                 }
             }
@@ -417,7 +441,7 @@ export default function ChatWindow({
             <div className="chat-header">
                 <div className="chat-header-left">
                     <div className="chat-avatar">
-                        <SparkIcon size={20} fill="white" withCircle circleFill="#A56EFF" />
+                        <SparkIcon size={20} fill="white" withCircle circleFill="#A56EFF"/>
                     </div>
                     <div className="chat-header-info">
                         <h1>AI Agent</h1>
@@ -427,9 +451,12 @@ export default function ChatWindow({
                     </div>
                 </div>
                 {showNewChatBtn && (
-                    <button className="new-chat-btn" onClick={handleNewChat} title="New conversation" aria-label="Start new conversation">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+                    <button className="new-chat-btn" onClick={handleNewChat} title="New conversation"
+                            aria-label="Start new conversation">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                             strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="12" y1="5" x2="12" y2="19"/>
+                            <line x1="5" y1="12" x2="19" y2="12"/>
                         </svg>
                         New Chat
                     </button>
@@ -437,12 +464,15 @@ export default function ChatWindow({
             </div>
 
             <div className="chat-messages" role="list" aria-label="Chat messages">
-                {conversationLoading && <div className="conversation-loading-banner" aria-live="polite">Loading conversation…</div>}
+                {conversationLoading &&
+                    <div className="conversation-loading-banner" aria-live="polite">Loading conversation…</div>}
                 {showEmptyState && (
                     <div className="empty-state">
-                        <div className="empty-icon"><SparkIcon size={48} withCircle /></div>
+                        <div className="empty-icon"><SparkIcon size={48} withCircle/></div>
                         <h2>How can I help you today?</h2>
-                        <p>Start with our Visitor Experience assistant for greetings and capabilities, then explore the catering catalog, submit IT-support tickets, or report facilities &amp; maintenance issues.</p>
+                        <p>Start with our Visitor Experience assistant for greetings and capabilities, then explore the
+                            catering catalog, submit IT-support tickets, or report facilities &amp; maintenance
+                            issues.</p>
                         {!visitIdConfigured && (
                             <div className="visit-id-hint" role="status">
                                 {getVisitIdRequiredMessage(import.meta.env, guestMode)}
@@ -453,7 +483,7 @@ export default function ChatWindow({
                                 <button
                                     key={prompt}
                                     className="quick-prompt"
-                                    disabled={!visitIdConfigured || sending}
+                                    disabled={!visitIdConfigured || sending || conversationReadOnly}
                                     onClick={() => handleSendMessage(prompt)}
                                 >
                                     {prompt}
@@ -463,27 +493,39 @@ export default function ChatWindow({
                     </div>
                 )}
                 {messages.map((msg) => (
-                    <MessageBubble key={msg.id} message={msg} onMenuItemClick={handleMenuItemClick} onBreadcrumbClick={handleBreadcrumbClick} />
+                    <MessageBubble key={msg.id} message={msg} onMenuItemClick={handleMenuItemClick}
+                                   onBreadcrumbClick={handleBreadcrumbClick}/>
                 ))}
-                {phase === 'thinking' && <div aria-live="polite" aria-label="Agent is thinking"><ThinkingIndicator /></div>}
+                {phase === 'thinking' &&
+                    <div aria-live="polite" aria-label="Agent is thinking"><ThinkingIndicator/></div>}
                 {error && (
                     <div className="error-banner" role="alert" aria-live="assertive">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                            <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                             strokeWidth="2" aria-hidden="true">
+                            <circle cx="12" cy="12" r="10"/>
+                            <line x1="12" y1="8" x2="12" y2="12"/>
+                            <line x1="12" y1="16" x2="12.01" y2="16"/>
                         </svg>
                         <span>{error}</span>
                         <button className="error-dismiss" onClick={() => setError(null)} aria-label="Dismiss error">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 strokeWidth="2" aria-hidden="true">
+                                <line x1="18" y1="6" x2="6" y2="18"/>
+                                <line x1="6" y1="6" x2="18" y2="18"/>
                             </svg>
                         </button>
                     </div>
                 )}
-                <div ref={messagesEndRef} />
+                <div ref={messagesEndRef}/>
             </div>
 
             <div className="chat-bottom">
-                {(phase === 'idle' || phase === 'ready') && !conversationLoading && (
+                {conversationReadOnly && !conversationLoading && (
+                    <div className="waiting-hint" role="status" aria-live="polite">
+                        <span>{OTHER_VISIT_READONLY_MESSAGE}</span>
+                    </div>
+                )}
+                {!conversationReadOnly && (phase === 'idle' || phase === 'ready') && !conversationLoading && (
                     <ChatInput
                         ref={chatInputRef}
                         onSend={handleSendMessage}
@@ -492,12 +534,13 @@ export default function ChatWindow({
                             !visitIdConfigured && (!conversationId || firstOutgoingNeedsStart)
                                 ? getVisitIdComposerPlaceholder(import.meta.env, guestMode)
                                 : phase === 'idle'
-                                  ? 'Type your message...'
-                                  : 'Type a follow-up...'
+                                    ? 'Type your message...'
+                                    : 'Type a follow-up...'
                         }
                     />
                 )}
-                {phase === 'thinking' && <div className="waiting-hint"><span>Agent is working on your request...</span></div>}
+                {phase === 'thinking' &&
+                    <div className="waiting-hint"><span>Agent is working on your request...</span></div>}
                 {phase === 'expired' && (
                     <div className="waiting-hint">
                         <span>Session expired.</span>
@@ -511,6 +554,7 @@ export default function ChatWindow({
 
 ChatWindow.propTypes = {
     sidebarConversationId: PropTypes.string,
+    conversationReadOnly: PropTypes.bool,
     onNewChat: PropTypes.func,
     onConversationCreated: PropTypes.func,
     onConversationActivity: PropTypes.func,
