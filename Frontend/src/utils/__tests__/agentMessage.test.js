@@ -299,6 +299,90 @@ describe('parseAgentMessage navigation subtypes', () => {
     })
 })
 
+describe('parseAgentMessage visits_query subtype', () => {
+    it('parses visits_query envelope and normalizes items', () => {
+        const raw = JSON.stringify({
+            replyType: 'json',
+            textString: 'You have 1 meeting today (UAE time).',
+            payload: {
+                subtype: 'visits_query',
+                menuitems: [],
+                order: null,
+                navigation: null,
+                visits: {
+                    scope: 'today',
+                    defaultApplied: false,
+                    timezone: 'Asia/Dubai',
+                    totalCount: 1,
+                    page: 0,
+                    size: 20,
+                    items: [{
+                        visitId: '9f4c2d8e-1234-4abc-9def-1234567890ab',
+                        title: 'Quarterly Review',
+                        status: 'UPCOMING',
+                        startLocal: '2026-06-28T10:00:00+04:00',
+                        endLocal: '2026-06-28T11:00:00+04:00',
+                        hostName: 'Dr. Al Mansoori',
+                        resourceName: 'Conference Room',
+                        locationName: 'HQ',
+                        floorName: 'Floor 4',
+                    }],
+                },
+            },
+        })
+        const { text, payload } = parseAgentMessage(raw)
+        expect(text).toBe('You have 1 meeting today (UAE time).')
+        expect(payload?.subtype).toBe('visits_query')
+        expect(payload?.visits?.scope).toBe('today')
+        expect(payload?.visits?.timezone).toBe('Asia/Dubai')
+        expect(payload?.visits?.items).toHaveLength(1)
+        expect(payload?.visits?.items[0].title).toBe('Quarterly Review')
+        expect(payload?.visits?.items[0].timeDisplay).toBeTruthy()
+        expect(payload?.menuitems).toEqual([])
+    })
+
+    it('defensively parses visits_query even if replyType is text', () => {
+        const raw = JSON.stringify({
+            replyType: 'text',
+            textString: 'Here are your meetings.',
+            payload: {
+                subtype: 'visits_query',
+                menuitems: [],
+                order: null,
+                visits: {
+                    scope: 'upcoming',
+                    defaultApplied: true,
+                    timezone: 'Asia/Dubai',
+                    totalCount: 0,
+                    page: 0,
+                    size: 20,
+                    items: [],
+                },
+            },
+        })
+        const { payload } = parseAgentMessage(raw)
+        expect(payload?.subtype).toBe('visits_query')
+        expect(payload?.visits?.items).toEqual([])
+    })
+
+    it('drops visit items missing title', () => {
+        const raw = JSON.stringify({
+            replyType: 'json',
+            textString: 'Meetings',
+            payload: {
+                subtype: 'visits_query',
+                visits: {
+                    scope: 'today',
+                    items: [{ visitId: 'x', title: '  ', status: 'UPCOMING' }, { title: 'Valid Meeting' }],
+                },
+            },
+        })
+        const { payload } = parseAgentMessage(raw)
+        expect(payload?.visits?.items).toHaveLength(1)
+        expect(payload?.visits?.items[0].title).toBe('Valid Meeting')
+    })
+})
+
 describe('turnsToMessages', () => {
     it('maps user and agent rows from turns', () => {
         const turns = [

@@ -31,7 +31,7 @@ function isStructuredAgentReply(replyType) {
 }
 
 /** Subtypes that carry a structured card and must be normalized regardless of `replyType`. */
-const STRUCTURED_SUBTYPES = new Set(['menu', 'ticket', 'order_confirmation', 'indoor_navigation', 'outdoor_navigation'])
+const STRUCTURED_SUBTYPES = new Set(['menu', 'ticket', 'order_confirmation', 'indoor_navigation', 'outdoor_navigation', 'visits_query'])
 
 /**
  * True when the payload declares a known structured subtype. Structured cards are canonically sent
@@ -153,6 +153,10 @@ function normalizePayload(payload, replyType) {
         return { ...payload, navigation: toNavigation(payload.navigation, isOutdoor), menuitems: [], order: null }
     }
 
+    if (payload.subtype === 'visits_query') {
+        return { ...payload, visits: toVisitsQuery(payload.visits), menuitems: [], order: null }
+    }
+
     if (payload.subtype === 'menu' && Array.isArray(payload.menuitems)) {
         return { ...payload, menuitems: toMenuItems(payload.menuitems), breadcrumb: toBreadcrumb(payload.breadcrumb) }
     }
@@ -169,6 +173,76 @@ function normalizePayload(payload, replyType) {
     }
 
     return payload
+}
+
+/**
+ * Normalizes a visits_query payload's nested `visits` object for card rendering.
+ * @param {*} raw
+ * @returns {object|null}
+ */
+function toVisitsQuery(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+    const str = (v) => {
+        if (v == null) return null
+        const s = String(v).trim()
+        return s === '' ? null : s
+    }
+    const items = Array.isArray(raw.items)
+        ? raw.items
+            .map((item) => {
+                if (!item || typeof item !== 'object') return null
+                const title = str(item.title)
+                if (!title) return null
+                return {
+                    visitId: str(item.visitId),
+                    title,
+                    status: str(item.status),
+                    startLocal: str(item.startLocal),
+                    endLocal: str(item.endLocal),
+                    timeDisplay: formatVisitTimeRange(item.startLocal, item.endLocal),
+                    hostName: str(item.hostName),
+                    resourceName: str(item.resourceName),
+                    locationName: str(item.locationName),
+                    floorName: str(item.floorName),
+                }
+            })
+            .filter(Boolean)
+        : []
+    return {
+        scope: str(raw.scope),
+        defaultApplied: Boolean(raw.defaultApplied),
+        timezone: str(raw.timezone),
+        totalCount: typeof raw.totalCount === 'number' ? raw.totalCount : items.length,
+        page: typeof raw.page === 'number' ? raw.page : 0,
+        size: typeof raw.size === 'number' ? raw.size : items.length,
+        items,
+    }
+}
+
+/** @param {string|null|undefined} startLocal @param {string|null|undefined} endLocal */
+function formatVisitTimeRange(startLocal, endLocal) {
+    const start = parseLocalDateTime(startLocal)
+    const end = parseLocalDateTime(endLocal)
+    if (start && end) {
+        const sameDay = start.toDateString() === end.toDateString()
+        const dateFmt = { weekday: 'short', month: 'short', day: 'numeric' }
+        const timeFmt = { hour: 'numeric', minute: '2-digit' }
+        if (sameDay) {
+            return `${start.toLocaleDateString(undefined, dateFmt)}, ${start.toLocaleTimeString(undefined, timeFmt)} – ${end.toLocaleTimeString(undefined, timeFmt)}`
+        }
+        return `${start.toLocaleString(undefined, { ...dateFmt, ...timeFmt })} – ${end.toLocaleString(undefined, { ...dateFmt, ...timeFmt })}`
+    }
+    if (start) return start.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    if (endLocal != null && String(endLocal).trim() !== '') return String(endLocal)
+    if (startLocal != null && String(startLocal).trim() !== '') return String(startLocal)
+    return null
+}
+
+/** @param {string|null|undefined} iso */
+function parseLocalDateTime(iso) {
+    if (iso == null || String(iso).trim() === '') return null
+    const d = new Date(String(iso))
+    return Number.isNaN(d.getTime()) ? null : d
 }
 
 /**

@@ -323,6 +323,82 @@ describe('MessageBubble', () => {
         expect(screen.getByText('Something went wrong while loading the menu. Please try again or contact support if the issue persists.')).toBeInTheDocument()
         expect(screen.queryByText('this text must not leak')).not.toBeInTheDocument()
     })
+
+    it('renders visits_query card with title, host, and suppresses visitId UUID', () => {
+        const visitUuid = '9f4c2d8e-1234-4abc-9def-1234567890ab'
+        const msg = {
+            id: 'vq-1',
+            role: 'ai',
+            text: 'You have 1 meeting today.',
+            timestamp: new Date(),
+            handledBy: 'VISITOR_EXPERIENCE',
+            payload: {
+                subtype: 'visits_query',
+                menuitems: [],
+                order: null,
+                visits: {
+                    scope: 'today',
+                    timezone: 'Asia/Dubai',
+                    totalCount: 1,
+                    page: 0,
+                    size: 20,
+                    items: [{
+                        visitId: visitUuid,
+                        title: 'Quarterly Review',
+                        status: 'UPCOMING',
+                        timeDisplay: 'Sat, Jun 28, 10:00 AM – 11:00 AM',
+                        hostName: 'Dr. Al Mansoori',
+                        resourceName: 'Conference Room',
+                        locationName: 'HQ',
+                    }],
+                },
+            },
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText('Meetings & Visits')).toBeInTheDocument()
+        expect(screen.getByText('Quarterly Review')).toBeInTheDocument()
+        expect(screen.getByText('Host: Dr. Al Mansoori')).toBeInTheDocument()
+        expect(screen.getByText('UPCOMING')).toBeInTheDocument()
+        expect(screen.queryByText(/9f4c2d8e/)).not.toBeInTheDocument()
+    })
+
+    it('renders visits_query empty state when items is empty', () => {
+        const msg = {
+            id: 'vq-empty',
+            role: 'ai',
+            text: 'No meetings today.',
+            timestamp: new Date(),
+            payload: {
+                subtype: 'visits_query',
+                visits: { scope: 'today', timezone: 'Asia/Dubai', totalCount: 0, items: [] },
+            },
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText('No meetings or visits found for this period.')).toBeInTheDocument()
+    })
+
+    it('renders multiple visit items in visits_query card', () => {
+        const msg = {
+            id: 'vq-multi',
+            role: 'ai',
+            text: 'You have 2 meetings.',
+            timestamp: new Date(),
+            payload: {
+                subtype: 'visits_query',
+                visits: {
+                    scope: 'upcoming',
+                    totalCount: 2,
+                    items: [
+                        { title: 'Team Sync', status: 'UPCOMING', timeDisplay: 'Mon 10:00 AM' },
+                        { title: 'Board Review', status: 'UPCOMING', timeDisplay: 'Tue 2:00 PM' },
+                    ],
+                },
+            },
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText('Team Sync')).toBeInTheDocument()
+        expect(screen.getByText('Board Review')).toBeInTheDocument()
+    })
 })
 
 describe('MessageBubble user message displayText', () => {

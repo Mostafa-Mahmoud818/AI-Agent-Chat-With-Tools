@@ -675,3 +675,116 @@
 .navigation-card-action:hover {
     filter: brightness(1.08);
 }
+
+/* ===== Visits Query Card ===== */
+.visits-query-card {
+    margin-top: 10px;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+}
+
+.visits-query-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #60a5fa;
+    margin-bottom: 6px;
+}
+
+.visits-query-header svg {
+    flex-shrink: 0;
+}
+
+.visits-query-scope {
+    margin-left: auto;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(96, 165, 250, 0.15);
+    color: #93c5fd;
+    text-transform: capitalize;
+}
+
+.visits-query-tz {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+}
+
+.visits-query-empty {
+    font-size: 13px;
+    color: var(--text-secondary);
+    padding: 8px 0;
+}
+
+.visits-query-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.visits-query-item {
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+}
+
+.visits-query-item-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.visits-query-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    line-height: 1.3;
+}
+
+.visits-query-status {
+    flex-shrink: 0;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.visits-query-status.status-upcoming { background: rgba(96, 165, 250, 0.2); color: #93c5fd; }
+.visits-query-status.status-active { background: rgba(45, 212, 191, 0.2); color: #2dd4bf; }
+.visits-query-status.status-completed { background: rgba(148, 163, 184, 0.2); color: #94a3b8; }
+.visits-query-status.status-cancelled { background: rgba(248, 113, 113, 0.2); color: #f87171; }
+
+.visits-query-time {
+    display: block;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+}
+
+.visits-query-meta {
+    display: block;
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+.visits-query-pager-hint {
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    text-align: center;
+}

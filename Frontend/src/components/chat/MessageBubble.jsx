@@ -268,6 +268,83 @@ function NavigationCard({ navigation, outdoor }) {
     )
 }
 
+const VISITS_EMPTY_COPY = 'No meetings or visits found for this period.'
+
+function formatScopeLabel(scope) {
+    if (!scope) return null
+    const s = String(scope).trim().toLowerCase()
+    if (!s) return null
+    return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+function formatStatusLabel(status) {
+    if (!status) return null
+    return String(status).replace(/_/g, ' ')
+}
+
+function VisitsQueryCard({ visits }) {
+    if (!visits || typeof visits !== 'object') return null
+    const items = Array.isArray(visits.items) ? visits.items : []
+    const scopeLabel = formatScopeLabel(visits.scope)
+    const totalCount = typeof visits.totalCount === 'number' ? visits.totalCount : items.length
+    const showPagerHint = totalCount > items.length
+
+    return (
+        <div className="visits-query-card">
+            <div className="visits-query-header">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                    <line x1="16" y1="2" x2="16" y2="6" />
+                    <line x1="8" y1="2" x2="8" y2="6" />
+                    <line x1="3" y1="10" x2="21" y2="10" />
+                </svg>
+                <span>Meetings &amp; Visits</span>
+                {scopeLabel && <span className="visits-query-scope">{scopeLabel}</span>}
+            </div>
+            {visits.timezone && (
+                <div className="visits-query-tz">Times in {visits.timezone}</div>
+            )}
+            {items.length === 0 ? (
+                <div className="visits-query-empty" role="status">{VISITS_EMPTY_COPY}</div>
+            ) : (
+                <ul className="visits-query-list">
+                    {items.map((item, idx) => (
+                        <li key={`${item.title}-${idx}`} className="visits-query-item">
+                            <div className="visits-query-item-top">
+                                <span className="visits-query-title">{item.title}</span>
+                                {item.status && (
+                                    <span className={`visits-query-status status-${String(item.status).toLowerCase()}`}>
+                                        {formatStatusLabel(item.status)}
+                                    </span>
+                                )}
+                            </div>
+                            {item.timeDisplay && (
+                                <span className="visits-query-time">{item.timeDisplay}</span>
+                            )}
+                            {item.hostName && (
+                                <span className="visits-query-meta">Host: {item.hostName}</span>
+                            )}
+                            {(item.resourceName || item.locationName) && (
+                                <span className="visits-query-meta">
+                                    {[item.resourceName, item.locationName].filter(Boolean).join(' · ')}
+                                </span>
+                            )}
+                            {item.floorName && (
+                                <span className="visits-query-meta">{item.floorName}</span>
+                            )}
+                        </li>
+                    ))}
+                </ul>
+            )}
+            {showPagerHint && (
+                <div className="visits-query-pager-hint" role="status">
+                    Showing {items.length} of {totalCount}
+                </div>
+            )}
+        </div>
+    )
+}
+
 function formatHandledBy(value) {
     if (!value) return null
     const trimmed = String(value).trim()
@@ -301,6 +378,7 @@ function MessageBubble({ message, onMenuItemClick, onBreadcrumbClick }) {
     const hasTicket = isAI && subtype === 'ticket'
     const isOutdoorNav = isAI && subtype === 'outdoor_navigation'
     const hasNavigation = isOutdoorNav || (isAI && subtype === 'indoor_navigation')
+    const hasVisitsQuery = isAI && subtype === 'visits_query'
     const handledByLabel = formatHandledBy(message.handledBy)
 
     if (isSystem) {
@@ -361,6 +439,9 @@ function MessageBubble({ message, onMenuItemClick, onBreadcrumbClick }) {
                     {hasNavigation && (
                         <NavigationCard navigation={message.payload?.navigation} outdoor={isOutdoorNav} />
                     )}
+                    {hasVisitsQuery && (
+                        <VisitsQueryCard visits={message.payload?.visits} />
+                    )}
                 </div>
                 {isAI && handledByLabel && (
                     <span className="handled-by">Answered by {handledByLabel}</span>
@@ -378,8 +459,25 @@ MessageBubble.propTypes = {
         handledBy: PropTypes.string,
         timestamp: PropTypes.instanceOf(Date),
         payload: PropTypes.shape({
-            subtype: PropTypes.oneOf(['menu', 'order_confirmation', 'ticket', 'indoor_navigation', 'outdoor_navigation', 'none', 'error']),
+            subtype: PropTypes.oneOf(['menu', 'order_confirmation', 'ticket', 'indoor_navigation', 'outdoor_navigation', 'visits_query', 'none', 'error']),
             menuitems: PropTypes.array,
+            visits: PropTypes.shape({
+                scope: PropTypes.string,
+                defaultApplied: PropTypes.bool,
+                timezone: PropTypes.string,
+                totalCount: PropTypes.number,
+                page: PropTypes.number,
+                size: PropTypes.number,
+                items: PropTypes.arrayOf(PropTypes.shape({
+                    title: PropTypes.string,
+                    status: PropTypes.string,
+                    timeDisplay: PropTypes.string,
+                    hostName: PropTypes.string,
+                    resourceName: PropTypes.string,
+                    locationName: PropTypes.string,
+                    floorName: PropTypes.string,
+                })),
+            }),
             // Visitor Experience navigation card — shared contract (indoor/outdoor encoded by subtype)
             navigation: PropTypes.shape({
                 locationName: PropTypes.string,
