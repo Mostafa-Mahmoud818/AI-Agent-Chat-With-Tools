@@ -337,17 +337,19 @@ export function turnsToMessages(turns) {
     if (!turns?.length) return []
     const messages = []
     for (const t of turns) {
-        // Add user message
-        messages.push({
-            id: `turn-${t.id}-u`,
-            role: 'user',
-            text: t.userInput,
-            displayText: t.displayText ?? null,
-            timestamp: t.createdAt ? new Date(t.createdAt) : new Date(),
-            handledBy: null,
-            payload: null,
-        })
-        
+        const isSystemTurn = t.turnKind === 'SYSTEM' || t.userInput == null
+        if (!isSystemTurn) {
+            messages.push({
+                id: `turn-${t.id}-u`,
+                role: 'user',
+                text: t.userInput,
+                displayText: t.displayText ?? null,
+                timestamp: t.createdAt ? new Date(t.createdAt) : new Date(),
+                handledBy: null,
+                payload: null,
+            })
+        }
+
         // Add agent response if present
         const agentResponse = t.agentResponse
         if (agentResponse != null && String(agentResponse).trim() !== '') {

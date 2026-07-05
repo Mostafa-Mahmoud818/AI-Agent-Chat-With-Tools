@@ -461,4 +461,36 @@ describe('turnsToMessages', () => {
         const userMsg = msgs.find((m) => m.role === 'user')
         expect(userMsg.displayText).toBeNull()
     })
+
+    it('maps SYSTEM turn to a single agent message without a user bubble', () => {
+        const agentResponse = JSON.stringify({
+            replyType: 'json',
+            textString: 'Your Catering request CAT-2026-00042 is now Confirmed.',
+            payload: {
+                subtype: 'service_request_status',
+                serviceRequest: {
+                    referenceCode: 'CAT-2026-00042',
+                    serviceType: 'Catering',
+                    status: 'CONFIRMED',
+                },
+            },
+        })
+        const turns = [
+            {
+                id: 'sys1',
+                turnKind: 'SYSTEM',
+                userInput: null,
+                displayText: 'Your Catering request CAT-2026-00042 is now Confirmed.',
+                agentResponse,
+                routeCategory: 'CATERING',
+                createdAt: '2025-01-01T12:00:00Z',
+                updatedAt: '2025-01-01T12:00:01Z',
+            },
+        ]
+        const msgs = turnsToMessages(turns)
+        expect(msgs).toHaveLength(1)
+        expect(msgs[0].role).toBe('ai')
+        expect(msgs[0].text).toBe('Your Catering request CAT-2026-00042 is now Confirmed.')
+        expect(msgs[0].handledBy).toBe('CATERING')
+    })
 })
