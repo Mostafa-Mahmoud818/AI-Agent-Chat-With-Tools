@@ -425,6 +425,38 @@ describe('turnsToMessages', () => {
         expect(turnsToMessages(turns)).toHaveLength(1)
     })
 
+    it('renders a SYSTEM turn as a single agent status message (no user bubble)', () => {
+        const envelope = JSON.stringify({
+            replyType: 'json',
+            textString: 'Your Catering request CAT-2026-00042 is now Confirmed.',
+            payload: {
+                subtype: 'service_request_status',
+                serviceRequest: { referenceCode: 'CAT-2026-00042', serviceType: 'Catering', status: 'CONFIRMED' },
+            },
+        })
+        const turns = [{
+            id: 's1',
+            turnKind: 'SYSTEM',
+            userInput: null,
+            agentResponse: envelope,
+            routeCategory: 'CATERING',
+            createdAt: '2025-01-01T12:00:00Z',
+            updatedAt: '2025-01-01T12:00:00Z',
+        }]
+
+        const msgs = turnsToMessages(turns)
+
+        expect(msgs).toHaveLength(1)
+        expect(msgs[0].role).toBe('ai')
+        expect(msgs[0].text).toBe('Your Catering request CAT-2026-00042 is now Confirmed.')
+        expect(msgs[0].payload.subtype).toBe('service_request_status')
+        expect(msgs[0].payload.serviceRequest).toEqual({
+            referenceCode: 'CAT-2026-00042',
+            serviceType: 'Catering',
+            status: 'CONFIRMED',
+        })
+    })
+
     it('returns empty array for empty input', () => {
         expect(turnsToMessages([])).toEqual([])
         expect(turnsToMessages(null)).toEqual([])

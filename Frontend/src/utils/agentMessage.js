@@ -31,7 +31,7 @@ function isStructuredAgentReply(replyType) {
 }
 
 /** Subtypes that carry a structured card and must be normalized regardless of `replyType`. */
-const STRUCTURED_SUBTYPES = new Set(['menu', 'ticket', 'order_confirmation', 'indoor_navigation', 'outdoor_navigation', 'visits_query'])
+const STRUCTURED_SUBTYPES = new Set(['menu', 'ticket', 'order_confirmation', 'indoor_navigation', 'outdoor_navigation', 'visits_query', 'service_request_status'])
 
 /**
  * True when the payload declares a known structured subtype. Structured cards are canonically sent
@@ -157,6 +157,12 @@ function normalizePayload(payload, replyType) {
         return { ...payload, visits: toVisitsQuery(payload.visits), menuitems: [], order: null }
     }
 
+    // Service-request status update (system-injected turn). Carries a `serviceRequest`
+    // {referenceCode, serviceType, status} object; textString holds the human sentence.
+    if (payload.subtype === 'service_request_status') {
+        return { ...payload, serviceRequest: toServiceRequestStatus(payload.serviceRequest), menuitems: [], order: null }
+    }
+
     if (payload.subtype === 'menu' && Array.isArray(payload.menuitems)) {
         return { ...payload, menuitems: toMenuItems(payload.menuitems), breadcrumb: toBreadcrumb(payload.breadcrumb) }
     }
@@ -173,6 +179,25 @@ function normalizePayload(payload, replyType) {
     }
 
     return payload
+}
+
+/**
+ * Normalizes a service_request_status payload's nested `serviceRequest` object.
+ * @param {*} raw
+ * @returns {{ referenceCode: string|null, serviceType: string|null, status: string|null }|null}
+ */
+function toServiceRequestStatus(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+    const str = (v) => {
+        if (v == null) return null
+        const s = String(v).trim()
+        return s === '' ? null : s
+    }
+    return {
+        referenceCode: str(raw.referenceCode),
+        serviceType: str(raw.serviceType),
+        status: str(raw.status),
+    }
 }
 
 /**
