@@ -226,49 +226,6 @@ function TicketCard({ payload }) {
     )
 }
 
-function ServiceRequestStatusCard({ payload }) {
-    // System-injected status update. `serviceRequest` carries the user-facing referenceCode,
-    // the service type, and the new status; the sentence itself renders as the message text above.
-    const sr = payload.serviceRequest ?? null
-    const referenceCode = sr?.referenceCode ?? payload.referenceCode ?? null
-    const serviceType   = sr?.serviceType   ?? null
-    const status        = sr?.status        ?? null
-    // Never render a UUID-shaped internal id as the reference.
-    const ref = referenceCode && !UUID_RE.test(String(referenceCode)) ? referenceCode : null
-    if (!ref && !serviceType && !status) return null
-    return (
-        <div className="service-status-card">
-            <div className="service-status-header">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                    <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-                </svg>
-                <span>Status Update</span>
-            </div>
-            <div className="service-status-meta">
-                {ref && (
-                    <span className="service-status-item">
-                        <span className="service-status-label">Reference</span>
-                        <span className="service-status-value">{String(ref)}</span>
-                    </span>
-                )}
-                {serviceType && (
-                    <span className="service-status-item">
-                        <span className="service-status-label">Service</span>
-                        <span className="service-status-value">{String(serviceType)}</span>
-                    </span>
-                )}
-                {status && (
-                    <span className="service-status-item">
-                        <span className="service-status-label">Status</span>
-                        <span className="service-status-value service-status-badge">{String(status)}</span>
-                    </span>
-                )}
-            </div>
-        </div>
-    )
-}
-
 function NavigationCard({ navigation, outdoor }) {
     if (!navigation || typeof navigation !== 'object') return null
     // Security: navigation.resourceId stays in the payload for the app's wayfinding — never rendered.
@@ -422,7 +379,10 @@ function MessageBubble({ message, onMenuItemClick, onBreadcrumbClick }) {
     const isOutdoorNav = isAI && subtype === 'outdoor_navigation'
     const hasNavigation = isOutdoorNav || (isAI && subtype === 'indoor_navigation')
     const hasVisitsQuery = isAI && subtype === 'visits_query'
-    const hasStatusUpdate = isAI && subtype === 'service_request_status'
+    // System-origin (turnKind === SYSTEM) is a STRUCTURAL flag from turnsToMessages — it drives the
+    // notification layout (centered, no avatar, no "Answered by"). The status update itself renders as
+    // the message sentence (textString); no separate card, to avoid duplicating the same info.
+    const systemOrigin = isAI && message.system === true
     const handledByLabel = formatHandledBy(message.handledBy)
 
     if (isSystem) {
@@ -440,9 +400,9 @@ function MessageBubble({ message, onMenuItemClick, onBreadcrumbClick }) {
         : (message.displayText || message.text)
 
     return (
-        <div className={`message-row ${isAI ? 'ai' : 'user'}`} role="listitem"
-             aria-label={isAI ? 'AI response' : 'Your message'}>
-            {isAI && (
+        <div className={`message-row ${isAI ? 'ai' : 'user'}${systemOrigin ? ' system-turn' : ''}`} role="listitem"
+             aria-label={systemOrigin ? 'Status update' : isAI ? 'AI response' : 'Your message'}>
+            {isAI && !systemOrigin && (
                 <div className="msg-avatar" aria-hidden="true">
                     <SparkIcon size={14} />
                 </div>
@@ -486,11 +446,8 @@ function MessageBubble({ message, onMenuItemClick, onBreadcrumbClick }) {
                     {hasVisitsQuery && (
                         <VisitsQueryCard visits={message.payload?.visits} />
                     )}
-                    {hasStatusUpdate && (
-                        <ServiceRequestStatusCard payload={message.payload} />
-                    )}
                 </div>
-                {isAI && handledByLabel && (
+                {isAI && !systemOrigin && handledByLabel && (
                     <span className="handled-by">Answered by {handledByLabel}</span>
                 )}
             </div>
@@ -502,6 +459,7 @@ MessageBubble.propTypes = {
     message: PropTypes.shape({
         id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
         role: PropTypes.oneOf(['user', 'ai', 'system']).isRequired,
+        system: PropTypes.bool,
         text: PropTypes.string.isRequired,
         handledBy: PropTypes.string,
         timestamp: PropTypes.instanceOf(Date),

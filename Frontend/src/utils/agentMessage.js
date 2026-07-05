@@ -31,7 +31,7 @@ function isStructuredAgentReply(replyType) {
 }
 
 /** Subtypes that carry a structured card and must be normalized regardless of `replyType`. */
-const STRUCTURED_SUBTYPES = new Set(['menu', 'ticket', 'order_confirmation', 'indoor_navigation', 'outdoor_navigation', 'visits_query', 'service_request_status'])
+const STRUCTURED_SUBTYPES = new Set(['menu', 'ticket', 'order_confirmation', 'indoor_navigation', 'outdoor_navigation', 'visits_query'])
 
 /**
  * True when the payload declares a known structured subtype. Structured cards are canonically sent
@@ -157,12 +157,6 @@ function normalizePayload(payload, replyType) {
         return { ...payload, visits: toVisitsQuery(payload.visits), menuitems: [], order: null }
     }
 
-    // Service-request status update (system-injected turn). Carries a `serviceRequest`
-    // {referenceCode, serviceType, status} object; textString holds the human sentence.
-    if (payload.subtype === 'service_request_status') {
-        return { ...payload, serviceRequest: toServiceRequestStatus(payload.serviceRequest), menuitems: [], order: null }
-    }
-
     if (payload.subtype === 'menu' && Array.isArray(payload.menuitems)) {
         return { ...payload, menuitems: toMenuItems(payload.menuitems), breadcrumb: toBreadcrumb(payload.breadcrumb) }
     }
@@ -179,25 +173,6 @@ function normalizePayload(payload, replyType) {
     }
 
     return payload
-}
-
-/**
- * Normalizes a service_request_status payload's nested `serviceRequest` object.
- * @param {*} raw
- * @returns {{ referenceCode: string|null, serviceType: string|null, status: string|null }|null}
- */
-function toServiceRequestStatus(raw) {
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
-    const str = (v) => {
-        if (v == null) return null
-        const s = String(v).trim()
-        return s === '' ? null : s
-    }
-    return {
-        referenceCode: str(raw.referenceCode),
-        serviceType: str(raw.serviceType),
-        status: str(raw.status),
-    }
 }
 
 /**
@@ -356,12 +331,17 @@ function toBreadcrumb(raw) {
  * Maps chronological `TurnDto` rows to alternating user/assistant messages for the transcript.
  *
  * @param {object[]|null|undefined} turns Chronological rows (oldest first), e.g. from {@link fetchAllConversationTurns} or {@link getConversationTurns}.
- * @returns {Array<{ id: string, role: 'user'|'ai', text: string, displayText?: string|null, timestamp: Date, handledBy?: string|null, payload?: object|null }>}
+ * @returns {Array<{ id: string, role: 'user'|'ai', system?: boolean, text: string, displayText?: string|null, timestamp: Date, handledBy?: string|null, payload?: object|null }>}
  */
 export function turnsToMessages(turns) {
     if (!turns?.length) return []
     const messages = []
     for (const t of turns) {
+        // Structural discriminator: `turnKind` is the authoritative backend signal (SYSTEM = injected,
+        // no user message). `userInput == null` is only a legacy fallback for rows persisted before
+        // turnKind was exposed on the API. NOTE: this is a TURN-level (structural) decision — it governs
+        // whether a user bubble exists and how the row is laid out. It is intentionally independent of the
+        // response `payload.subtype`, which is a CONTENT-level decision (which card to render).
         const isSystemTurn = t.turnKind === 'SYSTEM' || t.userInput == null
         if (!isSystemTurn) {
             messages.push({
@@ -382,6 +362,7 @@ export function turnsToMessages(turns) {
             messages.push({
                 id: `turn-${t.id}-a`,
                 role: 'ai',
+                system: isSystemTurn, // turnKind-derived; drives system-notification layout (not the card)
                 text,
                 timestamp: t.updatedAt ? new Date(t.updatedAt) : new Date(),
                 handledBy: t.routeCategory ?? null, // Backend RouteCategory enum

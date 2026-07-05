@@ -594,62 +594,25 @@
     color: #818cf8;
 }
 
-/* ===== Service-Request Status Update Card (system turns) ===== */
-.service-status-card {
-    margin-top: 10px;
-    padding: 12px 14px;
-    background: rgba(56, 189, 248, 0.06);
-    border: 1px solid rgba(56, 189, 248, 0.25);
-    border-radius: var(--radius-md);
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
+/* System-injected status turns (turnKind === SYSTEM): a centered, avatar-less notification styled
+   like .message-row.system. The status sentence (textString) is the only content — no separate card,
+   to avoid duplicating the same reference/status info. */
+.message-row.ai.system-turn {
+    justify-content: center;
+    margin-bottom: 16px;
 }
 
-.service-status-header {
-    display: flex;
+.message-row.ai.system-turn .message-content {
+    max-width: 85%;
     align-items: center;
-    gap: 8px;
-    font-size: 13px;
-    font-weight: 600;
-    color: #38bdf8;
 }
 
-.service-status-header svg {
-    flex-shrink: 0;
-    stroke: #38bdf8;
-}
-
-.service-status-meta {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-.service-status-item {
-    display: flex;
-    gap: 8px;
-    font-size: 12px;
-    align-items: baseline;
-}
-
-.service-status-label {
+.message-row.ai.system-turn .ai-bubble {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-subtle);
     color: var(--text-secondary);
-    min-width: 64px;
-    flex-shrink: 0;
-}
-
-.service-status-value {
-    color: var(--text-primary);
-    font-weight: 500;
-    word-break: break-all;
-}
-
-.service-status-badge {
-    text-transform: uppercase;
-    font-size: 11px;
-    letter-spacing: 0.05em;
-    color: #38bdf8;
+    font-style: italic;
+    text-align: center;
 }
 
 /* ===== Navigation (location) Card ===== */
