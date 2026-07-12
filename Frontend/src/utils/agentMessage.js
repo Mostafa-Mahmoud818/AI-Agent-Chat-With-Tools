@@ -3,9 +3,9 @@
  * @module utils/agentMessage
  *
  * Catering, IT, and F&amp;M agents share a catering-shaped envelope (`replyType`, `textString` or `textContent`,
- * `payload.subtype` menu | ticket | error | order_confirmation | location | none). This module normalizes
- * fences, flattened legacy shapes, breadcrumbs, menu item fields (including optional `selectionSignal`),
- * and the Visitor Experience `location` navigation object.
+ * `payload.subtype` menu | ticket | error | order_confirmation | indoor_navigation | outdoor_navigation | visits_query | none).
+ * This module normalizes fences, flattened legacy shapes, breadcrumbs, menu item fields (including optional `selectionSignal`),
+ * and Visitor Experience navigation payloads.
  */
 /**
  * Prefer `textContent` (IT/F&M BPMN) then `textString` (catering BPMN).

@@ -14,6 +14,7 @@ const KEY_BACKEND_ENV = 'ankabut.chat.backendEnv'
 export const BACKEND_PRESETS = {
     DEV: 'remote-dev',
     TEST: 'remote-test',
+    STAGE: 'remote-stage',
     LOCAL: 'local',
 }
 
@@ -21,6 +22,7 @@ export const BACKEND_PRESETS = {
 export const PRESET_TO_LABEL = {
     'remote-dev': 'DEV',
     'remote-test': 'TEST',
+    'remote-stage': 'STAGE',
     local: 'LOCAL',
 }
 
@@ -45,16 +47,16 @@ function safeSet(key, value) {
 }
 
 /**
- * @returns {'DEV'|'TEST'|'LOCAL'|null} the runtime-selected backend env, or null if none chosen yet.
+ * @returns {'DEV'|'TEST'|'STAGE'|'LOCAL'|null} the runtime-selected backend env, or null if none chosen yet.
  */
 export function getRuntimeBackendEnv() {
     const raw = safeGet(KEY_BACKEND_ENV)
-    if (raw === 'DEV' || raw === 'TEST' || raw === 'LOCAL') return raw
+    if (raw === 'DEV' || raw === 'TEST' || raw === 'STAGE' || raw === 'LOCAL') return raw
     return null
 }
 
 /**
- * @param {'DEV'|'TEST'|'LOCAL'|null} label
+ * @param {'DEV'|'TEST'|'STAGE'|'LOCAL'|null} label
  */
 export function setRuntimeBackendEnv(label) {
     if (label == null) {

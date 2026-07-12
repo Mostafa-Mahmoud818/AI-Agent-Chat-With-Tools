@@ -464,7 +464,7 @@ MessageBubble.propTypes = {
         handledBy: PropTypes.string,
         timestamp: PropTypes.instanceOf(Date),
         payload: PropTypes.shape({
-            subtype: PropTypes.oneOf(['menu', 'order_confirmation', 'ticket', 'indoor_navigation', 'outdoor_navigation', 'visits_query', 'service_request_status', 'none', 'error']),
+            subtype: PropTypes.oneOf(['menu', 'order_confirmation', 'ticket', 'indoor_navigation', 'outdoor_navigation', 'visits_query', 'none', 'error']),
             menuitems: PropTypes.array,
             visits: PropTypes.shape({
                 scope: PropTypes.string,

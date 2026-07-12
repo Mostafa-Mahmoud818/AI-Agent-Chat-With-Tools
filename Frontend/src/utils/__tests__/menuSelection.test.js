@@ -65,7 +65,10 @@ describe('formatMenuSelectionMessage', () => {
     it('resolveMenuPrefixFromHandledBy maps SSE and enum labels', () => {
         expect(resolveMenuPrefixFromHandledBy('IT_SUPPORT')).toBe(MENU_PREFIX.it_support)
         expect(resolveMenuPrefixFromHandledBy('IT Support Agent')).toBe(MENU_PREFIX.it_support)
+        expect(resolveMenuPrefixFromHandledBy('it_support')).toBe(MENU_PREFIX.it_support)
         expect(resolveMenuPrefixFromHandledBy('FACILITIES_MAINTENANCE')).toBe(MENU_PREFIX.facilities_maintenance)
+        expect(resolveMenuPrefixFromHandledBy('facilities_maintenance')).toBe(MENU_PREFIX.facilities_maintenance)
         expect(resolveMenuPrefixFromHandledBy('CATERING')).toBe(MENU_PREFIX.catering)
+        expect(resolveMenuPrefixFromHandledBy('catering')).toBe(MENU_PREFIX.catering)
     })
 })

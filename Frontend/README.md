@@ -17,13 +17,13 @@ npm run dev
 
 Opens http://localhost:5173.
 
-On first load you'll see an **environment picker dialog** (DEV / TEST / LOCAL). After picking, sign in with **email + OTP**. Your **visit id** loads automatically from the server (with an optional manual UUID fallback). Everything is persisted to `localStorage`, so subsequent reloads skip the dialog. A **"Change"** link in the badge row re-opens the picker any time.
+On first load you'll see an **environment picker dialog** (DEV / TEST / STAGE / LOCAL). After picking, sign in with **email + OTP**. Your **visit id** loads automatically from the server (with an optional manual UUID fallback). Everything is persisted to `localStorage`, so subsequent reloads skip the dialog. A **"Change"** link in the badge row re-opens the picker any time.
 
 > Testers no longer need to edit `.env` — pick env + sign in via email OTP in the UI.
 
 ### Auth modes
 
-- **Secure (default)** — calls `/api/v1/secure/chatting/*` with `Authorization: Bearer …`. Sign in via **email + OTP** in the auth dialog (DEV, TEST, and LOCAL). Optional `VITE_API_BEARER_TOKEN` for CI/automation bootstrap.
+- **Secure (default)** — calls `/api/v1/secure/chatting/*` with `Authorization: Bearer …`. Sign in via **email + OTP** in the auth dialog (DEV, TEST, STAGE, and LOCAL). Optional `VITE_API_BEARER_TOKEN` for CI/automation bootstrap.
 - **Guest** — set `VITE_CHAT_AUTH=guest` to use `/api/v1/public/chatting/*`. The UI generates a stable UUID `clientId` (localStorage), sets the `ankabut_guest_id` cookie, and appends `?clientId=` on requests so cross-origin works without credentialed cookies. Pair with `VITE_API_RELATIVE=1` to proxy `/api` through Vite during dev.
 
 ## Runtime configuration precedence
@@ -33,7 +33,7 @@ On first load you'll see an **environment picker dialog** (DEV / TEST / LOCAL). 
 1. **UI choice** from the env picker (`localStorage: ankabut.chat.backendEnv`) — set by the dialog, cleared by clicking **Change** + picking a different env.
 2. `VITE_API_RELATIVE=1` → empty origin (same-origin `/api`, Vite dev proxy).
 3. `VITE_API_ORIGIN` → explicit URL.
-4. `VITE_API_BACKEND` → named preset (`local`, `remote-dev`, `remote-test`).
+4. `VITE_API_BACKEND` → named preset (`local`, `remote-dev`, `remote-test`, `remote-stage`).
 5. Default: `remote-dev`.
 
 **Visit ID** (required for orchestration start): URL `?visitId=` → `localStorage: ankabut.chat.visitId` (auth dialog) → `VITE_DEFAULT_VISIT_ID`. The modulith resolves `visitId` to an internal `resourceId` via visitor experience — an unset or all-zero placeholder blocks start in the UI. See [`src/config/chatContext.js`](src/config/chatContext.js).
@@ -55,7 +55,7 @@ Bearer-token precedence: the OTP dialog writes to `localStorage: ankabut.chat.ac
 - Multi-agent routing (Visitor Experience, Catering, IT Support, Facilities & Maintenance via Camunda classifier)
 - Markdown rendering of agent responses
 - Structured menu display (catering agent)
-- In-browser environment switcher (DEV / TEST / LOCAL) — no `.env` edits required
+- In-browser environment switcher (DEV / TEST / STAGE / LOCAL) — no `.env` edits required
 - Per-browser token and visit-id overrides for orchestration start
 - Responsive React/Vite UI
 
@@ -102,9 +102,9 @@ All env vars are optional — the UI can supply backend env, token, and visit id
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `VITE_API_BACKEND` | `remote-dev` | Named preset when the UI picker hasn't been used: `local` → `http://localhost:8085`, `remote-dev` → `https://dev-modulith.naitive.ai`, `remote-test` → `https://test-modulith.naitive.ai` |
+| `VITE_API_BACKEND` | `remote-dev` | Named preset when the UI picker hasn't been used: `local` → `http://localhost:8085`, `remote-dev` → `https://dev-modulith.naitive.ai`, `remote-test` → `https://test-modulith.naitive.ai`, `remote-stage` → `https://stg-modulith.naitive.ai` |
 | `VITE_API_ORIGIN` | _(unset)_ | Explicit modulith base URL (no trailing slash). Wins over `VITE_API_BACKEND`, loses to the UI picker. |
-| `VITE_API_RELATIVE` | off | `1` / `true` → same-origin `/api/...` and `/v1/internal/...` via Vite dev proxy (works for DEV, TEST, and LOCAL presets; proxy target follows the UI env picker). |
+| `VITE_API_RELATIVE` | off | `1` / `true` → same-origin `/api/...` and `/v1/internal/...` via Vite dev proxy (works for DEV, TEST, STAGE, and LOCAL presets; proxy target follows the UI env picker). |
 | `VITE_API_BEARER_TOKEN` | _(none)_ | Optional bootstrap bearer. Inlined into the bundle and copied to localStorage on first load. Prefer the in-app dialog for testers. |
 | `VITE_DEFAULT_VISIT_ID` | _(unset)_ | **Required** unless set in the auth dialog or `?visitId=`. Visit UUID inside `chatContext` on orchestration start (backend resolves to `resourceId`). |
 | `VITE_CHAT_AUTH` | _(unset = secure)_ | Set to `guest` to use `/api/v1/public/chatting/*` (no bearer; UUID clientId). |
@@ -118,7 +118,7 @@ All env vars are optional — the UI can supply backend env, token, and visit id
 
 | Key | Set by | Purpose |
 |-----|--------|---------|
-| `ankabut.chat.backendEnv` | Env picker | `DEV` \| `TEST` \| `LOCAL` — overrides `VITE_API_BACKEND` |
+| `ankabut.chat.backendEnv` | Env picker | `DEV` \| `TEST` \| `STAGE` \| `LOCAL` — overrides `VITE_API_BACKEND` |
 | `ankabut.chat.accessToken` | Auth dialog / OTP flow / env bootstrap | Bearer JWT for secure mode |
 | `ankabut.chat.visitId` | Auth dialog / `?visitId=` | Overrides `VITE_DEFAULT_VISIT_ID` for orchestration `chatContext` |
 | `ankabut.chat.guestClientId` | Guest bootstrap | Stable UUID `clientId` for public API (`guestClientId.js`) |
@@ -132,14 +132,15 @@ All env vars are optional — the UI can supply backend env, token, and visit id
 
 Create conversation (guest) uses body `{ clientId, req: { initialTitle, initialSummary } }` per `CreateConversationWithIdentityRequest`. Orchestration start sends `{ inputText, chatContext: { schemaVersion, contextType: "VISIT", contextData: { visitId } }, displayText? }`. Follow-ups send `{ followUpInput, displayText?, clientMessageId? }` only. The client opens SSE **before** POST start/user-messages. SSE events are JSON `ChattingOrchestrationRoundResponseDto` (`status`: `ready` \| `processing` \| `error` \| `expired`, `message`, `handledBy`).
 
-### Environment setup (DEV / TEST / LOCAL)
+### Environment setup (DEV / TEST / STAGE / LOCAL)
 
-All three presets share the same post-auth pipeline: authenticate → auto-resolve visit from `GET /api/v1/secure/visitor-management/my-visits*` → display active visit id → send `chatContext` on first `/start`. Switching env in the picker clears stored token and visit id.
+All four presets share the same post-auth pipeline: authenticate → auto-resolve visit from `GET /api/v1/secure/visitor-management/my-visits*` → display active visit id → send `chatContext` on first `/start`. Switching env in the picker clears stored token and visit id.
 
 | Preset | Auth | Visit id |
 |--------|------|----------|
 | DEV | Email + OTP (public endpoints) | Auto from my-visits (manual fallback in dialog) |
 | TEST | Email + OTP (public endpoints) | Auto from my-visits (manual fallback in dialog) |
+| STAGE | Email + OTP (public endpoints) | Auto from my-visits (manual fallback in dialog) |
 | LOCAL | Email + OTP (provision + public) | Auto from my-visits (manual fallback in dialog) |
 
 ## Camunda BPMN alignment
@@ -193,7 +194,7 @@ The guest variants live under `/api/v1/public/chatting/...` with the same shape.
 |-----------|------|
 | Chatting module | `ankabut-dxp-modulith-service/` |
 | Controllers | `src/main/java/**/*.web` |
-| DTOs | `ankabut-dxp-commons/src/main/java/com/ankabut/dxp/commons/dto/chatting/` |
+| DTOs | `ankabut-dxp-commons/src/main/java/com/ankabut/dxp/commons/dto/chatting/` and `dto/chattingorchestration/` |
 | Database schema | `ankabut-dxp-config-service/src/main/resources/db/migration/` (`dxp-chatting` schema: V23–V37, V50) |
 
 ## Known Limitations

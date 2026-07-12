@@ -8,13 +8,14 @@ import { getRuntimeBackendPreset } from './runtimeSettings.js'
 export const API_BACKENDS = {
     'remote-dev': 'https://dev-modulith.naitive.ai',
     'remote-test': 'https://test-modulith.naitive.ai',
+    'remote-stage': 'https://stg-modulith.naitive.ai',
     local: 'http://localhost:8085',
 }
 
 const DEFAULT_PRESET = 'remote-dev'
 
 /**
- * Resolves the active backend preset key (`remote-dev`, `remote-test`, `local`).
+ * Resolves the active backend preset key (`remote-dev`, `remote-test`, `remote-stage`, `local`).
  * Same precedence for SPA origin and Vite dev proxy target.
  *
  * @param {Record<string, string | boolean | undefined>} env
@@ -30,6 +31,7 @@ export function resolveActiveBackendPreset(env) {
     if (explicit) {
         if (/dev-modulith/i.test(explicit)) return 'remote-dev'
         if (/test-modulith/i.test(explicit)) return 'remote-test'
+        if (/stg-modulith/i.test(explicit)) return 'remote-stage'
         if (/localhost|127\.0\.0\.1/i.test(explicit)) return 'local'
         return DEFAULT_PRESET
     }
@@ -44,7 +46,7 @@ export function resolveActiveBackendPreset(env) {
  * 1. UI runtime override (env picker, persisted in localStorage) — always absolute URL
  * 2. {@code VITE_API_RELATIVE=1|true} → empty string when no runtime picker (Vite dev proxy)
  * 3. Non-empty {@code VITE_API_ORIGIN}
- * 4. {@code VITE_API_BACKEND} preset ({@code local} | {@code remote-dev} | {@code remote-test})
+ * 4. {@code VITE_API_BACKEND} preset ({@code local} | {@code remote-dev} | {@code remote-test} | {@code remote-stage})
  *
  * @param {Record<string, string | boolean | undefined>} env `import.meta.env` or `loadEnv()` result
  * @returns {string} origin without trailing slash, or "" for relative API calls
@@ -67,7 +69,7 @@ export function resolveApiOrigin(env) {
 
 /**
  * Short label for the active backend preset, used by the auth dialog UI.
- * Returns one of: `DEV`, `TEST`, `LOCAL`, `PROXY`, `CUSTOM`.
+ * Returns one of: `DEV`, `TEST`, `STAGE`, `LOCAL`, `PROXY`, `CUSTOM`.
  *
  * @param {Record<string, string | boolean | undefined>} env
  * @returns {string}
@@ -76,6 +78,7 @@ export function getBackendEnvLabel(env) {
     const runtimePreset = getRuntimeBackendPreset()
     if (runtimePreset === 'remote-dev') return 'DEV'
     if (runtimePreset === 'remote-test') return 'TEST'
+    if (runtimePreset === 'remote-stage') return 'STAGE'
     if (runtimePreset === 'local') return 'LOCAL'
 
     const relative = env.VITE_API_RELATIVE === 'true' || env.VITE_API_RELATIVE === '1'
@@ -85,6 +88,7 @@ export function getBackendEnvLabel(env) {
     if (explicit) {
         if (/dev-modulith/i.test(explicit)) return 'DEV'
         if (/test-modulith/i.test(explicit)) return 'TEST'
+        if (/stg-modulith/i.test(explicit)) return 'STAGE'
         if (/localhost|127\.0\.0\.1/i.test(explicit)) return 'LOCAL'
         return 'CUSTOM'
     }
@@ -92,6 +96,7 @@ export function getBackendEnvLabel(env) {
     const preset = resolveActiveBackendPreset(env)
     if (preset === 'remote-dev') return 'DEV'
     if (preset === 'remote-test') return 'TEST'
+    if (preset === 'remote-stage') return 'STAGE'
     if (preset === 'local') return 'LOCAL'
     return 'DEV'
 }

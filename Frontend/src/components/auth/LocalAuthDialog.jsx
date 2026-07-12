@@ -24,6 +24,7 @@ const log = createLogger('LocalAuthDialog')
 const ENV_OPTIONS = [
     { label: 'DEV', description: 'dev-modulith.naitive.ai — email + OTP' },
     { label: 'TEST', description: 'test-modulith.naitive.ai — email + OTP' },
+    { label: 'STAGE', description: 'stg-modulith.naitive.ai — email + OTP' },
     { label: 'LOCAL', description: 'localhost:8085 — email + OTP' },
 ]
 

@@ -64,4 +64,15 @@ describe('apiOrigin', () => {
         const env = { VITE_API_BACKEND: 'remote-dev' }
         expect(resolveModulithRequestBase(env)).toBe(API_BACKENDS.local)
     })
+
+    it('resolveActiveBackendPreset detects stg-modulith from VITE_API_ORIGIN', () => {
+        const env = { VITE_API_ORIGIN: 'https://stg-modulith.naitive.ai' }
+        expect(resolveActiveBackendPreset(env)).toBe('remote-stage')
+    })
+
+    it('resolveApiOrigin uses STAGE runtime picker', () => {
+        setRuntimeBackendEnv('STAGE')
+        const env = { VITE_API_BACKEND: 'remote-dev' }
+        expect(resolveApiOrigin(env)).toBe(API_BACKENDS['remote-stage'])
+    })
 })

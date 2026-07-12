@@ -420,6 +420,37 @@ describe('turnsToMessages', () => {
         expect(msgs[1].handledBy).toBe('FACILITIES_MAINTENANCE')
     })
 
+    it('preserves lowercase wire routeCategory from persisted turns (it_support)', () => {
+        const turns = [
+            {
+                id: 'it1',
+                userInput: 'VPN issue',
+                agentResponse: '{"replyType":"text","textString":"Here are IT areas.","payload":{"subtype":"none"}}',
+                routeCategory: 'it_support',
+                createdAt: '2025-01-01T12:00:00Z',
+                updatedAt: '2025-01-01T12:00:01Z',
+            },
+        ]
+        const msgs = turnsToMessages(turns)
+        expect(msgs).toHaveLength(2)
+        expect(msgs[1].handledBy).toBe('it_support')
+    })
+
+    it('preserves lowercase wire routeCategory visitor_experience on SYSTEM turn', () => {
+        const turns = [{
+            id: 'vx1',
+            turnKind: 'SYSTEM',
+            userInput: null,
+            agentResponse: '{"replyType":"text","textString":"Visit updated.","payload":{"subtype":"none"}}',
+            routeCategory: 'visitor_experience',
+            createdAt: '2025-01-01T12:00:00Z',
+            updatedAt: '2025-01-01T12:00:00Z',
+        }]
+        const msgs = turnsToMessages(turns)
+        expect(msgs).toHaveLength(1)
+        expect(msgs[0].handledBy).toBe('visitor_experience')
+    })
+
     it('skips empty agent response', () => {
         const turns = [{ id: 'b1', userInput: 'Q', agentResponse: '   ', createdAt: '2025-01-01T12:00:00Z' }]
         expect(turnsToMessages(turns)).toHaveLength(1)
@@ -427,12 +458,9 @@ describe('turnsToMessages', () => {
 
     it('renders a SYSTEM turn as a single agent status message (no user bubble)', () => {
         const envelope = JSON.stringify({
-            replyType: 'json',
+            replyType: 'text',
             textString: 'Your Catering request CAT-2026-00042 is now Confirmed.',
-            payload: {
-                subtype: 'service_request_status',
-                serviceRequest: { referenceCode: 'CAT-2026-00042', serviceType: 'Catering', status: 'CONFIRMED' },
-            },
+            payload: { subtype: 'none' },
         })
         const turns = [{
             id: 's1',
@@ -448,13 +476,9 @@ describe('turnsToMessages', () => {
 
         expect(msgs).toHaveLength(1)
         expect(msgs[0].role).toBe('ai')
+        expect(msgs[0].system).toBe(true)
         expect(msgs[0].text).toBe('Your Catering request CAT-2026-00042 is now Confirmed.')
-        expect(msgs[0].payload.subtype).toBe('service_request_status')
-        expect(msgs[0].payload.serviceRequest).toEqual({
-            referenceCode: 'CAT-2026-00042',
-            serviceType: 'Catering',
-            status: 'CONFIRMED',
-        })
+        expect(msgs[0].payload).toBeNull()
     })
 
     it('returns empty array for empty input', () => {
@@ -496,23 +520,16 @@ describe('turnsToMessages', () => {
 
     it('maps SYSTEM turn to a single agent message without a user bubble', () => {
         const agentResponse = JSON.stringify({
-            replyType: 'json',
+            replyType: 'text',
             textString: 'Your Catering request CAT-2026-00042 is now Confirmed.',
-            payload: {
-                subtype: 'service_request_status',
-                serviceRequest: {
-                    referenceCode: 'CAT-2026-00042',
-                    serviceType: 'Catering',
-                    status: 'CONFIRMED',
-                },
-            },
+            payload: { subtype: 'none' },
         })
         const turns = [
             {
                 id: 'sys1',
                 turnKind: 'SYSTEM',
                 userInput: null,
-                displayText: 'Your Catering request CAT-2026-00042 is now Confirmed.',
+                displayText: null,
                 agentResponse,
                 routeCategory: 'CATERING',
                 createdAt: '2025-01-01T12:00:00Z',
@@ -522,7 +539,9 @@ describe('turnsToMessages', () => {
         const msgs = turnsToMessages(turns)
         expect(msgs).toHaveLength(1)
         expect(msgs[0].role).toBe('ai')
+        expect(msgs[0].system).toBe(true)
         expect(msgs[0].text).toBe('Your Catering request CAT-2026-00042 is now Confirmed.')
+        expect(msgs[0].payload).toBeNull()
         expect(msgs[0].handledBy).toBe('CATERING')
     })
 })
