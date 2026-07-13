@@ -36,8 +36,12 @@ const API_ORIGIN = resolveApiOrigin(import.meta.env)
 
 const PATH_SECURE = '/api/v1/secure/chatting'
 const PATH_PUBLIC = '/api/v1/public/chatting'
+const SPEECH_PATH_SECURE = '/api/v1/secure/speech'
+const SPEECH_PATH_PUBLIC = '/api/v1/public/speech'
 
 const REQUEST_TIMEOUT_MS = 15_000
+/** STT provider latency can exceed normal JSON chat calls. */
+const TRANSCRIBE_TIMEOUT_MS = 60_000
 
 /** Backend {@code ChattingSecureController} / open: {@code @Max(500)} on {@code limit}. */
 const MAX_CONVERSATION_TURNS_LIMIT = 500
@@ -159,6 +163,29 @@ function buildHeaders() {
 
 function getChattingPathPrefix() {
     return useGuestAuth() ? PATH_PUBLIC : PATH_SECURE
+}
+
+function getSpeechPathPrefix() {
+    return useGuestAuth() ? SPEECH_PATH_PUBLIC : SPEECH_PATH_SECURE
+}
+
+/** Multipart uploads must not set Content-Type — the browser adds the boundary. */
+function buildMultipartAuthHeaders() {
+    if (useGuestAuth()) {
+        return {}
+    }
+    const token = getAccessToken()
+    if (!token) {
+        if (IS_TEST) {
+            return {Authorization: 'Bearer __vitest_bearer_placeholder__'}
+        }
+        throw new ApiError(
+            0,
+            'missing_bearer_token',
+            'Missing bearer token. Sign in via email OTP in the auth dialog, set VITE_API_BEARER_TOKEN for automation, or set VITE_CHAT_AUTH=guest for public API.',
+        )
+    }
+    return {Authorization: `Bearer ${token}`}
 }
 
 function getApiBase() {
@@ -424,6 +451,35 @@ export async function startOrchestration(conversationId, inputText, chatContext,
  * @param {string|null} [displayText]
  * @param {string|null} [clientMessageId]
  */
+/**
+ * Transcribes audio via the modulith speech module. Returns recognized text for the user to
+ * review/edit before sending through {@link startOrchestration} or {@link sendReply}.
+ *
+ * @param {Blob} audioBlob recorded audio (e.g. {@code audio/webm} from MediaRecorder)
+ * @param {{ filename?: string }} [opts] multipart filename for the {@code audio} part
+ * @returns {Promise<{ text: string, language: string|null }>}
+ */
+export async function transcribeSpeech(audioBlob, {filename = 'recording.webm'} = {}) {
+    const url = withGuestClientIdQuery(`${API_ORIGIN}${getSpeechPathPrefix()}/transcriptions`)
+    const formData = new FormData()
+    formData.append('audio', audioBlob, filename)
+    log.debug('POST transcribe', url, {bytes: audioBlob.size, type: audioBlob.type})
+    const res = await fetchWithTimeout(
+        url,
+        {
+            method: 'POST',
+            headers: buildMultipartAuthHeaders(),
+            body: formData,
+        },
+        TRANSCRIBE_TIMEOUT_MS,
+    )
+    log.debug('POST transcribe response', url, res.status)
+    const ok = await handleResponse(res)
+    const data = await unwrapResponse(ok)
+    log.info('Transcription OK', {chars: data?.text?.length ?? 0, language: data?.language})
+    return data
+}
+
 export async function sendReply(conversationId, followUpInput, displayText = null, clientMessageId = null) {
     const base = getOrchestrationBase()
     const cid = encodeURIComponent(conversationId)

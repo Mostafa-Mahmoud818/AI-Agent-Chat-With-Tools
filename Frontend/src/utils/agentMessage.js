@@ -7,6 +7,8 @@
  * This module normalizes fences, flattened legacy shapes, breadcrumbs, menu item fields (including optional `selectionSignal`),
  * and Visitor Experience navigation payloads.
  */
+import { isMenuSelectionUserInput } from './menuSelection.js'
+
 /**
  * Prefer `textContent` (IT/F&M BPMN) then `textString` (catering BPMN).
  * @param {object} parsed Parsed top-level agent JSON.
@@ -344,11 +346,16 @@ export function turnsToMessages(turns) {
         // response `payload.subtype`, which is a CONTENT-level decision (which card to render).
         const isSystemTurn = t.turnKind === 'SYSTEM' || t.userInput == null
         if (!isSystemTurn) {
+            // displayText is only meaningful for menu-card clicks (short label). Free-typed turns
+            // must show userInput — ignore any stale displayText left on the row from prior menu turns.
+            const displayText = isMenuSelectionUserInput(t.userInput)
+                ? (t.displayText ?? null)
+                : null
             messages.push({
                 id: `turn-${t.id}-u`,
                 role: 'user',
                 text: t.userInput,
-                displayText: t.displayText ?? null,
+                displayText,
                 timestamp: t.createdAt ? new Date(t.createdAt) : new Date(),
                 handledBy: null,
                 payload: null,

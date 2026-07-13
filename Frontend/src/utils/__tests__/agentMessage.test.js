@@ -383,6 +383,36 @@ describe('parseAgentMessage visits_query subtype', () => {
     })
 })
 
+describe('parseAgentMessage previous+upcoming visits listing (subtype none)', () => {
+    const listingText = `**Upcoming visits**
+
+1. Vendor Meeting — Tue 15 Jul
+2. Team Sync — Wed 16 Jul
+
+**Previous visits**
+
+3. Board Review — Mon 7 Jul
+
+Which visit would you like to know more about?`
+
+    it('preserves text-only listing and discards subtype none payload', () => {
+        const raw = JSON.stringify({
+            replyType: 'text',
+            textString: listingText,
+            payload: {
+                subtype: 'none',
+                menuitems: [],
+                order: null,
+                navigation: null,
+                visits: null,
+            },
+        })
+        const { text, payload } = parseAgentMessage(raw)
+        expect(text).toBe(listingText)
+        expect(payload).toBeNull()
+    })
+})
+
 describe('turnsToMessages', () => {
     it('maps user and agent rows from turns', () => {
         const turns = [
@@ -486,7 +516,7 @@ describe('turnsToMessages', () => {
         expect(turnsToMessages(null)).toEqual([])
     })
 
-    it('maps displayText from turn to user message', () => {
+    it('maps displayText from turn to user message for menu selection', () => {
         const turns = [
             {
                 id: 'c1',
@@ -516,6 +546,39 @@ describe('turnsToMessages', () => {
         const msgs = turnsToMessages(turns)
         const userMsg = msgs.find((m) => m.role === 'user')
         expect(userMsg.displayText).toBeNull()
+    })
+
+    it('ignores displayText for free-typed userInput (use userInput in the bubble)', () => {
+        const turns = [
+            {
+                id: 'd2',
+                userInput: 'I need help with the AC',
+                displayText: 'Drinks', // stale leftover from a prior menu click
+                agentResponse: 'Sure, tell me more.',
+                routeCategory: 'FACILITIES_MAINTENANCE',
+                createdAt: '2025-01-01T12:00:00Z',
+            },
+        ]
+        const msgs = turnsToMessages(turns)
+        const userMsg = msgs.find((m) => m.role === 'user')
+        expect(userMsg.text).toBe('I need help with the AC')
+        expect(userMsg.displayText).toBeNull()
+    })
+
+    it('keeps displayText for IT/F&M menu selection prefixes', () => {
+        const turns = [
+            {
+                id: 'd3',
+                userInput: '[it_support-menu] Selected Subcategory (name: VPN) (id: sub-a).',
+                displayText: 'VPN',
+                agentResponse: 'Got it.',
+                routeCategory: 'IT_SUPPORT',
+                createdAt: '2025-01-01T12:00:00Z',
+            },
+        ]
+        const msgs = turnsToMessages(turns)
+        const userMsg = msgs.find((m) => m.role === 'user')
+        expect(userMsg.displayText).toBe('VPN')
     })
 
     it('maps SYSTEM turn to a single agent message without a user bubble', () => {

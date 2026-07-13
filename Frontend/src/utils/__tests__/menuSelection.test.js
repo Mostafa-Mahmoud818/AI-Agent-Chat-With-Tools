@@ -1,5 +1,26 @@
 import { describe, it, expect } from 'vitest'
-import { formatMenuSelectionMessage, resolveMenuPrefixFromHandledBy, MENU_PREFIX } from '../menuSelection.js'
+import {
+    formatMenuSelectionMessage,
+    isMenuSelectionUserInput,
+    resolveMenuPrefixFromHandledBy,
+    MENU_PREFIX,
+} from '../menuSelection.js'
+
+describe('isMenuSelectionUserInput', () => {
+    it('detects catering / IT / F&M menu prefixes', () => {
+        expect(isMenuSelectionUserInput('[catering-menu] Selected Category (id: 1).')).toBe(true)
+        expect(isMenuSelectionUserInput('[it_support-menu] Selected Subcategory (id: 1).')).toBe(true)
+        expect(isMenuSelectionUserInput('[facilities-menu] Selected Item (id: 1).')).toBe(true)
+    })
+
+    it('returns false for free-typed text and nullish input', () => {
+        expect(isMenuSelectionUserInput('Hello')).toBe(false)
+        expect(isMenuSelectionUserInput('Show me catering')).toBe(false)
+        expect(isMenuSelectionUserInput(null)).toBe(false)
+        expect(isMenuSelectionUserInput(undefined)).toBe(false)
+        expect(isMenuSelectionUserInput('')).toBe(false)
+    })
+})
 
 describe('formatMenuSelectionMessage', () => {
     it('formats category selection with [catering-menu] prefix + displayText', () => {

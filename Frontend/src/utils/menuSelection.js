@@ -20,6 +20,19 @@ export const MENU_PREFIX = {
 }
 
 /**
+ * True when {@code userInput} is a menu-card selection signal (not free-typed text).
+ * Used when mapping GET conversation turns so {@code displayText} is only trusted for menu clicks.
+ *
+ * @param {string|null|undefined} userInput
+ * @returns {boolean}
+ */
+export function isMenuSelectionUserInput(userInput) {
+    if (userInput == null || typeof userInput !== 'string') return false
+    const s = userInput.trimStart()
+    return Object.values(MENU_PREFIX).some((prefix) => s.startsWith(prefix))
+}
+
+/**
  * Maps persisted enum names or SSE labels to a menu click prefix.
  * @param {string|null|undefined} handledBy
  * @returns {string} prefix including trailing space

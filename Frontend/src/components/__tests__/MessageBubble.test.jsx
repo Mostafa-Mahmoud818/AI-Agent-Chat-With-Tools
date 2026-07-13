@@ -399,6 +399,30 @@ describe('MessageBubble', () => {
         expect(screen.getByText('Team Sync')).toBeInTheDocument()
         expect(screen.getByText('Board Review')).toBeInTheDocument()
     })
+
+    it('renders text-only previous+upcoming listing without visits_query card', () => {
+        const listingText = `**Upcoming visits**
+
+1. Vendor Meeting — Tue 15 Jul
+
+**Previous visits**
+
+2. Board Review — Mon 7 Jul
+
+Which visit would you like to know more about?`
+        const msg = {
+            id: 've-text-list',
+            role: 'ai',
+            text: listingText,
+            timestamp: new Date(),
+            handledBy: 'VISITOR_EXPERIENCE',
+            payload: null,
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText(/Which visit would you like to know more about\?/)).toBeInTheDocument()
+        expect(screen.getByText(/Vendor Meeting/)).toBeInTheDocument()
+        expect(screen.queryByText('Meetings & Visits')).not.toBeInTheDocument()
+    })
 })
 
 describe('MessageBubble user message displayText', () => {
