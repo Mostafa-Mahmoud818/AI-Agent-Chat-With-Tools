@@ -2,26 +2,27 @@
  * @file Parses agent JSON from persisted turns and live SSE, and maps `TurnDto` rows to UI messages.
  * @module utils/agentMessage
  *
- * Catering, IT, and F&amp;M agents share a catering-shaped envelope (`replyType`, `textString` or `textContent`,
- * `payload.subtype` menu | ticket | error | order_confirmation | indoor_navigation | outdoor_navigation | visits_query | none).
+ * Agents share one envelope: `replyType`, `textString`, `payload.subtype`
+ * (`menu` | `ticket` | `order_confirmation` | `indoor_navigation` | `outdoor_navigation` | `error` | `none`).
+ * Legacy-only: `textContent` (old IT/F&amp;M) and `visits_query` (removed backend flag) are still parsed for history.
  * This module normalizes fences, flattened legacy shapes, breadcrumbs, menu item fields (including optional `selectionSignal`),
  * and Visitor Experience navigation payloads.
  */
 import { isMenuSelectionUserInput } from './menuSelection.js'
 
 /**
- * Prefer `textContent` (IT/F&M BPMN) then `textString` (catering BPMN).
+ * Prefer `textString` (current backend/prompt contract). Fall back to legacy `textContent` for old turns.
  * @param {object} parsed Parsed top-level agent JSON.
  * @param {string} fallback Raw string if both fields are whitespace-only.
  */
 function primaryAssistantText(parsed, fallback) {
-    if (parsed.textContent != null) {
-        const s = String(parsed.textContent)
+    if (parsed.textString != null) {
+        const s = String(parsed.textString)
         // Explicit empty string is an intentional signal (e.g. error payload); whitespace-only falls back.
         if (s === '' || s.trim() !== '') return s
     }
-    if (parsed.textString != null) {
-        const s = String(parsed.textString)
+    if (parsed.textContent != null) {
+        const s = String(parsed.textContent)
         if (s === '' || s.trim() !== '') return s
     }
     return fallback
@@ -178,7 +179,8 @@ function normalizePayload(payload, replyType) {
 }
 
 /**
- * Normalizes a visits_query payload's nested `visits` object for card rendering.
+ * Normalizes a legacy `visits_query` payload's nested `visits` object for card rendering.
+ * Current VE agents emit text-only listings (`subtype:"none"`); this path remains for old history turns.
  * @param {*} raw
  * @returns {object|null}
  */

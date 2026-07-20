@@ -8,8 +8,9 @@
  * shown above each menu turn from that chain plus an agent-specific root crumb.
  */
 
+// Matches current prompt format and older FE fallbacks that appended `(code: …)` and/or a trailing period.
 const SELECTION_SIGNAL_RE =
-    /^\[([a-z0-9_-]+)\]\s+Selected\s+(Category|Subcategory|Product|Item)\s+\(name:\s+(.+?)\)\s+\(id:\s+([^)]+)\)\s*$/i
+    /^\[([a-z0-9_-]+)\]\s+Selected\s+(Category|Subcategory|Product|Item)\s+\(name:\s+(.+?)\)\s+\(id:\s+([^)]+)\)(?:\s+\(code:\s+[^)]+\))?\s*\.?\s*$/i
 
 /**
  * Parses a `selectionSignal` string emitted by the agent on menu items.

@@ -8,9 +8,9 @@ import {
 
 describe('isMenuSelectionUserInput', () => {
     it('detects catering / IT / F&M menu prefixes', () => {
-        expect(isMenuSelectionUserInput('[catering-menu] Selected Category (id: 1).')).toBe(true)
-        expect(isMenuSelectionUserInput('[it_support-menu] Selected Subcategory (id: 1).')).toBe(true)
-        expect(isMenuSelectionUserInput('[facilities-menu] Selected Item (id: 1).')).toBe(true)
+        expect(isMenuSelectionUserInput('[catering-menu] Selected Category (id: 1)')).toBe(true)
+        expect(isMenuSelectionUserInput('[it_support-menu] Selected Subcategory (id: 1)')).toBe(true)
+        expect(isMenuSelectionUserInput('[facilities-menu] Selected Item (id: 1)')).toBe(true)
     })
 
     it('returns false for free-typed text and nullish input', () => {
@@ -25,7 +25,7 @@ describe('isMenuSelectionUserInput', () => {
 describe('formatMenuSelectionMessage', () => {
     it('formats category selection with [catering-menu] prefix + displayText', () => {
         const result = formatMenuSelectionMessage({ id: 'cat-1', label: 'Drinks' })
-        expect(result.agentInput).toBe('[catering-menu] Selected Category (name: Drinks) (id: cat-1).')
+        expect(result.agentInput).toBe('[catering-menu] Selected Category (name: Drinks) (id: cat-1)')
         expect(result.displayText).toBe('Drinks')
     })
 
@@ -35,24 +35,24 @@ describe('formatMenuSelectionMessage', () => {
             label: 'Cold',
             categoryId: 'cat-1',
         })
-        expect(result.agentInput).toBe('[catering-menu] Selected Subcategory (name: Cold) (id: sub-1).')
+        expect(result.agentInput).toBe('[catering-menu] Selected Subcategory (name: Cold) (id: sub-1)')
         expect(result.displayText).toBe('Cold')
     })
 
-    it('formats product when code is set', () => {
+    it('formats product when code is set (code detects depth only — not in signal)', () => {
         const result = formatMenuSelectionMessage({
             id: 'p-1',
             label: 'Water',
             code: '999',
             price: 0,
         })
-        expect(result.agentInput).toBe('[catering-menu] Selected Product (name: Water) (id: p-1) (code: 999).')
+        expect(result.agentInput).toBe('[catering-menu] Selected Product (name: Water) (id: p-1)')
         expect(result.displayText).toBe('Water')
     })
 
     it('omits name clause when item has no label or name but keeps id', () => {
         const result = formatMenuSelectionMessage({ id: 'cat-1', categoryId: null, code: null })
-        expect(result.agentInput).toBe('[catering-menu] Selected Category (id: cat-1).')
+        expect(result.agentInput).toBe('[catering-menu] Selected Category (id: cat-1)')
         expect(result.displayText).toBeNull()
     })
 
@@ -63,7 +63,7 @@ describe('formatMenuSelectionMessage', () => {
 
     it('uses [it_support-menu] for IT area row (no categoryId)', () => {
         const result = formatMenuSelectionMessage({ id: 'sub-a', label: 'VPN' }, 'IT_SUPPORT')
-        expect(result.agentInput).toBe('[it_support-menu] Selected Subcategory (name: VPN) (id: sub-a).')
+        expect(result.agentInput).toBe('[it_support-menu] Selected Subcategory (name: VPN) (id: sub-a)')
         expect(result.displayText).toBe('VPN')
     })
 
@@ -73,7 +73,7 @@ describe('formatMenuSelectionMessage', () => {
             'IT_SUPPORT',
         )
         expect(result.agentInput).toBe(
-            '[it_support-menu] Selected Item (name: VPN dropouts) (id: item-9).',
+            '[it_support-menu] Selected Item (name: VPN dropouts) (id: item-9)',
         )
     })
 

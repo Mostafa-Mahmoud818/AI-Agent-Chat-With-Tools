@@ -299,7 +299,7 @@ describe('parseAgentMessage navigation subtypes', () => {
     })
 })
 
-describe('parseAgentMessage visits_query subtype', () => {
+describe('parseAgentMessage visits_query subtype (legacy history)', () => {
     it('parses visits_query envelope and normalizes items', () => {
         const raw = JSON.stringify({
             replyType: 'json',
@@ -489,7 +489,7 @@ describe('turnsToMessages', () => {
     it('renders a SYSTEM turn as a single agent status message (no user bubble)', () => {
         const envelope = JSON.stringify({
             replyType: 'text',
-            textString: 'Your Catering request CAT-2026-00042 is now Confirmed.',
+            textString: 'Your Catering request CT-2026-00042 is now Confirmed.',
             payload: { subtype: 'none' },
         })
         const turns = [{
@@ -507,7 +507,7 @@ describe('turnsToMessages', () => {
         expect(msgs).toHaveLength(1)
         expect(msgs[0].role).toBe('ai')
         expect(msgs[0].system).toBe(true)
-        expect(msgs[0].text).toBe('Your Catering request CAT-2026-00042 is now Confirmed.')
+        expect(msgs[0].text).toBe('Your Catering request CT-2026-00042 is now Confirmed.')
         expect(msgs[0].payload).toBeNull()
     })
 
@@ -584,7 +584,7 @@ describe('turnsToMessages', () => {
     it('maps SYSTEM turn to a single agent message without a user bubble', () => {
         const agentResponse = JSON.stringify({
             replyType: 'text',
-            textString: 'Your Catering request CAT-2026-00042 is now Confirmed.',
+            textString: 'Your Catering request CT-2026-00042 is now Confirmed.',
             payload: { subtype: 'none' },
         })
         const turns = [
@@ -603,7 +603,7 @@ describe('turnsToMessages', () => {
         expect(msgs).toHaveLength(1)
         expect(msgs[0].role).toBe('ai')
         expect(msgs[0].system).toBe(true)
-        expect(msgs[0].text).toBe('Your Catering request CAT-2026-00042 is now Confirmed.')
+        expect(msgs[0].text).toBe('Your Catering request CT-2026-00042 is now Confirmed.')
         expect(msgs[0].payload).toBeNull()
         expect(msgs[0].handledBy).toBe('CATERING')
     })

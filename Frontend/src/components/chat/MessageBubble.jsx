@@ -378,7 +378,7 @@ function MessageBubble({ message, onMenuItemClick, onBreadcrumbClick }) {
     const hasTicket = isAI && subtype === 'ticket'
     const isOutdoorNav = isAI && subtype === 'outdoor_navigation'
     const hasNavigation = isOutdoorNav || (isAI && subtype === 'indoor_navigation')
-    const hasVisitsQuery = isAI && subtype === 'visits_query'
+    const hasVisitsQuery = isAI && subtype === 'visits_query' // legacy history only (backend flag removed)
     // System-origin (turnKind === SYSTEM) is a STRUCTURAL flag from turnsToMessages — it drives the
     // notification layout (centered, no avatar, no "Answered by"). The status update itself renders as
     // the message sentence (textString); no separate card, to avoid duplicating the same info.

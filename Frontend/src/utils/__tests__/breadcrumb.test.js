@@ -24,6 +24,13 @@ describe('parseSelectionSignal', () => {
             .toEqual({ prefix: 'catering-menu', level: 'Product', name: 'Cappuccino', id: '9a2a39ec-9cd3-4f89-b703-af433d910215' })
     })
 
+    it('parses legacy signals with trailing period and optional (code: …)', () => {
+        expect(parseSelectionSignal('[catering-menu] Selected Product (name: Water) (id: p-1) (code: 999).'))
+            .toEqual({ prefix: 'catering-menu', level: 'Product', name: 'Water', id: 'p-1' })
+        expect(parseSelectionSignal('[it_support-menu] Selected Item (name: VPN) (id: item-9).'))
+            .toEqual({ prefix: 'it_support-menu', level: 'Item', name: 'VPN', id: 'item-9' })
+    })
+
     it('parses IT support and facilities signals', () => {
         expect(parseSelectionSignal('[it_support-menu] Selected Subcategory (name: Network) (id: area-7)'))
             .toEqual({ prefix: 'it_support-menu', level: 'Subcategory', name: 'Network', id: 'area-7' })

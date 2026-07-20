@@ -82,40 +82,41 @@ export function formatMenuSelectionMessage(item, handledBy) {
     const displayText = rawLabel || null
     const id = item.id != null ? String(item.id).trim() : ''
     if (!id) {
-        return { agentInput: `${prefix}Missing item id.`, displayText }
+        return { agentInput: `${prefix}Missing item id`, displayText }
     }
 
-    // IT / F&M BPMN: Subcategory row vs Item leaf.
+    // IT / F&M prompts: Subcategory row vs Item leaf. Format matches agent-*.md selectionSignal
+    // (no trailing period — backend validators only require "[prefix]" + "(id: <id>)").
     if (isServiceRequestPrefix(prefix)) {
         const parentId = item.categoryId != null && item.categoryId !== '' ? String(item.categoryId).trim() : ''
         if (parentId) {
             return {
-                agentInput: `${prefix}Selected Item${nameClause(rawLabel)} (id: ${id}).`,
+                agentInput: `${prefix}Selected Item${nameClause(rawLabel)} (id: ${id})`,
                 displayText,
             }
         }
         return {
-            agentInput: `${prefix}Selected Subcategory${nameClause(rawLabel)} (id: ${id}).`,
+            agentInput: `${prefix}Selected Subcategory${nameClause(rawLabel)} (id: ${id})`,
             displayText,
         }
     }
 
-    // Catering BPMN depth: Category → Subcategory → Product.
+    // Catering prompts: Category → Subcategory → Product. `code` is used only to detect Product
+    // depth — it must NOT appear in the signal (prompts emit `(name) (id)` only).
     if (item.code != null && item.code !== '') {
-        const code = String(item.code).trim()
         return {
-            agentInput: `${prefix}Selected Product${nameClause(rawLabel)} (id: ${id}) (code: ${code}).`,
+            agentInput: `${prefix}Selected Product${nameClause(rawLabel)} (id: ${id})`,
             displayText,
         }
     }
     if (item.categoryId != null && item.categoryId !== '') {
         return {
-            agentInput: `${prefix}Selected Subcategory${nameClause(rawLabel)} (id: ${id}).`,
+            agentInput: `${prefix}Selected Subcategory${nameClause(rawLabel)} (id: ${id})`,
             displayText,
         }
     }
     return {
-        agentInput: `${prefix}Selected Category${nameClause(rawLabel)} (id: ${id}).`,
+        agentInput: `${prefix}Selected Category${nameClause(rawLabel)} (id: ${id})`,
         displayText,
     }
 }

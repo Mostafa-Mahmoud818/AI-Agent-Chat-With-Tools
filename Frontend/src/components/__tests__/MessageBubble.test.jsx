@@ -277,7 +277,7 @@ describe('MessageBubble', () => {
                 menuitems: [],
                 order: {
                     id: '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d',
-                    referenceCode: 'CAT-2026-00007',
+                    referenceCode: 'CT-2026-00007',
                     status: 'PENDING',
                     totalPrice: 12.5,
                     createdAt: '2026-06-11T09:00:00Z',
@@ -287,7 +287,7 @@ describe('MessageBubble', () => {
         }
         render(<MessageBubble message={msg} />)
         expect(screen.getByText('Reference')).toBeInTheDocument()
-        expect(screen.getByText('CAT-2026-00007')).toBeInTheDocument()
+        expect(screen.getByText('CT-2026-00007')).toBeInTheDocument()
         expect(screen.queryByText(/0a1b2c3d/)).not.toBeInTheDocument()
         expect(screen.queryByText(/Order ID/i)).not.toBeInTheDocument()
     })

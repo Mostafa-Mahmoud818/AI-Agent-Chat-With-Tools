@@ -130,7 +130,7 @@ All env vars are optional — the UI can supply backend env, token, and visit id
 | List / create conversations, turns | `/api/v1/secure/chatting/...` | `/api/v1/public/chatting/...` |
 | Start orchestration, user-messages, assistant SSE | `/api/v1/secure/chatting/orchestration/...` | `/api/v1/public/chatting/orchestration/...` |
 
-Create conversation (guest) uses body `{ clientId, req: { initialTitle, initialSummary } }` per `CreateConversationWithIdentityRequest`. Orchestration start sends `{ inputText, chatContext: { schemaVersion, contextType: "VISIT", contextData: { visitId } }, displayText? }`. Follow-ups send `{ followUpInput, displayText?, clientMessageId? }` only. The client opens SSE **before** POST start/user-messages. SSE events are JSON `ChattingOrchestrationRoundResponseDto` (`status`: `ready` \| `processing` \| `error` \| `expired`, `message`, `handledBy`).
+Create conversation (guest) uses body `{ clientId, req: { initialTitle, initialSummary } }` per `CreateConversationWithIdentityRequest`. Orchestration start sends `{ inputText, chatContext: { schemaVersion, contextType: "VISIT", contextData: { id } }, displayText? }` (`id` is the visit UUID; backend also accepts alias `visitId`). Follow-ups send `{ followUpInput, displayText?, clientMessageId? }` only. The client opens SSE **before** POST start/user-messages. SSE events are JSON `ChattingOrchestrationRoundResponseDto` (`status`: `ready` \| `processing` \| `error` \| `expired`, `message`, `handledBy`).
 
 ### Environment setup (DEV / TEST / STAGE / LOCAL)
 
@@ -150,13 +150,13 @@ Agent JSON shapes are defined in the Ankabut modulith repo:
 - BPMN: `ankabut-dxp-modulith-service/src/main/resources/camunda/bpmns/` (`ai-agent-chat-router`, `ai-agent-catering`, `ai-agent-it_support`, `ai-agent-facilities_maintenance`, `ai-agent-visitor-experience`)
 - Prompts: `camunda/prompts/*.md`
 
-The UI parses persisted/SSE agent text in [`src/utils/agentMessage.js`](src/utils/agentMessage.js) (`replyType`, `textContent` / `textString`, `payload.subtype`: `menu`, `ticket`, `order_confirmation`, `error`, `none`, `visits_query`, `indoor_navigation`, `outdoor_navigation`). After changing BPMN connectors or prompt contracts:
+The UI parses persisted/SSE agent text in [`src/utils/agentMessage.js`](src/utils/agentMessage.js) (`replyType`, `textString`, `payload.subtype`: `menu`, `ticket`, `order_confirmation`, `error`, `none`, `indoor_navigation`, `outdoor_navigation`). Legacy `textContent` and `visits_query` are still parsed for old history turns only. After changing BPMN connectors or prompt contracts:
 
 1. Update fixtures in `src/utils/__tests__/agentMessage.test.js` and component tests if new subtypes appear.
 2. Run `npm test`.
 3. Manually smoke-test menu navigation, ticket confirmation, visitor-experience greetings, and voice input.
 
-**Visitor Experience visits listing (default):** the agent returns `replyType:"text"`, `subtype:"none"`, `visits:null`, `menuitems:[]` — the numbered Upcoming/Previous list is entirely in `textString`. The user picks a visit by typing or speaking a **name/title or ordinal** in the composer (e.g. `Vendor Meeting`, `2`, `the second one`); there is no tap-to-select menu. Legacy `visits_query` cards render only when the backend legacy flag is on.
+**Visitor Experience visits listing:** the agent returns `replyType:"text"`, `subtype:"none"`, `menuitems:[]` — the numbered Upcoming/Previous list is entirely in `textString`. The user picks a visit by typing or speaking a **name/title or ordinal** in the composer (e.g. `Vendor Meeting`, `2`, `the second one`); there is no tap-to-select menu. Reference codes use prefixes `CT-` / `IT-` / `FM-` (not `CAT-`).
 
 **Speech-to-text:** tap the mic in the composer to record → `POST /api/v1/{secure|public}/speech/transcriptions` (multipart `audio`) → transcript is inserted into the textarea for review/edit → Send uses the existing orchestration `start` / `user-messages` endpoints unchanged.
 
