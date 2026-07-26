@@ -209,8 +209,12 @@ function OrderConfirmationCard({ payload }) {
 
 function TicketCard({ payload }) {
     // Security: payload.ticketId is an internal UUID kept for machine use only — never rendered.
-    // The user-facing referenceCode arrives in the message text.
+    // The user-facing referenceCode (e.g. IT-2026-00042) is shown on the card; it also appears in
+    // the message text. Guard against a UUID-shaped value just like the order card does.
     const ticketStatus = payload.ticketStatus ?? null
+    const rawRef = payload.referenceCode ?? null
+    const ticketRef = rawRef && !UUID_RE.test(String(rawRef)) ? rawRef : null
+    const hasMeta = ticketRef || ticketStatus
     return (
         <div className="ticket-card">
             <div className="ticket-card-header">
@@ -219,9 +223,12 @@ function TicketCard({ payload }) {
                 </svg>
                 <span>Support Ticket Created</span>
             </div>
-            <div className="ticket-card-meta">
-                {ticketStatus && <span className="ticket-meta-item"><span className="ticket-meta-label">Status</span><span className="ticket-meta-value ticket-status">{String(ticketStatus)}</span></span>}
-            </div>
+            {hasMeta && (
+                <div className="ticket-card-meta">
+                    {ticketRef && <span className="ticket-meta-item"><span className="ticket-meta-label">Reference</span><span className="ticket-meta-value">{String(ticketRef)}</span></span>}
+                    {ticketStatus && <span className="ticket-meta-item"><span className="ticket-meta-label">Status</span><span className="ticket-meta-value ticket-status">{String(ticketStatus)}</span></span>}
+                </div>
+            )}
         </div>
     )
 }
@@ -498,9 +505,11 @@ MessageBubble.propTypes = {
             })),
             ticketId: PropTypes.string,
             ticketStatus: PropTypes.string,
+            referenceCode: PropTypes.string,
             // Catering order_confirmation — nested order object per agent schema
             order: PropTypes.shape({
                 id: PropTypes.string,
+                referenceCode: PropTypes.string,
                 customerName: PropTypes.string,
                 status: PropTypes.string,
                 totalPrice: PropTypes.number,

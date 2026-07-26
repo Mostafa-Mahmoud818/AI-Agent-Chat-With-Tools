@@ -265,6 +265,50 @@ describe('MessageBubble', () => {
         expect(screen.queryByText(/Ticket ID/i)).not.toBeInTheDocument()
     })
 
+    it('ticket card renders the user-facing referenceCode from the payload', () => {
+        const msg = {
+            id: 't-ref',
+            role: 'ai',
+            text: 'Your IT ticket IT-2026-00042 has been created.',
+            timestamp: new Date(),
+            handledBy: 'IT_SUPPORT',
+            payload: {
+                subtype: 'ticket',
+                menuitems: [],
+                order: null,
+                ticketId: '9f4c2d8e-1234-4abc-9def-1234567890ab',
+                ticketStatus: 'PENDING',
+                referenceCode: 'IT-2026-00042',
+            },
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText('Reference')).toBeInTheDocument()
+        expect(screen.getByText('IT-2026-00042')).toBeInTheDocument()
+        expect(screen.getByText('PENDING')).toBeInTheDocument()
+        expect(screen.queryByText(/9f4c2d8e/)).not.toBeInTheDocument()
+    })
+
+    it('ticket card suppresses a UUID-shaped referenceCode', () => {
+        const msg = {
+            id: 't-ref-uuid',
+            role: 'ai',
+            text: 'Your IT ticket has been created.',
+            timestamp: new Date(),
+            handledBy: 'IT_SUPPORT',
+            payload: {
+                subtype: 'ticket',
+                menuitems: [],
+                order: null,
+                ticketId: '9f4c2d8e-1234-4abc-9def-1234567890ab',
+                ticketStatus: 'PENDING',
+                referenceCode: '9f4c2d8e-1234-4abc-9def-1234567890ab',
+            },
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.queryByText('Reference')).not.toBeInTheDocument()
+        expect(screen.queryByText(/9f4c2d8e/)).not.toBeInTheDocument()
+    })
+
     it('order confirmation prefers referenceCode and suppresses UUID-shaped order ids', () => {
         const msg = {
             id: 'o-sec',

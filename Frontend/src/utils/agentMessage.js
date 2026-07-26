@@ -86,7 +86,7 @@ export function parseAgentMessage(raw) {
             typeof parsed.payload === 'string' &&
             Array.isArray(parsed.menuitems)
         ) {
-            const { payload: subtype, menuitems, breadcrumb, order, ticketId, ticketStatus, ...rest } = parsed
+            const { payload: subtype, menuitems, breadcrumb, order, ticketId, ticketStatus, referenceCode, ...rest } = parsed
             parsed = {
                 ...rest,
                 payload: {
@@ -96,6 +96,7 @@ export function parseAgentMessage(raw) {
                     order: order ?? null,
                     ticketId: ticketId ?? null,
                     ticketStatus: ticketStatus ?? null,
+                    referenceCode: referenceCode ?? null,
                 },
             }
         }
