@@ -114,6 +114,17 @@ function resolveMenuItems(payload) {
 // reference codes (e.g. IT-2026-00042) are the only identifiers allowed on screen.
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
 
+/**
+ * Renders `ticket.createdAt` (an ISO-8601 UTC instant) in the viewer's locale.
+ * Returns null on an unparseable value so the row is dropped rather than showing "Invalid Date".
+ * @param {string|null|undefined} iso
+ */
+function formatTicketDate(iso) {
+    if (iso == null || String(iso).trim() === '') return null
+    const d = new Date(String(iso))
+    return Number.isNaN(d.getTime()) ? null : d.toLocaleString()
+}
+
 function OrderConfirmationCard({ payload }) {
     // Schema: payload.order holds the nested order object.
     // Fall back to reading fields directly from payload for any legacy flat structure.
@@ -208,13 +219,21 @@ function OrderConfirmationCard({ payload }) {
 }
 
 function TicketCard({ payload }) {
-    // Security: payload.ticketId is an internal UUID kept for machine use only — never rendered.
-    // The user-facing referenceCode (e.g. IT-2026-00042) is shown on the card; it also appears in
-    // the message text. Guard against a UUID-shaped value just like the order card does.
-    const ticketStatus = payload.ticketStatus ?? null
-    const rawRef = payload.referenceCode ?? null
+    // Schema: payload.ticket holds the nested ticket object {id, referenceCode, status, createdAt},
+    // mirroring payload.order. parseAgentMessage folds pre-2026-07-27 turns (flat ticketId /
+    // ticketStatus / referenceCode) into the same shape; the flat reads below are a second line of
+    // defence for payloads that reach this card without going through that normalizer.
+    // Security: ticket.id is an internal UUID kept for machine use only — never rendered. The
+    // user-facing referenceCode (e.g. IT-2026-00042) is shown; guard a UUID-shaped value like the
+    // order card does.
+    const ticket = payload.ticket ?? null
+    const ticketStatus = ticket?.status ?? payload.ticketStatus ?? null
+    // Format up front: an unparseable instant yields null so it gates the row out entirely
+    // rather than rendering a "Created" label with no value.
+    const createdAt = formatTicketDate(ticket?.createdAt)
+    const rawRef = ticket?.referenceCode ?? payload.referenceCode ?? null
     const ticketRef = rawRef && !UUID_RE.test(String(rawRef)) ? rawRef : null
-    const hasMeta = ticketRef || ticketStatus
+    const hasMeta = ticketRef || ticketStatus || createdAt
     return (
         <div className="ticket-card">
             <div className="ticket-card-header">
@@ -227,6 +246,7 @@ function TicketCard({ payload }) {
                 <div className="ticket-card-meta">
                     {ticketRef && <span className="ticket-meta-item"><span className="ticket-meta-label">Reference</span><span className="ticket-meta-value">{String(ticketRef)}</span></span>}
                     {ticketStatus && <span className="ticket-meta-item"><span className="ticket-meta-label">Status</span><span className="ticket-meta-value ticket-status">{String(ticketStatus)}</span></span>}
+                    {createdAt && <span className="ticket-meta-item"><span className="ticket-meta-label">Created</span><span className="ticket-meta-value ticket-date">{createdAt}</span></span>}
                 </div>
             )}
         </div>
@@ -503,6 +523,14 @@ MessageBubble.propTypes = {
                 label: PropTypes.string.isRequired,
                 levelKey: PropTypes.string.isRequired,
             })),
+            // IT / F&M ticket — nested ticket object per agent schema (mirrors `order`)
+            ticket: PropTypes.shape({
+                id: PropTypes.string,
+                referenceCode: PropTypes.string,
+                status: PropTypes.string,
+                createdAt: PropTypes.string,
+            }),
+            // Legacy flat ticket keys (pre-2026-07-27 turns) — normalized into `ticket` on parse
             ticketId: PropTypes.string,
             ticketStatus: PropTypes.string,
             referenceCode: PropTypes.string,

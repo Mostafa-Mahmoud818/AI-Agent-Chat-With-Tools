@@ -594,6 +594,14 @@
     color: #818cf8;
 }
 
+/* Mirrors .order-date — ticket.createdAt is secondary metadata, not a headline value. */
+.ticket-date {
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 400;
+    word-break: normal;
+}
+
 /* System-injected status turns (turnKind === SYSTEM): a centered, avatar-less notification styled
    like .message-row.system. The status sentence (textString) is the only content — no separate card,
    to avoid duplicating the same reference/status info. */

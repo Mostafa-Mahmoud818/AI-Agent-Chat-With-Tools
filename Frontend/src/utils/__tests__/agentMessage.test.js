@@ -184,7 +184,34 @@ describe('parseAgentMessage', () => {
         expect(payload?.breadcrumb).toEqual([{ label: 'IT Support', levelKey: 'root' }])
     })
 
-    it('parses ticket reply with textString and subtype ticket', () => {
+    it('parses a ticket reply into the nested ticket object (current contract)', () => {
+        const raw = JSON.stringify({
+            replyType: 'json',
+            textString: 'Your IT ticket IT-2026-00084 has been created.',
+            payload: {
+                subtype: 'ticket',
+                menuitems: [],
+                order: null,
+                ticket: {
+                    id: 'fe0cb592-a5d3-40fc-952a-d353982b9e88',
+                    referenceCode: 'IT-2026-00084',
+                    status: 'PENDING',
+                    createdAt: '2026-07-27T09:12:04Z',
+                },
+            },
+        })
+        const { text, payload } = parseAgentMessage(raw)
+        expect(text).toBe('Your IT ticket IT-2026-00084 has been created.')
+        expect(payload?.subtype).toBe('ticket')
+        expect(payload?.ticket).toEqual({
+            id: 'fe0cb592-a5d3-40fc-952a-d353982b9e88',
+            referenceCode: 'IT-2026-00084',
+            status: 'PENDING',
+            createdAt: '2026-07-27T09:12:04Z',
+        })
+    })
+
+    it('folds legacy flat ticket keys into the nested ticket object (pre-2026-07-27 history)', () => {
         const raw = JSON.stringify({
             replyType: 'json',
             textString: 'Your ticket was created.',
@@ -195,12 +222,44 @@ describe('parseAgentMessage', () => {
                 order: null,
                 ticketId: 'TK-99',
                 ticketStatus: 'OPEN',
+                referenceCode: 'IT-2026-00042',
             },
         })
-        const { text, payload } = parseAgentMessage(raw)
-        expect(text).toBe('Your ticket was created.')
+        const { payload } = parseAgentMessage(raw)
         expect(payload?.subtype).toBe('ticket')
-        expect(payload?.ticketId).toBe('TK-99')
+        expect(payload?.ticket).toEqual({
+            id: 'TK-99',
+            referenceCode: 'IT-2026-00042',
+            status: 'OPEN',
+            createdAt: null,
+        })
+    })
+
+    it('keeps every ticket sub-key present, null when the backend omitted it', () => {
+        const raw = JSON.stringify({
+            replyType: 'json',
+            textString: 'Your IT ticket has been created.',
+            payload: {
+                subtype: 'ticket',
+                menuitems: [],
+                order: null,
+                ticket: { id: 'fe0cb592', referenceCode: null, status: 'PENDING', createdAt: null },
+            },
+        })
+        const { payload } = parseAgentMessage(raw)
+        expect(payload?.ticket).toEqual({ id: 'fe0cb592', referenceCode: null, status: 'PENDING', createdAt: null })
+    })
+
+    it('yields ticket:null when a ticket reply carries no ticket data at all', () => {
+        // Contract violation — the backend logs chatting.agent.ticket_contract_violation for this.
+        const raw = JSON.stringify({
+            replyType: 'json',
+            textString: 'Your ticket has been created.',
+            payload: { subtype: 'ticket', menuitems: [], order: null, ticket: null },
+        })
+        const { payload } = parseAgentMessage(raw)
+        expect(payload?.subtype).toBe('ticket')
+        expect(payload?.ticket).toBeNull()
     })
 
     it('recovers flattened JSON where payload fields are at top level (IT/F&M old-prompt bug)', () => {

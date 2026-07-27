@@ -4,9 +4,12 @@
  *
  * Agents share one envelope: `replyType`, `textString`, `payload.subtype`
  * (`menu` | `ticket` | `order_confirmation` | `indoor_navigation` | `outdoor_navigation` | `error` | `none`).
- * Legacy-only: `textContent` (old IT/F&amp;M) and `visits_query` (removed backend flag) are still parsed for history.
+ * Card data lives in a nested object per subtype: `payload.order` (catering), `payload.ticket` (IT / F&amp;M),
+ * `payload.navigation` (Visitor Experience).
+ * Legacy-only: `textContent` (old IT/F&amp;M), the flat `ticketId`/`ticketStatus`/`referenceCode` payload keys
+ * (replaced by `payload.ticket` on 2026-07-27) and `visits_query` (removed backend flag) are still parsed for history.
  * This module normalizes fences, flattened legacy shapes, breadcrumbs, menu item fields (including optional `selectionSignal`),
- * and Visitor Experience navigation payloads.
+ * ticket objects, and Visitor Experience navigation payloads.
  */
 import { isMenuSelectionUserInput } from './menuSelection.js'
 
@@ -86,7 +89,7 @@ export function parseAgentMessage(raw) {
             typeof parsed.payload === 'string' &&
             Array.isArray(parsed.menuitems)
         ) {
-            const { payload: subtype, menuitems, breadcrumb, order, ticketId, ticketStatus, referenceCode, ...rest } = parsed
+            const { payload: subtype, menuitems, breadcrumb, order, ticket, ticketId, ticketStatus, referenceCode, ...rest } = parsed
             parsed = {
                 ...rest,
                 payload: {
@@ -94,6 +97,8 @@ export function parseAgentMessage(raw) {
                     menuitems,
                     breadcrumb: breadcrumb ?? [],
                     order: order ?? null,
+                    ticket: ticket ?? null,
+                    // Legacy flat ticket keys — folded into `payload.ticket` by normalizePayload.
                     ticketId: ticketId ?? null,
                     ticketStatus: ticketStatus ?? null,
                     referenceCode: referenceCode ?? null,
@@ -144,9 +149,9 @@ function normalizePayload(payload, replyType) {
         return { ...payload }
     }
 
-    // Ticket — preserve subtype.
+    // Ticket (IT / F&M) — normalize to the nested `ticket` object, mirroring catering's `order`.
     if (payload.subtype === 'ticket') {
-        return { ...payload, subtype: 'ticket' }
+        return { ...payload, subtype: 'ticket', ticket: toTicket(payload) }
     }
 
     // Navigation cards (Visitor Experience). The subtype encodes indoor vs outdoor — the client
@@ -284,6 +289,42 @@ function toMenuItems(items) {
             }
         })
         .filter(Boolean)
+}
+
+/**
+ * Normalizes a `subtype:"ticket"` payload into the nested `ticket` object the card renders,
+ * mirroring catering's `payload.order`.
+ *
+ * Current contract (backend 2026-07-27+): `payload.ticket = {id, referenceCode, status, createdAt}`.
+ * Legacy: turns persisted before that date carried the three flat payload keys
+ * (`ticketId` / `ticketStatus` / `referenceCode`) and no nested object — history must still render,
+ * so those are folded into the same shape here. This is the single place that knows about the old
+ * layout; `TicketCard` reads `payload.ticket` only.
+ *
+ * @param {object} payload the `subtype:"ticket"` payload
+ * @returns {{id: string|null, referenceCode: string|null, status: string|null, createdAt: string|null}|null}
+ *   `null` when no ticket data is present at all (a malformed card the backend also flags via
+ *   `chatting.agent.ticket_contract_violation`).
+ */
+function toTicket(payload) {
+    const nested = payload.ticket
+    const hasNested = nested != null && typeof nested === 'object' && !Array.isArray(nested)
+    const src = hasNested
+        ? { id: nested.id, referenceCode: nested.referenceCode, status: nested.status, createdAt: nested.createdAt }
+        : { id: payload.ticketId, referenceCode: payload.referenceCode, status: payload.ticketStatus, createdAt: payload.createdAt }
+
+    const str = (v) => {
+        if (v == null) return null
+        const s = String(v).trim()
+        return s === '' ? null : s
+    }
+    const ticket = {
+        id: str(src.id),
+        referenceCode: str(src.referenceCode),
+        status: str(src.status),
+        createdAt: str(src.createdAt),
+    }
+    return Object.values(ticket).some((v) => v !== null) ? ticket : null
 }
 
 /**

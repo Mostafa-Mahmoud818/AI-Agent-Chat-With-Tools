@@ -243,21 +243,22 @@ describe('MessageBubble', () => {
         expect(screen.queryByText(/ROOM-123/)).not.toBeInTheDocument()
     })
 
-    it('ticket card never renders the internal ticketId UUID', () => {
-        const msg = {
-            id: 't-sec',
-            role: 'ai',
-            text: 'Your IT ticket IT-2026-00042 was created.',
-            timestamp: new Date(),
-            handledBy: 'IT_SUPPORT',
-            payload: {
-                subtype: 'ticket',
-                menuitems: [],
-                order: null,
-                ticketId: '9f4c2d8e-1234-4abc-9def-1234567890ab',
-                ticketStatus: 'PENDING',
-            },
-        }
+    const ticketMessage = (id, ticket, extra = {}) => ({
+        id,
+        role: 'ai',
+        text: 'Your IT ticket IT-2026-00042 has been created.',
+        timestamp: new Date(),
+        handledBy: 'IT_SUPPORT',
+        payload: { subtype: 'ticket', menuitems: [], order: null, ticket, ...extra },
+    })
+
+    it('ticket card never renders the internal ticket id UUID', () => {
+        const msg = ticketMessage('t-sec', {
+            id: '9f4c2d8e-1234-4abc-9def-1234567890ab',
+            referenceCode: null,
+            status: 'PENDING',
+            createdAt: null,
+        })
         render(<MessageBubble message={msg} />)
         expect(screen.getByText('Support Ticket Created')).toBeInTheDocument()
         expect(screen.getByText('PENDING')).toBeInTheDocument()
@@ -265,45 +266,55 @@ describe('MessageBubble', () => {
         expect(screen.queryByText(/Ticket ID/i)).not.toBeInTheDocument()
     })
 
-    it('ticket card renders the user-facing referenceCode from the payload', () => {
-        const msg = {
-            id: 't-ref',
-            role: 'ai',
-            text: 'Your IT ticket IT-2026-00042 has been created.',
-            timestamp: new Date(),
-            handledBy: 'IT_SUPPORT',
-            payload: {
-                subtype: 'ticket',
-                menuitems: [],
-                order: null,
-                ticketId: '9f4c2d8e-1234-4abc-9def-1234567890ab',
-                ticketStatus: 'PENDING',
-                referenceCode: 'IT-2026-00042',
-            },
-        }
+    it('ticket card renders referenceCode, status and createdAt from payload.ticket', () => {
+        const msg = ticketMessage('t-ref', {
+            id: '9f4c2d8e-1234-4abc-9def-1234567890ab',
+            referenceCode: 'IT-2026-00042',
+            status: 'PENDING',
+            createdAt: '2026-07-14T06:00:00Z',
+        })
         render(<MessageBubble message={msg} />)
         expect(screen.getByText('Reference')).toBeInTheDocument()
+        expect(screen.getByText('IT-2026-00042')).toBeInTheDocument()
+        expect(screen.getByText('PENDING')).toBeInTheDocument()
+        expect(screen.getByText('Created')).toBeInTheDocument()
+        expect(screen.getByText(new Date('2026-07-14T06:00:00Z').toLocaleString())).toBeInTheDocument()
+        expect(screen.queryByText(/9f4c2d8e/)).not.toBeInTheDocument()
+    })
+
+    it('ticket card omits the Created row when createdAt is absent or unparseable', () => {
+        const { unmount } = render(<MessageBubble message={ticketMessage('t-no-date', {
+            id: 'x', referenceCode: 'IT-2026-00042', status: 'PENDING', createdAt: null,
+        })} />)
+        expect(screen.queryByText('Created')).not.toBeInTheDocument()
+        unmount()
+
+        render(<MessageBubble message={ticketMessage('t-bad-date', {
+            id: 'x', referenceCode: 'IT-2026-00042', status: 'PENDING', createdAt: 'not-a-date',
+        })} />)
+        expect(screen.queryByText('Created')).not.toBeInTheDocument()
+        expect(screen.queryByText(/Invalid Date/)).not.toBeInTheDocument()
+    })
+
+    it('ticket card still renders legacy flat payload keys (pre-2026-07-27 history)', () => {
+        const msg = ticketMessage('t-legacy', undefined, {
+            ticketId: '9f4c2d8e-1234-4abc-9def-1234567890ab',
+            ticketStatus: 'PENDING',
+            referenceCode: 'IT-2026-00042',
+        })
+        render(<MessageBubble message={msg} />)
         expect(screen.getByText('IT-2026-00042')).toBeInTheDocument()
         expect(screen.getByText('PENDING')).toBeInTheDocument()
         expect(screen.queryByText(/9f4c2d8e/)).not.toBeInTheDocument()
     })
 
     it('ticket card suppresses a UUID-shaped referenceCode', () => {
-        const msg = {
-            id: 't-ref-uuid',
-            role: 'ai',
-            text: 'Your IT ticket has been created.',
-            timestamp: new Date(),
-            handledBy: 'IT_SUPPORT',
-            payload: {
-                subtype: 'ticket',
-                menuitems: [],
-                order: null,
-                ticketId: '9f4c2d8e-1234-4abc-9def-1234567890ab',
-                ticketStatus: 'PENDING',
-                referenceCode: '9f4c2d8e-1234-4abc-9def-1234567890ab',
-            },
-        }
+        const msg = ticketMessage('t-ref-uuid', {
+            id: '9f4c2d8e-1234-4abc-9def-1234567890ab',
+            referenceCode: '9f4c2d8e-1234-4abc-9def-1234567890ab',
+            status: 'PENDING',
+            createdAt: null,
+        })
         render(<MessageBubble message={msg} />)
         expect(screen.queryByText('Reference')).not.toBeInTheDocument()
         expect(screen.queryByText(/9f4c2d8e/)).not.toBeInTheDocument()
