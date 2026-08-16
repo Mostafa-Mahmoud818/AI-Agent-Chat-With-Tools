@@ -65,6 +65,18 @@ describe('MessageBubble', () => {
         expect(screen.getByText('Answered by Assistant')).toBeInTheDocument()
     })
 
+    it('renders Facilities Maintenance Agent catalog label as Facilities & Maintenance', () => {
+        const msg = {
+            id: 'a-fm-catalog',
+            role: 'ai',
+            text: 'We can help with that.',
+            timestamp: new Date(),
+            handledBy: 'Facilities Maintenance Agent',
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText('Answered by Facilities & Maintenance')).toBeInTheDocument()
+    })
+
     it('renders system message with status role', () => {
         const msg = { id: 's1', role: 'system', text: 'Session expired', timestamp: new Date() }
         render(<MessageBubble message={msg} />)

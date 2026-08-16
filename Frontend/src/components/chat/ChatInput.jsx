@@ -5,7 +5,7 @@
 
 import { useState, useRef, useCallback, forwardRef, useImperativeHandle, useEffect } from 'react'
 import PropTypes from 'prop-types'
-import { CHAT_INPUT_MAX } from '../../config/chattingValidationLimits.js'
+import { AUDIO_MAX_BYTES, CHAT_INPUT_MAX } from '../../config/chattingValidationLimits.js'
 import { transcribeSpeech, ApiError } from '../../services/api.js'
 import './ChatInput.css'
 
@@ -22,16 +22,22 @@ const ChatInput = forwardRef(function ChatInput({ onSend, placeholder, disabled 
     const [recording, setRecording] = useState(false)
     const [transcribing, setTranscribing] = useState(false)
     const [sttError, setSttError] = useState(null)
+    const [languageHint, setLanguageHint] = useState('') // '' = auto-detect, 'en', 'ar'
     const inputRef = useRef(null)
     const mediaRecorderRef = useRef(null)
     const audioChunksRef = useRef([])
     const mediaStreamRef = useRef(null)
     const recordedMimeRef = useRef(PREFERRED_MIME)
     const recordingRef = useRef(false)
+    const languageHintRef = useRef('')
 
     useEffect(() => {
         recordingRef.current = recording
     }, [recording])
+
+    useEffect(() => {
+        languageHintRef.current = languageHint
+    }, [languageHint])
 
     useImperativeHandle(ref, () => ({
         focus() {
@@ -138,10 +144,15 @@ const ChatInput = forwardRef(function ChatInput({ onSend, placeholder, disabled 
                 const blob = new Blob(audioChunksRef.current, { type: recordedMimeRef.current })
                 audioChunksRef.current = []
                 if (blob.size === 0) return
+                if (blob.size > AUDIO_MAX_BYTES) {
+                    setSttError('Recording is too large (max 25 MB). Please record a shorter clip.')
+                    return
+                }
 
                 setTranscribing(true)
                 try {
-                    const result = await transcribeSpeech(blob, { filename: 'recording.webm' })
+                    const hint = languageHintRef.current || null
+                    const result = await transcribeSpeech(blob, { filename: 'recording.webm', languageHint: hint })
                     appendTranscript(result?.text ?? '')
                 } catch (err) {
                     const message = err instanceof ApiError
@@ -196,6 +207,18 @@ const ChatInput = forwardRef(function ChatInput({ onSend, placeholder, disabled 
                     disabled={disabled || transcribing}
                     autoFocus
                 />
+                <select
+                    className="stt-lang-select"
+                    value={languageHint}
+                    onChange={(e) => setLanguageHint(e.target.value)}
+                    disabled={micDisabled || recording}
+                    aria-label="Speech language"
+                    title="Speech recognition language"
+                >
+                    <option value="">Auto</option>
+                    <option value="en">EN</option>
+                    <option value="ar">AR</option>
+                </select>
                 <button
                     type="button"
                     className={`mic-btn ${recording ? 'recording' : ''} ${transcribing ? 'transcribing' : ''}`}

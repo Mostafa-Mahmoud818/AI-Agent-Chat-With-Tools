@@ -12,6 +12,12 @@ export const DISPLAY_TEXT_MAX = 4000
 /** Conversation {@code initialTitle}. */
 export const CONVERSATION_TITLE_MAX = 255
 
+/** Max audio upload size for speech transcription. Mirrors backend {@code SpeechProperties.DEFAULT_MAX_BYTES} (25 MiB). */
+export const AUDIO_MAX_BYTES = 26_214_400
+
+/** Allowed transcription language hints; blank/null = auto-detect. Mirrors backend {@code SpeechProperties} allowed languages. */
+export const SPEECH_LANGUAGE_HINTS = ['en', 'ar']
+
 /**
  * @param {unknown} text
  * @param {number} max

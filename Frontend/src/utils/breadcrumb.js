@@ -34,6 +34,7 @@ const ROOT_LABEL_BY_HANDLER = {
     'IT Support Agent': 'IT Support',
     'Facilities Agent': 'Facilities & Maintenance',
     'Facilities & Maintenance Agent': 'Facilities & Maintenance',
+    'Facilities Maintenance Agent': 'Facilities & Maintenance',
     // RouteCategory enum strings emitted by persisted turns.
     VISITOR_EXPERIENCE: 'Assistant',
     CATERING: 'Menu',
@@ -43,18 +44,26 @@ const ROOT_LABEL_BY_HANDLER = {
     error: 'Assistant',
 }
 
+// Case-insensitive lookup so a casing change in the backend `handledBy` label can't silently
+// drop the breadcrumb root to the fallback. Mirrors the uppercasing in MessageBubble.formatHandledBy
+// and menuSelection.resolveMenuPrefixFromHandledBy.
+const ROOT_LABEL_BY_HANDLER_UPPER = Object.fromEntries(
+    Object.entries(ROOT_LABEL_BY_HANDLER).map(([k, v]) => [k.toUpperCase(), v]),
+)
+
 /**
  * @param {string|null|undefined} handledBy SSE `handledBy` display label or persisted `routeCategory` enum.
  * @returns {{ label: string, levelKey: string }}
  */
 export function rootCrumbFor(handledBy) {
-    const key = handledBy != null ? String(handledBy).trim() : ''
-    const label = (key && ROOT_LABEL_BY_HANDLER[key]) || 'Assistant'
+    const key = handledBy != null ? String(handledBy).trim().toUpperCase() : ''
+    const label = (key && ROOT_LABEL_BY_HANDLER_UPPER[key]) || 'Assistant'
     return { label, levelKey: 'root' }
 }
 
 function isCateringHandler(handledBy) {
-    return handledBy === 'Catering Agent' || handledBy === 'CATERING'
+    const u = handledBy != null ? String(handledBy).trim().toUpperCase() : ''
+    return u === 'CATERING AGENT' || u === 'CATERING'
 }
 
 /**

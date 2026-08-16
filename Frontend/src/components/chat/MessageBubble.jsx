@@ -387,6 +387,7 @@ function formatHandledBy(value) {
     if (normalized === 'IT SUPPORT AGENT') return 'IT Support'
     if (normalized === 'CATERING AGENT') return 'Catering'
     if (normalized === 'FACILITIES & MAINTENANCE AGENT') return 'Facilities & Maintenance'
+    if (normalized === 'FACILITIES MAINTENANCE AGENT') return 'Facilities & Maintenance'
     return trimmed.replace(/_/g, ' ')
 }
 

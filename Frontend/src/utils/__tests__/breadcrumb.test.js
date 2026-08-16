@@ -53,6 +53,7 @@ describe('rootCrumbFor', () => {
         expect(rootCrumbFor('Catering Agent')).toEqual({ label: 'Menu', levelKey: 'root' })
         expect(rootCrumbFor('IT Support Agent')).toEqual({ label: 'IT Support', levelKey: 'root' })
         expect(rootCrumbFor('Facilities & Maintenance Agent')).toEqual({ label: 'Facilities & Maintenance', levelKey: 'root' })
+        expect(rootCrumbFor('Facilities Maintenance Agent')).toEqual({ label: 'Facilities & Maintenance', levelKey: 'root' })
     })
 
     it('maps persisted routeCategory enum strings to root crumb', () => {
@@ -67,6 +68,13 @@ describe('rootCrumbFor', () => {
     it('defaults to Assistant for unknown handlers', () => {
         expect(rootCrumbFor(null)).toEqual({ label: 'Assistant', levelKey: 'root' })
         expect(rootCrumbFor('Unknown')).toEqual({ label: 'Assistant', levelKey: 'root' })
+    })
+
+    it('matches handledBy case-insensitively (resilient to backend casing drift)', () => {
+        expect(rootCrumbFor('catering agent')).toEqual({ label: 'Menu', levelKey: 'root' })
+        expect(rootCrumbFor('IT support Agent')).toEqual({ label: 'IT Support', levelKey: 'root' })
+        expect(rootCrumbFor('  visitor experience agent  ')).toEqual({ label: 'Assistant', levelKey: 'root' })
+        expect(rootCrumbFor('it_support')).toEqual({ label: 'IT Support', levelKey: 'root' })
     })
 })
 

@@ -87,6 +87,11 @@ export async function exchangeOtpForToken(env, email, code) {
     if (!token || !String(token).trim()) {
         throw new Error('No access_token in response')
     }
-    log.info('Access token acquired via OTP')
-    return completeSecureAuth(env, String(token).trim())
+    // refresh_token / expires_in: present on the real backend (OAuth2TokenResponse) but optional
+    // here defensively — an OTP exchange without them still signs the user in, just without the
+    // ability to silently refresh later (falls back to a fresh OTP challenge when the access token expires).
+    const refreshToken = tokenResponse?.data?.refresh_token
+    const expiresIn = tokenResponse?.data?.expires_in
+    log.info('Access token acquired via OTP', { hasRefreshToken: Boolean(refreshToken) })
+    return completeSecureAuth(env, String(token).trim(), { refreshToken, expiresIn })
 }

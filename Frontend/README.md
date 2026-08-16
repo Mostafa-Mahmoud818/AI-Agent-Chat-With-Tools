@@ -38,7 +38,9 @@ On first load you'll see an **environment picker dialog** (DEV / TEST / STAGE / 
 
 **Visit ID** (required for orchestration start): URL `?visitId=` → `localStorage: ankabut.chat.visitId` (auth dialog) → `VITE_DEFAULT_VISIT_ID`. The modulith resolves `visitId` to an internal `resourceId` via visitor experience — an unset or all-zero placeholder blocks start in the UI. See [`src/config/chatContext.js`](src/config/chatContext.js).
 
-Bearer-token precedence: the OTP dialog writes to `localStorage: ankabut.chat.accessToken`. On boot, `initTokenStore()` prefers a non-empty `VITE_API_BEARER_TOKEN` (and mirrors it to localStorage); otherwise it loads from localStorage.
+Bearer-token precedence: the OTP dialog writes to `localStorage: ankabut.chat.accessToken` (plus `ankabut.chat.refreshToken` and `ankabut.chat.accessTokenExpiresAt` — see below). On boot, `initTokenStore()` prefers a non-empty `VITE_API_BEARER_TOKEN` (and mirrors it to localStorage, clearing any stale refresh token from an earlier real sign-in); otherwise it loads from localStorage.
+
+**Token refresh:** the OTP token-exchange response carries an `access_token` (~24h TTL) and a `refresh_token` (~7-day TTL, one-time-use — the server rotates it on every refresh call). `services/api.js` resolves the bearer token for every secure request through `auth/tokenRefresh.js`, which proactively calls `POST /api/v1/public/identity/auth/token/refresh` (`{ refreshToken }`) when the stored access token is expired or about to be, and reactively retries once on an HTTP 401. Concurrent requests share a single in-flight refresh so the rotating refresh token is never spent twice. If the refresh call itself is rejected (refresh token expired, already used, or revoked), all stored tokens are cleared and the user must sign in again via OTP — there is no server-side logout/revocation today, so a leaked refresh token stays valid until it expires or is next used.
 
 ## Backend Requirements
 
@@ -75,7 +77,8 @@ src/
 ├── App.jsx                       # Root shell
 ├── authBootstrap.js              # Loads token from env / localStorage on boot
 ├── auth/
-│   ├── tokenStore.js             # Runtime bearer-token store (localStorage)
+│   ├── tokenStore.js             # Runtime access/refresh-token store (localStorage)
+│   ├── tokenRefresh.js           # Proactive + 401-triggered access-token refresh (rotating refresh token)
 │   ├── otpAccessTokenFlow.js     # Email + OTP (LOCAL: provision + eligibility; DEV/TEST: public only)
 │   ├── secureAuthSession.js      # Shared token + visit resolution for DEV/TEST/LOCAL
 │   └── guestClientId.js          # UUID clientId + ankabut_guest_id cookie
@@ -120,6 +123,8 @@ All env vars are optional — the UI can supply backend env, token, and visit id
 |-----|--------|---------|
 | `ankabut.chat.backendEnv` | Env picker | `DEV` \| `TEST` \| `STAGE` \| `LOCAL` — overrides `VITE_API_BACKEND` |
 | `ankabut.chat.accessToken` | Auth dialog / OTP flow / env bootstrap | Bearer JWT for secure mode |
+| `ankabut.chat.refreshToken` | OTP flow / token refresh | One-time-use refresh token (~7-day TTL); rotates on every refresh call — never set for `VITE_API_BEARER_TOKEN` bootstrap or guest mode |
+| `ankabut.chat.accessTokenExpiresAt` | OTP flow / token refresh | Epoch ms the access token expires at (from `expires_in`); `0`/absent means unknown (env bootstrap) |
 | `ankabut.chat.visitId` | Auth dialog / `?visitId=` | Overrides `VITE_DEFAULT_VISIT_ID` for orchestration `chatContext` |
 | `ankabut.chat.guestClientId` | Guest bootstrap | Stable UUID `clientId` for public API (`guestClientId.js`) |
 
@@ -130,7 +135,7 @@ All env vars are optional — the UI can supply backend env, token, and visit id
 | List / create conversations, turns | `/api/v1/secure/chatting/...` | `/api/v1/public/chatting/...` |
 | Start orchestration, user-messages, assistant SSE | `/api/v1/secure/chatting/orchestration/...` | `/api/v1/public/chatting/orchestration/...` |
 
-Create conversation (guest) uses body `{ clientId, req: { initialTitle, initialSummary } }` per `CreateConversationWithIdentityRequest`. Orchestration start sends `{ inputText, chatContext: { schemaVersion, contextType: "VISIT", contextData: { id } }, displayText? }` (`id` is the visit UUID; backend also accepts alias `visitId`). Follow-ups send `{ followUpInput, displayText?, clientMessageId? }` only. The client opens SSE **before** POST start/user-messages. SSE events are JSON `ChattingOrchestrationRoundResponseDto` (`status`: `ready` \| `processing` \| `error` \| `expired`, `message`, `handledBy`).
+Create conversation (guest) uses body `{ clientId, req: { initialTitle, initialSummary } }` per `CreateConversationWithIdentityRequest`. Orchestration start sends `{ inputText, chatContext: { schemaVersion, contextType: "VISIT", contextData: { id } }, displayText? }` (`id` is the visit UUID — the backend no longer accepts a `visitId` alias). Follow-ups send `{ followUpInput, displayText?, clientMessageId? }` only. The client opens SSE **before** POST start/user-messages. SSE events are JSON `ChattingOrchestrationRoundResponseDto` (`status`: `ready` \| `processing` \| `error` \| `expired`, `message`, `handledBy`).
 
 ### Environment setup (DEV / TEST / STAGE / LOCAL)
 
@@ -191,6 +196,7 @@ The guest variants live under `/api/v1/public/chatting/...` with the same shape.
 
 - Secure mode sends `Authorization: Bearer <token>` on every request, including the SSE stream (`fetch`-based — not `EventSource`).
 - Guest mode appends `?clientId=<uuid>` and relies on the `ankabut_guest_id` cookie when same-origin.
+- Full sign-in and per-request token-refresh flow diagrammed in [`docs/auth-flow.svg`](docs/auth-flow.svg).
 
 ## Relevant Backend Paths
 
@@ -211,7 +217,7 @@ The guest variants live under `/api/v1/public/chatting/...` with the same shape.
 ## Troubleshooting
 
 1. **The env picker doesn't appear** — you already chose an env in this browser. Click **Change** in the auth dialog's badge row, or clear `ankabut.chat.backendEnv` from localStorage.
-2. **"Failed to start conversation. Is the backend running?"** — usually means the API call from `ChatWindow` failed: token missing/expired, CORS blocked, or the modulith is down. Check the Network tab and confirm the **DEV / TEST** badge matches the token's issuing environment.
+2. **"Failed to start conversation. Is the backend running?"** — usually means the API call from `ChatWindow` failed: token missing/expired, CORS blocked, or the modulith is down. Check the Network tab and confirm the **DEV / TEST** badge matches the token's issuing environment. An expired *access* token is refreshed automatically as long as the refresh token (~7 days) is still valid — if you land here anyway, the refresh token itself has expired or been rejected and stored tokens were cleared; sign in again via OTP.
 3. **CORS / network errors against remote-dev or remote-test** — switch to `VITE_API_RELATIVE=1` so requests go through the Vite proxy, or ask backend to whitelist your dev origin.
 4. **"Session expired" (HTTP 410)** — modulith timed out the orchestration session; reload and start a new turn.
 5. **SSE not connecting** — token must be valid for the selected env and the stream URL should return `200 OK` with `Content-Type: text/event-stream`.

@@ -3,31 +3,33 @@
  * @module auth/secureAuthSession
  */
 
-import { setAccessToken } from './tokenStore.js'
+import { clearTokens, setTokens } from './tokenStore.js'
 import { setRuntimeVisitId } from '../config/chatContext.js'
 import { resolveVisitIdForCurrentUser } from './visitResolution.js'
 
 /**
- * Clears bearer token and persisted visit id (env-specific state).
+ * Clears bearer token, refresh token, and persisted visit id (env-specific state).
  */
 export function clearSecureAuthSession() {
-    setAccessToken('')
+    clearTokens()
     setRuntimeVisitId(null)
 }
 
 /**
- * Stores token, resolves visit from my-visits APIs, persists visit id.
+ * Stores the access/refresh token pair, resolves visit from my-visits APIs, persists visit id.
  *
  * @param {ImportMetaEnv} env
  * @param {string} accessToken
+ * @param {{ refreshToken?: string|null, expiresIn?: number|string|null }} [tokenExtras]
+ *        Refresh token + TTL from the OTP exchange response, when available.
  * @returns {Promise<{ accessToken: string, visitId: string }>}
  */
-export async function completeSecureAuth(env, accessToken) {
+export async function completeSecureAuth(env, accessToken, tokenExtras = {}) {
     const normalized = String(accessToken ?? '').trim()
     if (!normalized) {
         throw new Error('Access token is required')
     }
-    setAccessToken(normalized)
+    setTokens({ accessToken: normalized, ...tokenExtras })
     const visitId = await resolveVisitIdForCurrentUser(env, normalized)
     return { accessToken: normalized, visitId }
 }

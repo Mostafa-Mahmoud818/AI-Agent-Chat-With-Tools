@@ -1,0 +1,145 @@
+<svg viewBox="0 0 1000 1650" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>Frontend authentication flow: sign-in and per-request token refresh</title>
+<desc>Two diagrams. Top: sign-in flow from app boot through guest mode or OTP sign-in to an authenticated state. Bottom: what happens on every API/SSE request, including proactive and reactive access-token refresh via the rotating refresh token.</desc>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+<path d="M0,0 L10,5 L0,10 z" fill="#9aa0ab" />
+</marker>
+</defs>
+<style>
+  .box { fill: #f8f9fb; stroke: #c9ccd3; stroke-width: 1.5; }
+  .box-side { fill: #eef0f4; stroke: #c9ccd3; stroke-width: 1.5; }
+  .diamond { fill: #eef0f4; stroke: #4f46e5; stroke-width: 1.5; }
+  .terminal { fill: #f8f9fb; stroke: #4f46e5; stroke-width: 2; }
+  .edge { fill: none; stroke: #9aa0ab; stroke-width: 1.5; marker-end: url(#arrow); }
+  .lbl { font: 500 15px system-ui, sans-serif; fill: #1f2430; text-anchor: middle; }
+  .lbl-sm { font: 500 13px system-ui, sans-serif; fill: #1f2430; text-anchor: middle; }
+  .sub { font: 400 12px system-ui, sans-serif; fill: #6b7280; text-anchor: middle; }
+  .cond { font: 500 12px system-ui, sans-serif; fill: #4f46e5; text-anchor: middle; }
+  .section { font: 700 18px system-ui, sans-serif; fill: #3d4354; }
+</style>
+
+<text x="40" y="34" class="section">Sign-in</text>
+
+<!-- App starts -->
+<rect x="340" y="55" width="320" height="52" rx="10" class="box" />
+<text x="500" y="86" class="lbl">App starts</text>
+
+<path d="M500,107 L500,138" class="edge" />
+
+<!-- Guest mode diamond -->
+<polygon points="500,140 610,185 500,230 390,185" class="diamond" />
+<text x="500" y="181" class="lbl-sm">Guest mode</text>
+<text x="500" y="197" class="sub">env var set?</text>
+
+<path d="M610,185 L740,185" class="edge" />
+<text x="675" y="176" class="cond">yes</text>
+<rect x="740" y="159" width="220" height="52" rx="10" class="box-side" />
+<text x="850" y="181" class="lbl-sm">Reuse/create UUID</text>
+<text x="850" y="197" class="sub">clientId · public API</text>
+
+<path d="M500,230 L500,270" class="edge" />
+<text x="514" y="252" class="cond">no</text>
+
+<!-- Token stored diamond -->
+<polygon points="500,272 610,317 500,362 390,317" class="diamond" />
+<text x="500" y="313" class="lbl-sm">Valid access</text>
+<text x="500" y="329" class="sub">token stored?</text>
+
+<path d="M610,317 L740,317" class="edge" />
+<text x="675" y="308" class="cond">yes</text>
+<rect x="740" y="291" width="220" height="52" rx="10" class="box-side" />
+<text x="850" y="313" class="lbl-sm">Reuse stored token</text>
+
+<path d="M500,362 L500,402" class="edge" />
+<text x="514" y="384" class="cond">no</text>
+
+<!-- Dialog -->
+<rect x="340" y="404" width="320" height="52" rx="10" class="box" />
+<text x="500" y="435" class="lbl">Sign-in dialog: email</text>
+
+<path d="M500,456 L500,486" class="edge" />
+<rect x="340" y="488" width="320" height="52" rx="10" class="box" />
+<text x="500" y="512" class="lbl-sm">Request OTP code</text>
+<text x="500" y="528" class="sub">eligibility check (+provision on LOCAL)</text>
+
+<path d="M500,540 L500,570" class="edge" />
+<rect x="340" y="572" width="320" height="52" rx="10" class="box" />
+<text x="500" y="603" class="lbl">User enters OTP code</text>
+
+<path d="M500,624 L500,654" class="edge" />
+<rect x="340" y="656" width="320" height="52" rx="10" class="box" />
+<text x="500" y="687" class="lbl">Exchange code for tokens</text>
+
+<path d="M500,708 L500,738" class="edge" />
+<rect x="340" y="740" width="320" height="52" rx="10" class="box" />
+<text x="500" y="764" class="lbl-sm">Store access + refresh token</text>
+<text x="500" y="780" class="sub">+ expiry, resolve visit id</text>
+
+<path d="M500,792 L500,822" class="edge" />
+
+<!-- Authenticated terminal -->
+<rect x="380" y="824" width="240" height="54" rx="27" class="terminal" />
+<text x="500" y="857" class="lbl">Authenticated</text>
+
+<!-- merge from "reuse stored token" -->
+<path d="M850,343 C850,700 620,851 622,851" class="edge" />
+
+<line x1="20" y1="920" x2="980" y2="920" stroke="#c9ccd3" stroke-width="1" stroke-dasharray="4 6" />
+
+<text x="40" y="960" class="section">Every API / SSE request</text>
+
+<!-- Build request -->
+<rect x="340" y="982" width="320" height="52" rx="10" class="box" />
+<text x="500" y="1013" class="lbl">Build authenticated request</text>
+
+<path d="M500,1034 L500,1064" class="edge" />
+
+<!-- expired diamond -->
+<polygon points="500,1066 610,1111 500,1156 390,1111" class="diamond" />
+<text x="500" y="1107" class="lbl-sm">Access token</text>
+<text x="500" y="1123" class="sub">expired / near?</text>
+
+<path d="M500,1156 L500,1186" class="edge" />
+<text x="514" y="1174" class="cond">no</text>
+
+<path d="M610,1111 L740,1111" class="edge" />
+<text x="675" y="1102" class="cond">yes</text>
+<rect x="740" y="1085" width="220" height="52" rx="10" class="box-side" />
+<text x="850" y="1107" class="lbl-sm">Call refresh endpoint</text>
+<text x="850" y="1123" class="sub">rotating refresh token</text>
+
+<path d="M850,1137 L850,1160 L500,1160 L500,1186" class="edge" />
+<text x="850" y="1152" class="sub">stores new pair</text>
+
+<!-- attach + send -->
+<rect x="340" y="1188" width="320" height="52" rx="10" class="box" />
+<text x="500" y="1219" class="lbl">Attach bearer, send request</text>
+
+<path d="M500,1240 L500,1270" class="edge" />
+
+<!-- 401 diamond -->
+<polygon points="500,1272 610,1317 500,1362 390,1317" class="diamond" />
+<text x="500" y="1313" class="lbl-sm">Response</text>
+<text x="500" y="1329" class="sub">was 401?</text>
+
+<path d="M500,1362 L500,1392" class="edge" />
+<text x="514" y="1380" class="cond">no</text>
+<rect x="380" y="1394" width="240" height="52" rx="10" class="box" />
+<text x="500" y="1425" class="lbl-sm">Return response</text>
+
+<path d="M610,1317 L740,1317" class="edge" />
+<text x="675" y="1308" class="cond">yes</text>
+<rect x="740" y="1291" width="220" height="52" rx="10" class="box-side" />
+<text x="850" y="1313" class="lbl-sm">Force refresh,</text>
+<text x="850" y="1329" class="sub">retry request once</text>
+
+<path d="M850,1343 L850,1360" class="edge" style="marker-end:none" />
+<path d="M850,1360 L850,1420 L620,1420" class="edge" />
+<text x="944" y="1352" class="sub" text-anchor="end">refresh ok</text>
+
+<rect x="740" y="1425" width="220" height="52" rx="10" class="box-side" style="stroke-dasharray:5 4" />
+<text x="850" y="1447" class="lbl-sm">Refresh failed</text>
+<text x="850" y="1463" class="sub">clear tokens, sign in again</text>
+<path d="M850,1360 L850,1425" class="edge" />
+</svg>

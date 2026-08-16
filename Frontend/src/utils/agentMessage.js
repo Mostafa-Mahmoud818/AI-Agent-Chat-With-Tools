@@ -201,15 +201,17 @@ function toVisitsQuery(raw) {
         ? raw.items
             .map((item) => {
                 if (!item || typeof item !== 'object') return null
-                const title = str(item.title)
+                // Compact tool shape (`MyVisitsToolResponseDto.Item`) uses `name` / `period` / `whenLocal`.
+                // Legacy visits_query cards used `title` / `status` / `startLocal`+`endLocal`.
+                const title = str(item.title) ?? str(item.name)
                 if (!title) return null
                 return {
                     visitId: str(item.visitId),
                     title,
-                    status: str(item.status),
+                    status: str(item.status) ?? str(item.period),
                     startLocal: str(item.startLocal),
                     endLocal: str(item.endLocal),
-                    timeDisplay: formatVisitTimeRange(item.startLocal, item.endLocal),
+                    timeDisplay: str(item.whenLocal) ?? formatVisitTimeRange(item.startLocal, item.endLocal),
                     hostName: str(item.hostName),
                     resourceName: str(item.resourceName),
                     locationName: str(item.locationName),
@@ -222,6 +224,8 @@ function toVisitsQuery(raw) {
         scope: str(raw.scope),
         defaultApplied: Boolean(raw.defaultApplied),
         timezone: str(raw.timezone),
+        windowPrevious: typeof raw.windowPrevious === 'number' ? raw.windowPrevious : null,
+        windowUpcoming: typeof raw.windowUpcoming === 'number' ? raw.windowUpcoming : null,
         totalCount: typeof raw.totalCount === 'number' ? raw.totalCount : items.length,
         page: typeof raw.page === 'number' ? raw.page : 0,
         size: typeof raw.size === 'number' ? raw.size : items.length,

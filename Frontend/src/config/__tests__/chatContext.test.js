@@ -41,6 +41,8 @@ describe('chatContext', () => {
             contextType: 'VISIT',
             contextData: { id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' },
         })
+        expect(ctx.contextData).not.toHaveProperty('visitId')
+        expect(Object.keys(ctx.contextData)).toEqual(['id'])
     })
 
     it('resolveVisitId prefers query param over storage', () => {

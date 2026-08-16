@@ -440,6 +440,37 @@ describe('parseAgentMessage visits_query subtype (legacy history)', () => {
         expect(payload?.visits?.items).toHaveLength(1)
         expect(payload?.visits?.items[0].title).toBe('Valid Meeting')
     })
+
+    it('parses compact MyVisitsToolResponseDto item fields (name, period, whenLocal)', () => {
+        const raw = JSON.stringify({
+            replyType: 'json',
+            textString: 'I found the following visits:',
+            payload: {
+                subtype: 'visits_query',
+                menuitems: [],
+                order: null,
+                visits: {
+                    timezone: 'Asia/Dubai',
+                    windowPrevious: 1,
+                    windowUpcoming: 1,
+                    items: [{
+                        ordinal: 1,
+                        visitId: '9f4c2d8e-1234-4abc-9def-1234567890ab',
+                        name: 'Project Kickoff',
+                        period: 'UPCOMING',
+                        whenLocal: 'Tue 15 Jul',
+                    }],
+                },
+            },
+        })
+        const { payload } = parseAgentMessage(raw)
+        expect(payload?.visits?.items).toHaveLength(1)
+        expect(payload?.visits?.items[0].title).toBe('Project Kickoff')
+        expect(payload?.visits?.items[0].status).toBe('UPCOMING')
+        expect(payload?.visits?.items[0].timeDisplay).toBe('Tue 15 Jul')
+        expect(payload?.visits?.windowUpcoming).toBe(1)
+        expect(payload?.visits?.windowPrevious).toBe(1)
+    })
 })
 
 describe('parseAgentMessage previous+upcoming visits listing (subtype none)', () => {

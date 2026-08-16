@@ -230,9 +230,18 @@ export default function ChatWindow({
             try {
                 const data = JSON.parse(event.data)
                 if (data.status === 'processing') return setPhase('thinking')
-                if (data.status === 'ready' && data.message) {
+                if (data.status === 'ready') {
                     terminalHandled = true
                     stopStreaming()
+                    if (!data.message) {
+                        // Terminal round with no text: recover the composer instead of hanging on
+                        // 'thinking'. Backend always populates message today; this is defensive.
+                        log.warn('SSE terminal "ready" with empty message')
+                        setPhase('ready')
+                        setError(null)
+                        setTimeout(() => chatInputRef.current?.focus(), 100)
+                        return
+                    }
                     const {text, payload} = parseAgentMessage(data.message)
                     let finalPayload = payload
                     if (payload?.subtype === 'menu' && Array.isArray(payload.menuitems) && payload.menuitems.length > 0) {
@@ -260,7 +269,11 @@ export default function ChatWindow({
                     terminalHandled = true
                     stopStreaming()
                     handleSessionExpired()
+                    return
                 }
+                // Unknown/unhandled status: log for observability. Not treated as terminal so a
+                // future non-terminal status can't be mis-handled as an error.
+                log.warn('Unhandled SSE status', data?.status)
             } catch (err) {
                 log.error('SSE message parse error', err)
             }

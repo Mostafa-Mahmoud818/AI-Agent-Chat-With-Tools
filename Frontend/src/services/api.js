@@ -25,10 +25,11 @@
 
 import {createLogger} from '../utils/logger.js'
 import {isRelativeApiMode, resolveApiOrigin} from '../config/apiOrigin.js'
-import {getAccessToken} from '../auth/tokenStore.js'
+import {ensureFreshAccessToken, refreshAccessToken} from '../auth/tokenRefresh.js'
 import {isGuestChatAuth} from '../config/chatAuth.js'
 import {getOrCreateGuestClientId} from '../auth/guestClientId.js'
-import {clampChatInput, clampConversationTitle, clampDisplayText,} from '../config/chattingValidationLimits.js'
+import {isValidVisitId} from '../config/chatContext.js'
+import {AUDIO_MAX_BYTES, clampChatInput, clampConversationTitle, clampDisplayText,} from '../config/chattingValidationLimits.js'
 
 const log = createLogger('api')
 
@@ -139,8 +140,12 @@ export function withGuestClientIdQuery(url) {
     return `${url}${joiner}clientId=${encodeURIComponent(id)}`
 }
 
-function bearerAuthHeaders() {
-    const token = getAccessToken()
+/**
+ * Resolves the bearer token for a request, proactively refreshing it first when the stored token
+ * is expired (or about to be) and a refresh token is available — see {@link ensureFreshAccessToken}.
+ */
+async function bearerAuthHeaders() {
+    const token = await ensureFreshAccessToken(import.meta.env)
     if (!token) {
         if (IS_TEST) {
             return {...JSON_HEADERS, Authorization: 'Bearer __vitest_bearer_placeholder__'}
@@ -154,11 +159,38 @@ function bearerAuthHeaders() {
     return {...JSON_HEADERS, Authorization: `Bearer ${token}`}
 }
 
-function buildHeaders() {
+async function buildHeaders() {
     if (useGuestAuth()) {
         return {...JSON_HEADERS}
     }
     return bearerAuthHeaders()
+}
+
+/**
+ * Retries a request once after forcing a token refresh when it fails with 401 — covers a token
+ * that expired between the proactive check and the request landing, clock skew, or any other
+ * reason the server rejected an apparently-fresh token. Guest requests (no bearer token) pass
+ * through unchanged. If the refresh itself fails, the original 401 is what surfaces to the caller
+ * (the refresh failure already cleared the stored session — see {@link refreshAccessToken}).
+ *
+ * @param {() => Promise<Response>} makeRequest
+ * @returns {Promise<Response>}
+ */
+async function requestWithAuthRetry(makeRequest) {
+    try {
+        return await makeRequest()
+    } catch (err) {
+        if (err instanceof ApiError && err.status === 401 && !useGuestAuth()) {
+            try {
+                await refreshAccessToken(import.meta.env)
+            } catch (refreshErr) {
+                log.warn('Token refresh after 401 failed', refreshErr)
+                throw err
+            }
+            return await makeRequest()
+        }
+        throw err
+    }
 }
 
 function getChattingPathPrefix() {
@@ -170,11 +202,11 @@ function getSpeechPathPrefix() {
 }
 
 /** Multipart uploads must not set Content-Type — the browser adds the boundary. */
-function buildMultipartAuthHeaders() {
+async function buildMultipartAuthHeaders() {
     if (useGuestAuth()) {
         return {}
     }
-    const token = getAccessToken()
+    const token = await ensureFreshAccessToken(import.meta.env)
     if (!token) {
         if (IS_TEST) {
             return {Authorization: 'Bearer __vitest_bearer_placeholder__'}
@@ -222,37 +254,43 @@ function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
 }
 
 async function get(url) {
-    const finalUrl = withGuestClientIdQuery(url)
-    log.debug('GET', finalUrl)
-    const res = await fetchWithTimeout(finalUrl, {
-        method: 'GET',
-        headers: buildHeaders(),
+    return requestWithAuthRetry(async () => {
+        const finalUrl = withGuestClientIdQuery(url)
+        log.debug('GET', finalUrl)
+        const res = await fetchWithTimeout(finalUrl, {
+            method: 'GET',
+            headers: await buildHeaders(),
+        })
+        log.debug('GET response', finalUrl, res.status)
+        return handleResponse(res)
     })
-    log.debug('GET response', finalUrl, res.status)
-    return handleResponse(res)
 }
 
 async function post(url, body) {
-    const finalUrl = withGuestClientIdQuery(url)
-    log.debug('POST', finalUrl)
-    const res = await fetchWithTimeout(finalUrl, {
-        method: 'POST',
-        headers: buildHeaders(),
-        body: JSON.stringify(body),
+    return requestWithAuthRetry(async () => {
+        const finalUrl = withGuestClientIdQuery(url)
+        log.debug('POST', finalUrl)
+        const res = await fetchWithTimeout(finalUrl, {
+            method: 'POST',
+            headers: await buildHeaders(),
+            body: JSON.stringify(body),
+        })
+        log.debug('POST response', finalUrl, res.status)
+        return handleResponse(res)
     })
-    log.debug('POST response', finalUrl, res.status)
-    return handleResponse(res)
 }
 
 async function del(url) {
-    const finalUrl = withGuestClientIdQuery(url)
-    log.debug('DELETE', finalUrl)
-    const res = await fetchWithTimeout(finalUrl, {
-        method: 'DELETE',
-        headers: buildHeaders(),
+    return requestWithAuthRetry(async () => {
+        const finalUrl = withGuestClientIdQuery(url)
+        log.debug('DELETE', finalUrl)
+        const res = await fetchWithTimeout(finalUrl, {
+            method: 'DELETE',
+            headers: await buildHeaders(),
+        })
+        log.debug('DELETE response', finalUrl, res.status)
+        return handleResponse(res)
     })
-    log.debug('DELETE response', finalUrl, res.status)
-    return handleResponse(res)
 }
 
 // ── API functions ───────────────────────────────────────────────────
@@ -415,15 +453,23 @@ export async function unarchiveConversation(conversationId) {
  *
  * @param {string} conversationId
  * @param {string} inputText
- * @param {{ schemaVersion?: string, contextType: string, contextData: object }} chatContext
+ * @param {{ schemaVersion?: string, contextType: string, contextData: { id: string } }} chatContext
  *        Required. Shape: `{ schemaVersion: "1.0", contextType: "VISIT",
- *        contextData: { id: "<uuid>" } }`.
+ *        contextData: { id: "<uuid>" } }`. Backend accepts only the canonical {@code id} key
+ *        (the legacy {@code visitId} alias was removed).
  * @param {string|null} [displayText]
  * @returns {Promise<object>}
  */
 export async function startOrchestration(conversationId, inputText, chatContext, displayText = null) {
     if (!chatContext || !chatContext.contextType) {
         throw new ApiError(0, 'invalid_chat_context', 'chatContext is required on orchestration start')
+    }
+    if (!isValidVisitId(chatContext.contextData?.id)) {
+        throw new ApiError(
+            0,
+            'invalid_chat_context',
+            'chatContext.contextData.id must be a visit UUID (canonical id key; visitId is not accepted)',
+        )
     }
     const base = getOrchestrationBase()
     const cid = encodeURIComponent(conversationId)
@@ -456,25 +502,36 @@ export async function startOrchestration(conversationId, inputText, chatContext,
  * review/edit before sending through {@link startOrchestration} or {@link sendReply}.
  *
  * @param {Blob} audioBlob recorded audio (e.g. {@code audio/webm} from MediaRecorder)
- * @param {{ filename?: string }} [opts] multipart filename for the {@code audio} part
+ * @param {{ filename?: string, languageHint?: string|null }} [opts] multipart filename for the
+ *        {@code audio} part, and optional ISO-639-1 language hint ({@code en}/{@code ar}); omit for auto-detect.
  * @returns {Promise<{ text: string, language: string|null }>}
  */
-export async function transcribeSpeech(audioBlob, {filename = 'recording.webm'} = {}) {
-    const url = withGuestClientIdQuery(`${API_ORIGIN}${getSpeechPathPrefix()}/transcriptions`)
+export async function transcribeSpeech(audioBlob, {filename = 'recording.webm', languageHint = null} = {}) {
+    if (audioBlob.size > AUDIO_MAX_BYTES) {
+        throw new ApiError(0, 'audio_too_large', 'Recording is too large (max 25 MB). Please record a shorter clip.')
+    }
+    let url = `${API_ORIGIN}${getSpeechPathPrefix()}/transcriptions`
+    if (languageHint) {
+        const joiner = url.includes('?') ? '&' : '?'
+        url = `${url}${joiner}languageHint=${encodeURIComponent(languageHint)}`
+    }
+    url = withGuestClientIdQuery(url)
     const formData = new FormData()
     formData.append('audio', audioBlob, filename)
     log.debug('POST transcribe', url, {bytes: audioBlob.size, type: audioBlob.type})
-    const res = await fetchWithTimeout(
-        url,
-        {
-            method: 'POST',
-            headers: buildMultipartAuthHeaders(),
-            body: formData,
-        },
-        TRANSCRIBE_TIMEOUT_MS,
-    )
-    log.debug('POST transcribe response', url, res.status)
-    const ok = await handleResponse(res)
+    const ok = await requestWithAuthRetry(async () => {
+        const res = await fetchWithTimeout(
+            url,
+            {
+                method: 'POST',
+                headers: await buildMultipartAuthHeaders(),
+                body: formData,
+            },
+            TRANSCRIBE_TIMEOUT_MS,
+        )
+        log.debug('POST transcribe response', url, res.status)
+        return handleResponse(res)
+    })
     const data = await unwrapResponse(ok)
     log.info('Transcription OK', {chars: data?.text?.length ?? 0, language: data?.language})
     return data
@@ -540,25 +597,44 @@ function createFetchEventSource(url) {
         emitter.onerror?.(event)
     }
 
-    const headers = {Accept: 'text/event-stream'}
-    if (!useGuestAuth()) {
-        const token = getAccessToken()
-        if (!token && !IS_TEST) {
-            emitter.readyState = EventSource.CLOSED
-            queueMicrotask(() => emitError(new Event('error')))
-            return emitter
-        }
-        if (IS_TEST && !token) {
-            headers.Authorization = 'Bearer __vitest_bearer_placeholder__'
-        } else {
-            headers.Authorization = `Bearer ${token}`
-        }
+    /**
+     * Resolves auth headers for one connection attempt. `force` bypasses the proactive expiry
+     * check and refreshes unconditionally — used for the retry-once-on-401 below, since a token
+     * {@link ensureFreshAccessToken} judged fresh but the server rejected still needs a new one.
+     */
+    async function resolveHeaders(force) {
+        const headers = {Accept: 'text/event-stream'}
+        if (useGuestAuth()) return headers
+        const token = force
+            ? await refreshAccessToken(import.meta.env)
+            : await ensureFreshAccessToken(import.meta.env)
+        if (!token && !IS_TEST) return null
+        headers.Authorization = `Bearer ${IS_TEST && !token ? '__vitest_bearer_placeholder__' : token}`
+        return headers
     }
 
     ;(async () => {
         try {
-            const fetchOpts = buildFetchOptions({headers, signal: controller.signal})
-            const res = await fetch(url, fetchOpts)
+            let headers = await resolveHeaders(false)
+            if (!headers) {
+                emitter.readyState = EventSource.CLOSED
+                emitError(new Event('error'))
+                return
+            }
+
+            let res = await fetch(url, buildFetchOptions({headers, signal: controller.signal}))
+
+            if (res.status === 401 && !useGuestAuth()) {
+                try {
+                    headers = await resolveHeaders(true)
+                } catch (refreshErr) {
+                    log.warn('SSE token refresh after 401 failed', refreshErr)
+                    headers = null
+                }
+                if (headers) {
+                    res = await fetch(url, buildFetchOptions({headers, signal: controller.signal}))
+                }
+            }
 
             if (!res.ok) {
                 log.warn('SSE HTTP not OK', {url, status: res.status})
