@@ -9,6 +9,7 @@
 import { resolveActiveBackendPreset, resolveModulithRequestBase } from '../config/apiOrigin.js'
 import { createLogger } from '../utils/logger.js'
 import { completeSecureAuth } from './secureAuthSession.js'
+import { persistStudentEligibility } from './studentResolution.js'
 
 const log = createLogger('otpAccessTokenFlow')
 
@@ -58,19 +59,21 @@ export async function prepareOtpChallenge(env, email) {
         { email: normalizedEmail },
     )
     if (eligibility?.data?.eligible === false) {
-        throw new Error('No account or visit history found for this email.')
+        persistStudentEligibility(null)
+        throw new Error('No account found for this email.')
     }
+    persistStudentEligibility(eligibility?.data)
 
     log.info('OTP challenge prepared', { email: normalizedEmail, preset })
 }
 
 /**
- * Step 3: exchange OTP for access token, store it, resolve visit id via my-visits APIs.
+ * Step 3: exchange OTP for access token, store it, resolve visit and/or student ids.
  *
  * @param {Record<string, unknown>} env
  * @param {string} email
  * @param {string} code
- * @returns {Promise<{ accessToken: string, visitId: string }>}
+ * @returns {Promise<{ accessToken: string, visitId: string|null, studentId: string|null, availablePersonas: Array<'VISIT'|'STUDENT'> }>}
  */
 export async function exchangeOtpForToken(env, email, code) {
     const normalizedEmail = String(email ?? '').trim()

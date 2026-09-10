@@ -1,4 +1,5 @@
-import {useCallback} from 'react'
+import {useCallback, useMemo, useState} from 'react'
+import SparkIcon from '../ui/SparkIcon.jsx'
 import './ConversationSidebar.css'
 
 function formatRelativeTime(iso) {
@@ -24,6 +25,8 @@ export default function ConversationSidebar({
                                                 selectedId,
                                                 onSelect,
                                                 onNewChat,
+                                                newChatDisabled = false,
+                                                selectDisabled = false,
                                                 onRefresh,
                                                 onArchive,
                                                 onUnarchive,
@@ -32,6 +35,7 @@ export default function ConversationSidebar({
                                                 onToggleArchived,
                                                 className = '',
                                             }) {
+    const [query, setQuery] = useState('')
     const handleNew = useCallback((e) => {
         e.preventDefault()
         e.stopPropagation()
@@ -63,9 +67,24 @@ export default function ConversationSidebar({
     }, [onDelete])
 
     const emptyText = showArchived ? 'No archived conversations' : 'No conversations yet'
+    const filtered = useMemo(() => {
+        const q = query.trim().toLowerCase()
+        if (!q) return conversations
+        return conversations.filter((c) => {
+            const title = (c.title && String(c.title).trim()) || 'Conversation'
+            return title.toLowerCase().includes(q)
+        })
+    }, [conversations, query])
 
     return (
         <aside className={`conversation-sidebar glass ${className}`.trim()} aria-label="Conversations">
+            <div className="conversation-sidebar-brand">
+                <SparkIcon size={22} withCircle />
+                <div>
+                    <p className="conversation-sidebar-brand-name">AI Agent Chat</p>
+                    <p className="conversation-sidebar-brand-sub">Camunda · Bedrock</p>
+                </div>
+            </div>
             <div className="conversation-sidebar-header">
                 <h2 className="conversation-sidebar-title">{showArchived ? 'Archived' : 'Conversations'}</h2>
                 <div className="conversation-sidebar-header-actions">
@@ -97,6 +116,7 @@ export default function ConversationSidebar({
                         className="conversation-sidebar-new"
                         onClick={handleNew}
                         onMouseDown={(e) => e.preventDefault()}
+                        disabled={newChatDisabled}
                         title="New conversation"
                         aria-label="Start new conversation"
                     >
@@ -118,26 +138,65 @@ export default function ConversationSidebar({
                 </div>
             )}
 
+            <div className="conversation-sidebar-search-wrap">
+                <input
+                    type="search"
+                    className="conversation-sidebar-search"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Search chats"
+                    aria-label="Search conversations"
+                    autoComplete="off"
+                />
+            </div>
+
             <ul className="conversation-sidebar-list">
                 {loading && conversations.length === 0 && (
-                    <li className="conversation-sidebar-placeholder">Loading…</li>
+                    <>
+                        <li className="sr-only">Loading…</li>
+                        {[0, 1, 2, 3, 4].map((i) => (
+                            <li key={i} className="conversation-sidebar-skeleton" aria-hidden="true">
+                                <span className="conversation-sidebar-skeleton-title skeleton-loading" />
+                                <span className="conversation-sidebar-skeleton-meta skeleton-loading" />
+                            </li>
+                        ))}
+                    </>
                 )}
                 {!loading && conversations.length === 0 && !error && (
-                    <li className="conversation-sidebar-placeholder">{emptyText}</li>
+                    <li className="conversation-sidebar-placeholder">
+                        <span className="conversation-sidebar-empty-title">{emptyText}</span>
+                        {!showArchived && (
+                            <span className="conversation-sidebar-empty-hint">Start a new chat to see it here.</span>
+                        )}
+                    </li>
                 )}
-                {conversations.map((c) => {
+                {!loading && conversations.length > 0 && filtered.length === 0 && (
+                    <li className="conversation-sidebar-placeholder">No chats match “{query.trim()}”</li>
+                )}
+                {filtered.map((c) => {
                     const id = c.id
                     const title = (c.title && String(c.title).trim()) || 'Conversation'
                     const active = selectedId != null && String(selectedId) === String(id)
                     const archived = Boolean(c.archivedAt)
+                    const contextBadge = c.contextType === 'STUDENT'
+                        ? 'Student'
+                        : c.contextType === 'VISIT'
+                            ? 'Visit'
+                            : null
                     return (
                         <li key={id} className="conversation-sidebar-row">
                             <button
                                 type="button"
                                 className={`conversation-sidebar-item${active ? ' conversation-sidebar-item--active' : ''}`}
+                                disabled={selectDisabled && !active}
                                 onClick={() => onSelect?.(id)}
                             >
-                                <span className="conversation-sidebar-item-title">{title}</span>
+                                <span className="conversation-sidebar-item-title">
+                                    {title}
+                                    {contextBadge && (
+                                        <span className="conversation-sidebar-context-badge">{contextBadge}</span>
+                                    )}
+                                </span>
                                 <span className="conversation-sidebar-item-meta">
                                     {formatRelativeTime(c.lastTurnAt ?? c.updatedAt)}
                                 </span>

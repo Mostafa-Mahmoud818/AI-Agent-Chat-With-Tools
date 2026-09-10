@@ -13,9 +13,22 @@
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(ellipse at 20% 20%, rgba(124, 58, 237, 0.08) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 80%, rgba(165, 110, 255, 0.06) 0%, transparent 50%),
-    radial-gradient(ellipse at 50% 50%, rgba(30, 30, 54, 0.5) 0%, transparent 70%);
+    radial-gradient(ellipse 90% 55% at 8% -8%, rgba(124, 58, 237, 0.28) 0%, transparent 52%),
+    radial-gradient(ellipse 50% 40% at 96% 4%, rgba(56, 189, 248, 0.08) 0%, transparent 48%),
+    radial-gradient(ellipse 55% 45% at 88% 108%, rgba(165, 110, 255, 0.14) 0%, transparent 50%),
+    radial-gradient(ellipse 40% 30% at 40% 80%, rgba(30, 30, 54, 0.55) 0%, transparent 70%),
+    var(--bg-primary);
   pointer-events: none;
   z-index: 0;
+}
+
+.app-bg-gradient::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse at center, black 20%, transparent 75%);
+  pointer-events: none;
 }

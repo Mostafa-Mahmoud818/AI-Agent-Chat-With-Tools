@@ -3,6 +3,8 @@ import {
     exchangeOtpForToken,
     prepareOtpChallenge,
 } from '../otpAccessTokenFlow.js'
+import { getStudentEligible } from '../../config/chatContext.js'
+import { persistStudentEligibility } from '../studentResolution.js'
 
 const VISIT = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
 
@@ -28,6 +30,7 @@ vi.mock('../../config/apiOrigin.js', () => ({
 describe('otpAccessTokenFlow', () => {
     beforeEach(() => {
         vi.clearAllMocks()
+        localStorage.clear()
         global.fetch = vi.fn(async (url) => {
             if (String(url).includes('/otp/email/token')) {
                 return {
@@ -37,7 +40,7 @@ describe('otpAccessTokenFlow', () => {
             }
             return {
                 ok: true,
-                json: async () => ({ data: { eligible: true, reason: 'USER_EXISTS' } }),
+                json: async () => ({ data: { eligible: true, reasons: ['USER_EXISTS'], personas: [] } }),
             }
         })
     })
@@ -71,6 +74,9 @@ describe('otpAccessTokenFlow', () => {
     })
 
     it('prepareOtpChallenge throws when eligibility is false', async () => {
+        persistStudentEligibility({ personas: ['STUDENT'] })
+        expect(getStudentEligible()).toBe(true)
+
         global.fetch = vi.fn(async () => ({
             ok: true,
             json: async () => ({ data: { eligible: false, reason: 'NO_RECORDS' } }),
@@ -78,7 +84,30 @@ describe('otpAccessTokenFlow', () => {
 
         await expect(
             prepareOtpChallenge({ VITE_API_BACKEND: 'remote-dev' }, 'unknown@example.com'),
-        ).rejects.toThrow('No account or visit history found for this email.')
+        ).rejects.toThrow('No account found for this email.')
+        expect(getStudentEligible()).toBe(false)
+    })
+
+    it('prepareOtpChallenge persists STUDENT eligibility from personas', async () => {
+        global.fetch = vi.fn(async () => ({
+            ok: true,
+            json: async () => ({
+                data: {
+                    eligible: true,
+                    reasons: ['STUDENT_EXISTS'],
+                    personas: ['STUDENT'],
+                },
+            }),
+        }))
+
+        await prepareOtpChallenge({ VITE_API_BACKEND: 'remote-dev' }, 'student@example.com')
+
+        expect(getStudentEligible()).toBe(true)
+    })
+
+    it('prepareOtpChallenge does not mark STUDENT when only USER_EXISTS', async () => {
+        await prepareOtpChallenge({ VITE_API_BACKEND: 'remote-dev' }, 'user@example.com')
+        expect(getStudentEligible()).toBe(false)
     })
 
     it('prepareOtpChallenge surfaces backend error message on HTTP failure', async () => {

@@ -18,12 +18,12 @@
 import { resolveModulithRequestBase } from '../config/apiOrigin.js'
 import { createLogger } from '../utils/logger.js'
 import {
-    clearTokens,
     getAccessToken,
     getAccessTokenExpiresAt,
     reloadPersistedRefreshToken,
     setTokens,
 } from './tokenStore.js'
+import { clearSecureAuthSession } from './secureAuthSession.js'
 
 const log = createLogger('tokenRefresh')
 
@@ -91,7 +91,8 @@ export function refreshAccessToken(env) {
             // winner has persisted a working replacement; clearing unconditionally would sign both
             // tabs out over a refresh that in fact succeeded.
             if (reloadPersistedRefreshToken() === refreshToken) {
-                clearTokens()
+                // Clear tokens and persona/context ids so stale visit/student ids do not linger.
+                clearSecureAuthSession()
             }
             // The refresh endpoint passes the identity provider's OAuth2 error body through
             // verbatim (`{ error, error_description }`) rather than wrapping it in the modulith's
@@ -110,7 +111,7 @@ export function refreshAccessToken(env) {
         const newRefreshToken = json?.data?.refresh_token
         const expiresIn = json?.data?.expires_in
         if (!accessToken || !newRefreshToken) {
-            clearTokens()
+            clearSecureAuthSession()
             throw new Error('Refresh response missing access_token/refresh_token')
         }
 

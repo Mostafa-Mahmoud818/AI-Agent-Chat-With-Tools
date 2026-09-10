@@ -81,14 +81,12 @@ describe('chatContext', () => {
         expect(localStorage.getItem(STORAGE_KEY)).toBe('cccccccc-cccc-cccc-cccc-cccccccccccc')
     })
 
-    it('getVisitIdRequiredMessage distinguishes guest vs secure', () => {
-        expect(getVisitIdRequiredMessage({}, false)).toMatch(/Sign in/)
-        expect(getVisitIdRequiredMessage({}, true)).toMatch(/Visit ID below/)
+    it('getVisitIdRequiredMessage is the sign-in copy', () => {
+        expect(getVisitIdRequiredMessage()).toMatch(/Sign in/)
     })
 
-    it('getVisitIdComposerPlaceholder distinguishes guest vs secure', () => {
-        expect(getVisitIdComposerPlaceholder({}, true)).toMatch(/bar above/)
-        expect(getVisitIdComposerPlaceholder({}, false)).toMatch(/Sign in/)
+    it('getVisitIdComposerPlaceholder is the sign-in copy', () => {
+        expect(getVisitIdComposerPlaceholder()).toMatch(/Sign in/)
     })
 
     describe('isOtherVisitConversation', () => {

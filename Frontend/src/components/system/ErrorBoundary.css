@@ -4,12 +4,15 @@
     justify-content: center;
     min-height: 100vh;
     padding: 24px;
+    background:
+        radial-gradient(ellipse 80% 50% at 20% 0%, rgba(124, 58, 237, 0.18), transparent 50%),
+        var(--bg-primary);
 }
 
 .error-boundary-content {
     text-align: center;
-    padding: 32px;
-    border-radius: var(--radius-lg);
+    padding: 36px 32px;
+    border-radius: 20px;
     max-width: 400px;
 }
 
@@ -17,26 +20,29 @@
     margin: 16px 0 8px;
     color: var(--text-primary);
     font-size: 1.25rem;
+    letter-spacing: -0.02em;
 }
 
 .error-boundary-content p {
     color: var(--text-secondary);
     margin-bottom: 24px;
     font-size: 0.9rem;
+    line-height: 1.5;
 }
 
 .error-boundary-btn {
-    background: var(--accent-primary);
+    background: linear-gradient(135deg, var(--accent-secondary), var(--accent-primary));
     color: white;
     border: none;
-    padding: 8px 24px;
-    border-radius: var(--radius-md);
+    padding: 10px 24px;
+    border-radius: var(--radius-full);
     cursor: pointer;
     font-size: 0.9rem;
-    font-weight: 500;
-    transition: opacity var(--transition-fast);
+    font-weight: 600;
+    transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+    box-shadow: 0 4px 16px var(--accent-glow);
 }
 
 .error-boundary-btn:hover {
-    opacity: 0.9;
+    transform: translateY(-1px);
 }

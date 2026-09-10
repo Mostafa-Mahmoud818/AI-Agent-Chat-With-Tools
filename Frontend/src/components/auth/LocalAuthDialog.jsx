@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import PropTypes from 'prop-types'
+import SparkIcon from '../ui/SparkIcon.jsx'
 import { createLogger } from '../../utils/logger.js'
 import {
     exchangeOtpForToken,
@@ -14,9 +15,16 @@ import {
 } from '../../config/runtimeSettings.js'
 import {
     getRuntimeVisitId,
+    getRuntimeStudentId,
     setRuntimeVisitId,
     normalizeVisitId,
 } from '../../config/chatContext.js'
+import {
+    ensureActivePersona,
+    PERSONA_STUDENT,
+    PERSONA_VISIT,
+    setActivePersona,
+} from '../../config/personaSession.js'
 import './LocalAuthDialog.css'
 
 const log = createLogger('LocalAuthDialog')
@@ -49,8 +57,11 @@ export default function LocalAuthDialog({ onAuthenticated }) {
     const [email, setEmail] = useState(env.VITE_LOCAL_AUTH_EMAIL ?? env.VITE_AUTH_EMAIL ?? '')
     const [code, setCode] = useState('')
     const [resolvedVisitId, setResolvedVisitId] = useState(() => getRuntimeVisitId())
+    const [resolvedStudentId, setResolvedStudentId] = useState(() => getRuntimeStudentId())
     const [manualVisitId, setManualVisitId] = useState('')
     const [showManualVisit, setShowManualVisit] = useState(false)
+    /** When true, student resolved successfully — do not offer manual visit. */
+    const [studentOnlySuccess, setStudentOnlySuccess] = useState(false)
 
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState(null)
@@ -61,7 +72,7 @@ export default function LocalAuthDialog({ onAuthenticated }) {
         setRuntimeBackendEnv(label)
         if (previous && previous !== label) {
             clearSecureAuthSession()
-            log.info('Backend env changed — clearing stored token and visit id', { from: previous, to: label })
+            log.info('Backend env changed — clearing stored token and context ids', { from: previous, to: label })
             window.location.reload()
             return
         }
@@ -106,6 +117,7 @@ export default function LocalAuthDialog({ onAuthenticated }) {
 
     const submitManualVisit = (e) => {
         e.preventDefault()
+        if (studentOnlySuccess) return
         const normalized = normalizeVisitId(manualVisitId)
         if (!normalized) {
             setError('Enter a valid Visit UUID.')
@@ -113,26 +125,54 @@ export default function LocalAuthDialog({ onAuthenticated }) {
         }
         setRuntimeVisitId(normalized)
         setResolvedVisitId(normalized)
+        setActivePersona(PERSONA_VISIT)
         setShowManualVisit(false)
         setError(null)
         setHint(`Visit set manually: ${normalized}`)
-        onAuthenticated({ visitId: normalized })
+        onAuthenticated({
+            visitId: normalized,
+            studentId: getRuntimeStudentId() || null,
+            contextResolved: true,
+        })
     }
 
     const submitOtp = async (e) => {
         e.preventDefault()
         setLoading(true)
         setError(null)
-        setHint('Loading your visits from the server…')
+        setHint('Loading your visit and student context from the server…')
+        setStudentOnlySuccess(false)
         try {
-            const { visitId } = await exchangeOtpForToken(env, email, code)
-            setResolvedVisitId(visitId)
-            setHint(`Visit resolved: ${visitId}`)
-            onAuthenticated({ visitId })
+            const result = await exchangeOtpForToken(env, email, code)
+            const { visitId, studentId, availablePersonas } = result
+            setResolvedVisitId(visitId || '')
+            setResolvedStudentId(studentId || '')
+            ensureActivePersona()
+
+            const parts = []
+            if (visitId) parts.push(`Visit: ${visitId}`)
+            if (studentId) parts.push(`Student: ${studentId}`)
+            setHint(parts.length ? parts.join(' · ') : null)
+
+            const onlyStudent = Boolean(studentId) && !visitId
+            setStudentOnlySuccess(onlyStudent)
+            if (onlyStudent) {
+                setActivePersona(PERSONA_STUDENT)
+            }
+
+            onAuthenticated({
+                visitId: visitId || null,
+                studentId: studentId || null,
+                availablePersonas: availablePersonas || [],
+                contextResolved: true,
+            })
         } catch (err) {
             log.warn('Failed to exchange OTP token', err)
             setError(err instanceof Error ? err.message : 'Failed to authenticate.')
-            setShowManualVisit(true)
+            // Manual visit only when we did not already land a student-only success.
+            const hasStudent = Boolean(getRuntimeStudentId())
+            setShowManualVisit(!hasStudent)
+            setStudentOnlySuccess(hasStudent && !getRuntimeVisitId())
             setHint(null)
         } finally {
             setLoading(false)
@@ -143,6 +183,9 @@ export default function LocalAuthDialog({ onAuthenticated }) {
         return (
             <div className="local-auth-overlay" role="dialog" aria-modal="true" aria-labelledby="local-auth-title">
                 <div className="local-auth-card glass">
+                    <div className="local-auth-brand">
+                        <SparkIcon size={36} withCircle />
+                    </div>
                     <h2 id="local-auth-title">Select Environment</h2>
                     <p className="local-auth-subtitle">
                         Choose which Ankabut modulith you want this session to talk to. Your choice is saved
@@ -168,7 +211,7 @@ export default function LocalAuthDialog({ onAuthenticated }) {
                     </div>
 
                     <p className="local-auth-hint">
-                        All environments sign in with email + OTP. Your visit id loads automatically after verification.
+                        All environments sign in with email + OTP. Visit and student context load automatically when available.
                     </p>
                 </div>
             </div>
@@ -177,11 +220,14 @@ export default function LocalAuthDialog({ onAuthenticated }) {
 
     const title = `${envLabel} Sign In`
     const subtitle =
-        'Enter your email, verify the OTP, and your visit id loads automatically from the server.'
+        'Enter your email, verify the OTP, and your visit or student context loads automatically from the server.'
 
     return (
         <div className="local-auth-overlay" role="dialog" aria-modal="true" aria-labelledby="local-auth-title">
-            <div className="local-auth-card glass">
+                <div className="local-auth-card glass">
+                <div className="local-auth-brand local-auth-brand--compact">
+                    <SparkIcon size={28} withCircle />
+                </div>
                 <div className="local-auth-env-row">
                     <span className="local-auth-env-badge" data-env={envLabel.toLowerCase()}>
                         {envLabel}
@@ -217,7 +263,10 @@ export default function LocalAuthDialog({ onAuthenticated }) {
                         <label htmlFor="local-auth-otp">OTP code</label>
                         <input
                             id="local-auth-otp"
+                            className="local-auth-otp-input"
                             type="text"
+                            inputMode="numeric"
+                            autoComplete="one-time-code"
                             value={code}
                             onChange={(e) => setCode(e.target.value)}
                             placeholder="Enter OTP"
@@ -229,7 +278,7 @@ export default function LocalAuthDialog({ onAuthenticated }) {
                                 Change email
                             </button>
                             <button type="submit" disabled={loading}>
-                                {loading ? 'Signing in & loading visit…' : 'Verify & Sign In'}
+                                {loading ? 'Signing in…' : 'Verify & Sign In'}
                             </button>
                         </div>
                     </form>
@@ -240,7 +289,12 @@ export default function LocalAuthDialog({ onAuthenticated }) {
                         Active visit id: <code>{resolvedVisitId}</code>
                     </p>
                 )}
-                {showManualVisit && !loading && (
+                {resolvedStudentId && !loading && (
+                    <p className="local-auth-hint">
+                        Active student id: <code>{resolvedStudentId}</code>
+                    </p>
+                )}
+                {showManualVisit && !loading && !studentOnlySuccess && (
                     <form onSubmit={submitManualVisit} className="local-auth-form local-auth-manual-visit">
                         <label htmlFor="local-auth-visit-id">Visit UUID (manual fallback)</label>
                         <input
@@ -255,6 +309,7 @@ export default function LocalAuthDialog({ onAuthenticated }) {
                         <button type="submit">Use this Visit ID</button>
                         <p className="local-auth-hint">
                             Use when my-visits has not synced yet, or paste a known visit UUID for this environment.
+                            Not needed for student-only accounts.
                         </p>
                     </form>
                 )}
