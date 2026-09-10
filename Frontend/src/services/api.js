@@ -1,50 +1,55 @@
 /**
- * @file Ankabut DXP Chatting HTTP + SSE client.
+ * @file Ankabut DXP Chatting HTTP + SSE client (JWT secure only).
  * @module services/api
  *
  * @summary
- * **Secure (default):** {@code /api/v1/secure/chatting} + Bearer from email OTP sign-in (or {@code VITE_API_BEARER_TOKEN} for CI).
- * **Guest:** set {@code VITE_CHAT_AUTH=guest} → {@code /api/v1/public/chatting} + stable UUID {@code clientId}
- * (localStorage + optional cookie {@code ankabut_guest_id}); no JWT.
+ * **Secure:** {@code /api/v1/secure/chatting} + Bearer from email OTP sign-in
+ * (or {@code VITE_API_BEARER_TOKEN} for CI). Public guest chatting was removed server-side.
  *
- * Base URL: {@code VITE_API_ORIGIN}, or {@code VITE_API_RELATIVE=1} for same-origin `/api` (Vite proxy), or {@code VITE_API_BACKEND} preset — see {@link resolveApiOrigin}.
+ * Base URL: {@code VITE_API_ORIGIN}, or {@code VITE_API_RELATIVE=1} for same-origin `/api`
+ * (Vite proxy), or {@code VITE_API_BACKEND} preset — see {@link resolveApiOrigin}.
  *
- * **`chatContext` on orchestration start:** required VISIT envelope — see
- * {@link getChatContextForStart} and {@link startOrchestration}. Visit id is resolved on the
- * client via {@code GET /api/v1/secure/visitor-management/my-visits*} (see {@code visitResolution.js}).
- * Backend resolves `visitId` internally to downstream `resourceId`; the client never sends `resourceId`.
+ * **`chatContext` on orchestration start:** VISIT or STUDENT envelope — see
+ * {@code personaSession.getChatContextForStart} and {@link startOrchestration}.
  *
  * **Turn history:** {@code GET .../conversations/{id}/turns?limit=N} →
- * {@code ApiResponse<ConversationTurnDto[]>} chronological (oldest first) within the latest-N window.
- * {@link getConversationTurns} returns that array;
- * {@link fetchAllConversationTurns} is a thin cap-applying wrapper that forwards the same order.
+ * {@code ApiResponse<ConversationTurnDto[]>} chronological (oldest first).
  *
- * **SSE payload:** {@code ChattingOrchestrationRoundResponseDto} — {@code status}: ready | processing | error | expired;
+ * **SSE payload:** {@code AssistantTurnReplyDto} — {@code status}: ready | processing | error | expired;
  * {@code message}, {@code handledBy}.
  */
 
 import {createLogger} from '../utils/logger.js'
-import {isRelativeApiMode, resolveApiOrigin} from '../config/apiOrigin.js'
+import {resolveApiOrigin} from '../config/apiOrigin.js'
 import {ensureFreshAccessToken, refreshAccessToken} from '../auth/tokenRefresh.js'
-import {isGuestChatAuth} from '../config/chatAuth.js'
-import {getOrCreateGuestClientId} from '../auth/guestClientId.js'
-import {isValidVisitId} from '../config/chatContext.js'
-import {AUDIO_MAX_BYTES, clampChatInput, clampConversationTitle, clampDisplayText,} from '../config/chattingValidationLimits.js'
+import {isValidContextId} from '../config/chatContext.js'
+import {
+    ABSENCE_ATTACHMENT_MAX_BYTES,
+    AUDIO_MAX_BYTES,
+    clampChatInput,
+    clampConversationTitle,
+    clampDisplayText,
+} from '../config/chattingValidationLimits.js'
 
 const log = createLogger('api')
 
 const API_ORIGIN = resolveApiOrigin(import.meta.env)
 
 const PATH_SECURE = '/api/v1/secure/chatting'
-const PATH_PUBLIC = '/api/v1/public/chatting'
 const SPEECH_PATH_SECURE = '/api/v1/secure/speech'
-const SPEECH_PATH_PUBLIC = '/api/v1/public/speech'
+const STUDENTS_PATH_SECURE = '/api/v1/secure/students'
+const ERRORBANNER_PATH_SECURE = '/api/v1/secure/errorbanner'
 
 const REQUEST_TIMEOUT_MS = 15_000
+/**
+ * Orchestration POST (/start, /user-messages) waits on servlet-bound Camunda correlate (~25s).
+ * Must exceed that bound so the client does not abort while the backend may still succeed.
+ */
+export const ORCHESTRATION_POST_TIMEOUT_MS = 35_000
 /** STT provider latency can exceed normal JSON chat calls. */
 const TRANSCRIBE_TIMEOUT_MS = 60_000
 
-/** Backend {@code ChattingSecureController} / open: {@code @Max(500)} on {@code limit}. */
+/** Backend {@code ChattingSecureController}: {@code @Max(500)} on {@code limit}. */
 const MAX_CONVERSATION_TURNS_LIMIT = 500
 
 const IS_TEST = import.meta.env.MODE === 'test'
@@ -55,13 +60,6 @@ export const SSE_CONCURRENT_STREAMS_ERROR =
 
 /** Max conversations loaded across paginated sidebar fetches. */
 const MAX_CONVERSATIONS_LOAD = 500
-
-/**
- * @returns {boolean}
- */
-function useGuestAuth() {
-    return isGuestChatAuth(import.meta.env)
-}
 
 /**
  * Thrown when the modulith returns a non-2xx response or JSON envelope `success: false`.
@@ -103,6 +101,10 @@ async function handleResponse(res) {
         }
         if (res.status === 410) errorCode = 'session_expired'
         if (res.status === 409) errorCode = 'conflict'
+        if (res.status === 403) errorCode = 'forbidden'
+        if (res.status === 429) errorCode = 'rate_limited'
+        if (res.status === 503) errorCode = 'service_unavailable'
+        if (res.status === 422) errorCode = 'unprocessable'
     } catch {
         if (raw?.trim()) {
             log.warn('Non-JSON error body (first 400 chars)', raw.slice(0, 400))
@@ -129,18 +131,6 @@ async function unwrapResponse(res) {
 const JSON_HEADERS = {'Content-Type': 'application/json'}
 
 /**
- * Appends `clientId` for public guest APIs (required when cookie not sent cross-origin).
- * @param {string} url
- * @returns {string}
- */
-export function withGuestClientIdQuery(url) {
-    if (!useGuestAuth()) return url
-    const id = getOrCreateGuestClientId()
-    const joiner = url.includes('?') ? '&' : '?'
-    return `${url}${joiner}clientId=${encodeURIComponent(id)}`
-}
-
-/**
  * Resolves the bearer token for a request, proactively refreshing it first when the stored token
  * is expired (or about to be) and a refresh token is available — see {@link ensureFreshAccessToken}.
  */
@@ -153,25 +143,18 @@ async function bearerAuthHeaders() {
         throw new ApiError(
             0,
             'missing_bearer_token',
-            'Missing bearer token. Sign in via email OTP in the auth dialog, set VITE_API_BEARER_TOKEN for automation, or set VITE_CHAT_AUTH=guest for public API.',
+            'Missing bearer token. Sign in via email OTP in the auth dialog, or set VITE_API_BEARER_TOKEN for automation.',
         )
     }
     return {...JSON_HEADERS, Authorization: `Bearer ${token}`}
 }
 
 async function buildHeaders() {
-    if (useGuestAuth()) {
-        return {...JSON_HEADERS}
-    }
     return bearerAuthHeaders()
 }
 
 /**
- * Retries a request once after forcing a token refresh when it fails with 401 — covers a token
- * that expired between the proactive check and the request landing, clock skew, or any other
- * reason the server rejected an apparently-fresh token. Guest requests (no bearer token) pass
- * through unchanged. If the refresh itself fails, the original 401 is what surfaces to the caller
- * (the refresh failure already cleared the stored session — see {@link refreshAccessToken}).
+ * Retries a request once after forcing a token refresh when it fails with 401.
  *
  * @param {() => Promise<Response>} makeRequest
  * @returns {Promise<Response>}
@@ -180,7 +163,7 @@ async function requestWithAuthRetry(makeRequest) {
     try {
         return await makeRequest()
     } catch (err) {
-        if (err instanceof ApiError && err.status === 401 && !useGuestAuth()) {
+        if (err instanceof ApiError && err.status === 401) {
             try {
                 await refreshAccessToken(import.meta.env)
             } catch (refreshErr) {
@@ -193,19 +176,8 @@ async function requestWithAuthRetry(makeRequest) {
     }
 }
 
-function getChattingPathPrefix() {
-    return useGuestAuth() ? PATH_PUBLIC : PATH_SECURE
-}
-
-function getSpeechPathPrefix() {
-    return useGuestAuth() ? SPEECH_PATH_PUBLIC : SPEECH_PATH_SECURE
-}
-
 /** Multipart uploads must not set Content-Type — the browser adds the boundary. */
 async function buildMultipartAuthHeaders() {
-    if (useGuestAuth()) {
-        return {}
-    }
     const token = await ensureFreshAccessToken(import.meta.env)
     if (!token) {
         if (IS_TEST) {
@@ -214,34 +186,25 @@ async function buildMultipartAuthHeaders() {
         throw new ApiError(
             0,
             'missing_bearer_token',
-            'Missing bearer token. Sign in via email OTP in the auth dialog, set VITE_API_BEARER_TOKEN for automation, or set VITE_CHAT_AUTH=guest for public API.',
+            'Missing bearer token. Sign in via email OTP in the auth dialog, or set VITE_API_BEARER_TOKEN for automation.',
         )
     }
     return {Authorization: `Bearer ${token}`}
 }
 
 function getApiBase() {
-    return `${API_ORIGIN}${getChattingPathPrefix()}`
+    return `${API_ORIGIN}${PATH_SECURE}`
 }
 
-/** Orchestration routes live under `/chatting/orchestration` for both secure and public. */
 function getOrchestrationBase() {
-    return `${API_ORIGIN}${getChattingPathPrefix()}/orchestration`
-}
-
-function buildFetchOptions(options = {}) {
-    const base = {...options}
-    if (useGuestAuth() && isRelativeApiMode(import.meta.env)) {
-        base.credentials = 'include'
-    }
-    return base
+    return `${API_ORIGIN}${PATH_SECURE}/orchestration`
 }
 
 function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
 
-    return fetch(url, buildFetchOptions({...options, signal: controller.signal}))
+    return fetch(url, {...options, signal: controller.signal})
         .catch((err) => {
             if (err.name === 'AbortError') {
                 log.warn('Request timeout', url)
@@ -255,40 +218,37 @@ function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
 
 async function get(url) {
     return requestWithAuthRetry(async () => {
-        const finalUrl = withGuestClientIdQuery(url)
-        log.debug('GET', finalUrl)
-        const res = await fetchWithTimeout(finalUrl, {
+        log.debug('GET', url)
+        const res = await fetchWithTimeout(url, {
             method: 'GET',
             headers: await buildHeaders(),
         })
-        log.debug('GET response', finalUrl, res.status)
+        log.debug('GET response', url, res.status)
         return handleResponse(res)
     })
 }
 
-async function post(url, body) {
+async function post(url, body, timeoutMs = REQUEST_TIMEOUT_MS) {
     return requestWithAuthRetry(async () => {
-        const finalUrl = withGuestClientIdQuery(url)
-        log.debug('POST', finalUrl)
-        const res = await fetchWithTimeout(finalUrl, {
+        log.debug('POST', url)
+        const res = await fetchWithTimeout(url, {
             method: 'POST',
             headers: await buildHeaders(),
             body: JSON.stringify(body),
-        })
-        log.debug('POST response', finalUrl, res.status)
+        }, timeoutMs)
+        log.debug('POST response', url, res.status)
         return handleResponse(res)
     })
 }
 
 async function del(url) {
     return requestWithAuthRetry(async () => {
-        const finalUrl = withGuestClientIdQuery(url)
-        log.debug('DELETE', finalUrl)
-        const res = await fetchWithTimeout(finalUrl, {
+        log.debug('DELETE', url)
+        const res = await fetchWithTimeout(url, {
             method: 'DELETE',
             headers: await buildHeaders(),
         })
-        log.debug('DELETE response', finalUrl, res.status)
+        log.debug('DELETE response', url, res.status)
         return handleResponse(res)
     })
 }
@@ -305,7 +265,6 @@ async function del(url) {
 export async function getConversations({page = 0, size = 50, archived = false} = {}) {
     const base = getApiBase()
     const qp = new URLSearchParams({page: String(page), size: String(size)})
-    // `archived` is optional on the backend (defaultValue="false"); only send it for the archived view.
     if (archived) qp.set('archived', 'true')
     const res = await get(`${base}/conversations?${qp}`)
     return unwrapResponse(res)
@@ -337,11 +296,10 @@ export async function loadAllConversations({size = 100, archived = false} = {}) 
 
 /**
  * Latest turns for a conversation, returned chronologically (oldest first) within the latest-N window.
- * Both API modes are normalised to this order.
  *
  * @param {string} conversationId
- * @param {{ limit?: number }} [opts] capped to {@link MAX_CONVERSATION_TURNS_LIMIT}; backend default when omitted is 100.
- * @returns {Promise<object[]>} {@code ConversationTurnDto[]} chronological (oldest first)
+ * @param {{ limit?: number }} [opts]
+ * @returns {Promise<object[]>}
  */
 export async function getConversationTurns(conversationId, {limit = 100} = {}) {
     const base = getApiBase()
@@ -355,13 +313,10 @@ export async function getConversationTurns(conversationId, {limit = 100} = {}) {
 
 /**
  * Loads up to {@code limit} turns for transcript rendering, already chronological (oldest first).
- * Thin cap-applying wrapper around {@link getConversationTurns}; preserved as a single named entry
- * point so callers don't repeat the cap and the order contract is documented in one place.
- * Conversations with more than 500 turns only return the 500 most recent rows.
  *
  * @param {string} conversationId
- * @param {number} [limit=500] max 500 per backend
- * @returns {Promise<object[]>} {@code ConversationTurnDto[]} chronological (oldest first)
+ * @param {number} [limit=500]
+ * @returns {Promise<object[]>}
  */
 export async function fetchAllConversationTurns(conversationId, limit = MAX_CONVERSATION_TURNS_LIMIT) {
     const turns = await getConversationTurns(conversationId, {limit})
@@ -380,20 +335,7 @@ export async function fetchAllConversationTurns(conversationId, limit = MAX_CONV
 export async function createConversation(inputText, _displayText = null) {
     const base = getApiBase()
     const title = clampConversationTitle(inputText)
-
-    let body
-    if (useGuestAuth()) {
-        const clientId = getOrCreateGuestClientId()
-        body = {
-            clientId,
-            req: {
-                initialTitle: title,
-                initialSummary: null,
-            },
-        }
-    } else {
-        body = {initialTitle: title}
-    }
+    const body = {initialTitle: title}
 
     const res = await post(`${base}/conversations`, body)
     const conv = await unwrapResponse(res)
@@ -403,8 +345,7 @@ export async function createConversation(inputText, _displayText = null) {
 }
 
 /**
- * Soft-deletes a conversation (idempotent; backend returns 204 No Content). The conversation and its
- * sessions/turns are retained server-side but never returned by any listing afterward.
+ * Soft-deletes a conversation (idempotent; backend returns 204 No Content).
  *
  * @param {string} conversationId
  * @returns {Promise<void>}
@@ -417,10 +358,10 @@ export async function deleteConversation(conversationId) {
 }
 
 /**
- * Archives a conversation (idempotent). Hidden from the default listing; visible via `archived=true`.
+ * Archives a conversation (idempotent).
  *
  * @param {string} conversationId
- * @returns {Promise<object>} updated {@code ConversationDto} (includes `archivedAt`)
+ * @returns {Promise<object>}
  */
 export async function archiveConversation(conversationId) {
     const base = getApiBase()
@@ -432,10 +373,10 @@ export async function archiveConversation(conversationId) {
 }
 
 /**
- * Reverses an archive (idempotent); the conversation returns to the default listing.
+ * Reverses an archive (idempotent).
  *
  * @param {string} conversationId
- * @returns {Promise<object>} updated {@code ConversationDto}
+ * @returns {Promise<object>}
  */
 export async function unarchiveConversation(conversationId) {
     const base = getApiBase()
@@ -449,14 +390,11 @@ export async function unarchiveConversation(conversationId) {
 /**
  * Starts agent orchestration for the given conversation.
  *
- * The backend requires a `chatContext` envelope (persona / scenario).
- *
  * @param {string} conversationId
  * @param {string} inputText
  * @param {{ schemaVersion?: string, contextType: string, contextData: { id: string } }} chatContext
- *        Required. Shape: `{ schemaVersion: "1.0", contextType: "VISIT",
- *        contextData: { id: "<uuid>" } }`. Backend accepts only the canonical {@code id} key
- *        (the legacy {@code visitId} alias was removed).
+ *        Required. Shape: `{ schemaVersion: "1.0", contextType: "VISIT"|"STUDENT",
+ *        contextData: { id: "<uuid>" } }`.
  * @param {string|null} [displayText]
  * @returns {Promise<object>}
  */
@@ -464,11 +402,11 @@ export async function startOrchestration(conversationId, inputText, chatContext,
     if (!chatContext || !chatContext.contextType) {
         throw new ApiError(0, 'invalid_chat_context', 'chatContext is required on orchestration start')
     }
-    if (!isValidVisitId(chatContext.contextData?.id)) {
+    if (!isValidContextId(chatContext.contextData?.id)) {
         throw new ApiError(
             0,
             'invalid_chat_context',
-            'chatContext.contextData.id must be a visit UUID (canonical id key; visitId is not accepted)',
+            'chatContext.contextData.id must be a UUID (canonical id key; visitId alias is not accepted)',
         )
     }
     const base = getOrchestrationBase()
@@ -481,7 +419,7 @@ export async function startOrchestration(conversationId, inputText, chatContext,
         ...(safeDisplay ? {displayText: safeDisplay} : {}),
     }
 
-    const res = await post(`${base}/conversations/${cid}/start`, body)
+    const res = await post(`${base}/conversations/${cid}/start`, body, ORCHESTRATION_POST_TIMEOUT_MS)
     const data = await unwrapResponse(res)
     log.info('Orchestration started', {
         conversationId,
@@ -492,30 +430,21 @@ export async function startOrchestration(conversationId, inputText, chatContext,
 }
 
 /**
- * @param {string} conversationId
- * @param {string} followUpInput
- * @param {string|null} [displayText]
- * @param {string|null} [clientMessageId]
- */
-/**
- * Transcribes audio via the modulith speech module. Returns recognized text for the user to
- * review/edit before sending through {@link startOrchestration} or {@link sendReply}.
+ * Transcribes audio via the modulith speech module.
  *
- * @param {Blob} audioBlob recorded audio (e.g. {@code audio/webm} from MediaRecorder)
- * @param {{ filename?: string, languageHint?: string|null }} [opts] multipart filename for the
- *        {@code audio} part, and optional ISO-639-1 language hint ({@code en}/{@code ar}); omit for auto-detect.
+ * @param {Blob} audioBlob
+ * @param {{ filename?: string, languageHint?: string|null }} [opts]
  * @returns {Promise<{ text: string, language: string|null }>}
  */
 export async function transcribeSpeech(audioBlob, {filename = 'recording.webm', languageHint = null} = {}) {
     if (audioBlob.size > AUDIO_MAX_BYTES) {
         throw new ApiError(0, 'audio_too_large', 'Recording is too large (max 25 MB). Please record a shorter clip.')
     }
-    let url = `${API_ORIGIN}${getSpeechPathPrefix()}/transcriptions`
+    let url = `${API_ORIGIN}${SPEECH_PATH_SECURE}/transcriptions`
     if (languageHint) {
         const joiner = url.includes('?') ? '&' : '?'
         url = `${url}${joiner}languageHint=${encodeURIComponent(languageHint)}`
     }
-    url = withGuestClientIdQuery(url)
     const formData = new FormData()
     formData.append('audio', audioBlob, filename)
     log.debug('POST transcribe', url, {bytes: audioBlob.size, type: audioBlob.type})
@@ -537,6 +466,91 @@ export async function transcribeSpeech(audioBlob, {filename = 'recording.webm', 
     return data
 }
 
+/**
+ * Stages an absence supporting document for chat. Relay {@code chatFollowUpMessage} verbatim
+ * as the next orchestration follow-up.
+ *
+ * @param {File|Blob} file
+ * @param {{ filename?: string }} [opts]
+ * @returns {Promise<{ originalFileName: string, contentType: string, sizeBytes: number, chatFollowUpMessage: string }>}
+ */
+export async function uploadAbsenceChatAttachment(file, {filename} = {}) {
+    if (!file) {
+        throw new ApiError(0, 'missing_file', 'A supporting document file is required.')
+    }
+    const size = typeof file.size === 'number' ? file.size : 0
+    if (size > ABSENCE_ATTACHMENT_MAX_BYTES) {
+        throw new ApiError(0, 'file_too_large', 'Supporting document must not exceed 10 MB.')
+    }
+    const url = `${API_ORIGIN}${STUDENTS_PATH_SECURE}/absence-requests/attachments`
+    const formData = new FormData()
+    const name = filename
+        || (typeof File !== 'undefined' && file instanceof File && file.name)
+        || 'attachment'
+    formData.append('file', file, name)
+    log.debug('POST absence attachment', url, {bytes: size, type: file.type})
+    const ok = await requestWithAuthRetry(async () => {
+        const res = await fetchWithTimeout(url, {
+            method: 'POST',
+            headers: await buildMultipartAuthHeaders(),
+            body: formData,
+        })
+        log.debug('POST absence attachment response', url, res.status)
+        return handleResponse(res)
+    })
+    const data = await unwrapResponse(ok)
+    log.info('Absence attachment staged', {
+        originalFileName: data?.originalFileName,
+        sizeBytes: data?.sizeBytes,
+    })
+    return data
+}
+
+/**
+ * Stages an error-banner screenshot/document for chat. Relay {@code chatFollowUpMessage} verbatim.
+ *
+ * @param {File|Blob} file
+ * @param {{ filename?: string }} [opts]
+ * @returns {Promise<{ originalFileName: string, contentType: string, sizeBytes: number, chatFollowUpMessage: string }>}
+ */
+export async function uploadErrorBannerChatAttachment(file, {filename} = {}) {
+    if (!file) {
+        throw new ApiError(0, 'missing_file', 'A supporting document file is required.')
+    }
+    const size = typeof file.size === 'number' ? file.size : 0
+    if (size > ABSENCE_ATTACHMENT_MAX_BYTES) {
+        throw new ApiError(0, 'file_too_large', 'Supporting document must not exceed 10 MB.')
+    }
+    const url = `${API_ORIGIN}${ERRORBANNER_PATH_SECURE}/attachments`
+    const formData = new FormData()
+    const name = filename
+        || (typeof File !== 'undefined' && file instanceof File && file.name)
+        || 'attachment'
+    formData.append('file', file, name)
+    log.debug('POST error-banner attachment', url, {bytes: size, type: file.type})
+    const ok = await requestWithAuthRetry(async () => {
+        const res = await fetchWithTimeout(url, {
+            method: 'POST',
+            headers: await buildMultipartAuthHeaders(),
+            body: formData,
+        })
+        log.debug('POST error-banner attachment response', url, res.status)
+        return handleResponse(res)
+    })
+    const data = await unwrapResponse(ok)
+    log.info('Error-banner attachment staged', {
+        originalFileName: data?.originalFileName,
+        sizeBytes: data?.sizeBytes,
+    })
+    return data
+}
+
+/**
+ * @param {string} conversationId
+ * @param {string} followUpInput
+ * @param {string|null} [displayText]
+ * @param {string|null} [clientMessageId]
+ */
 export async function sendReply(conversationId, followUpInput, displayText = null, clientMessageId = null) {
     const base = getOrchestrationBase()
     const cid = encodeURIComponent(conversationId)
@@ -552,11 +566,11 @@ export async function sendReply(conversationId, followUpInput, displayText = nul
         followUpInput: safeInput,
         clientMessageId: messageId,
         ...(safeDisplay ? {displayText: safeDisplay} : {}),
-    })
+    }, ORCHESTRATION_POST_TIMEOUT_MS)
 }
 
 /**
- * Assistant-round SSE. Bearer (secure) or guest query `clientId`.
+ * Assistant-round SSE (Bearer JWT).
  *
  * @param {string} conversationId
  * @returns {{ onmessage: Function|null, onerror: Function|null, close: () => void, readyState: number, addEventListener: Function, removeEventListener: Function }}
@@ -564,14 +578,20 @@ export async function sendReply(conversationId, followUpInput, displayText = nul
 export function createResponseStream(conversationId) {
     const base = getOrchestrationBase()
     const cid = encodeURIComponent(conversationId)
-    let streamUrl = `${base}/conversations/${cid}/assistant-round/stream`
-    streamUrl = withGuestClientIdQuery(streamUrl)
-    log.info('SSE open', {conversationId, guest: useGuestAuth()})
+    const streamUrl = `${base}/conversations/${cid}/assistant-round/stream`
+    log.info('SSE open', {conversationId})
     return createFetchEventSource(streamUrl)
 }
 
+/** Mirror browser EventSource readyState values (jsdom may omit EventSource). */
+const SSE_CONNECTING = 0
+const SSE_OPEN = 1
+const SSE_CLOSED = 2
+
 /**
- * Fetch-based SSE (Bearer when not guest).
+ * Fetch-based SSE with Bearer auth.
+ * Frames are split on blank lines; trailing buffer + TextDecoder are flushed at EOF.
+ * Graceful close with no terminal frame invokes {@code onclosedWithoutTerminal}.
  */
 function createFetchEventSource(url) {
     const controller = new AbortController()
@@ -579,7 +599,9 @@ function createFetchEventSource(url) {
     const emitter = {
         onmessage: null,
         onerror: null,
-        readyState: EventSource.CONNECTING,
+        /** Called when the HTTP body ends without a ready/error/expired frame. */
+        onclosedWithoutTerminal: null,
+        readyState: SSE_CONNECTING,
         addEventListener(type, cb) {
             if (!listeners.has(type)) listeners.set(type, new Set())
             listeners.get(type).add(cb)
@@ -588,7 +610,7 @@ function createFetchEventSource(url) {
             listeners.get(type)?.delete(cb)
         },
         close() {
-            this.readyState = EventSource.CLOSED
+            this.readyState = SSE_CLOSED
             controller.abort()
         },
     }
@@ -597,14 +619,8 @@ function createFetchEventSource(url) {
         emitter.onerror?.(event)
     }
 
-    /**
-     * Resolves auth headers for one connection attempt. `force` bypasses the proactive expiry
-     * check and refreshes unconditionally — used for the retry-once-on-401 below, since a token
-     * {@link ensureFreshAccessToken} judged fresh but the server rejected still needs a new one.
-     */
     async function resolveHeaders(force) {
         const headers = {Accept: 'text/event-stream'}
-        if (useGuestAuth()) return headers
         const token = force
             ? await refreshAccessToken(import.meta.env)
             : await ensureFreshAccessToken(import.meta.env)
@@ -613,18 +629,30 @@ function createFetchEventSource(url) {
         return headers
     }
 
+    const isTerminalStatus = (data) => {
+        try {
+            const parsed = JSON.parse(data)
+            return parsed?.status === 'ready'
+                || parsed?.status === 'error'
+                || parsed?.status === 'expired'
+        } catch {
+            return false
+        }
+    }
+
     ;(async () => {
+        let sawTerminal = false
         try {
             let headers = await resolveHeaders(false)
             if (!headers) {
-                emitter.readyState = EventSource.CLOSED
+                emitter.readyState = SSE_CLOSED
                 emitError(new Event('error'))
                 return
             }
 
-            let res = await fetch(url, buildFetchOptions({headers, signal: controller.signal}))
+            let res = await fetch(url, {headers, signal: controller.signal})
 
-            if (res.status === 401 && !useGuestAuth()) {
+            if (res.status === 401) {
                 try {
                     headers = await resolveHeaders(true)
                 } catch (refreshErr) {
@@ -632,31 +660,31 @@ function createFetchEventSource(url) {
                     headers = null
                 }
                 if (headers) {
-                    res = await fetch(url, buildFetchOptions({headers, signal: controller.signal}))
+                    res = await fetch(url, {headers, signal: controller.signal})
                 }
             }
 
             if (!res.ok) {
                 log.warn('SSE HTTP not OK', {url, status: res.status})
-                emitter.readyState = EventSource.CLOSED
+                emitter.readyState = SSE_CLOSED
                 emitError(new Event('error'))
                 return
             }
 
             log.debug('SSE stream connected', url)
-            emitter.readyState = EventSource.OPEN
+            emitter.readyState = SSE_OPEN
             const reader = res.body.getReader()
             const decoder = new TextDecoder()
             let buffer = ''
 
-            while (true) {
-                const {done, value} = await reader.read()
-                if (done) break
+            const dispatchData = (data) => {
+                if (isTerminalStatus(data)) sawTerminal = true
+                emitter.onmessage?.({data})
+            }
 
-                buffer += decoder.decode(value, {stream: true})
+            const drainCompleteFrames = () => {
                 const events = buffer.split('\n\n')
                 buffer = events.pop() ?? ''
-
                 for (const eventChunk of events) {
                     const lines = eventChunk.split('\n')
                     const dataLines = []
@@ -666,18 +694,55 @@ function createFetchEventSource(url) {
                         }
                     }
                     if (dataLines.length > 0) {
-                        emitter.onmessage?.({data: dataLines.join('\n')})
+                        dispatchData(dataLines.join('\n'))
                     }
                 }
             }
 
-            emitter.readyState = EventSource.CLOSED
-        } catch (err) {
-            if (err.name !== 'AbortError') {
-                log.error('SSE fetch failed', url, err)
-                emitter.readyState = EventSource.CLOSED
-                emitError(new Event('error'))
+            const flushTrailingBuffer = () => {
+                buffer += decoder.decode()
+                if (!buffer.trim()) return
+                const lines = buffer.split('\n')
+                buffer = ''
+                const dataLines = []
+                for (const line of lines) {
+                    if (line.startsWith('data:')) {
+                        dataLines.push(line.slice(5).trim())
+                    }
+                }
+                if (dataLines.length > 0) {
+                    dispatchData(dataLines.join('\n'))
+                }
             }
+
+            while (true) {
+                const {done, value} = await reader.read()
+                if (done) {
+                    flushTrailingBuffer()
+                    break
+                }
+
+                buffer += decoder.decode(value, {stream: true})
+                drainCompleteFrames()
+            }
+
+            emitter.readyState = SSE_CLOSED
+            if (!sawTerminal) {
+                log.warn('SSE closed without terminal frame', {url})
+                try {
+                    emitter.onclosedWithoutTerminal?.()
+                } catch (cbErr) {
+                    log.warn('onclosedWithoutTerminal failed', cbErr)
+                }
+            }
+        } catch (err) {
+            if (err.name === 'AbortError') {
+                emitter.readyState = SSE_CLOSED
+                return
+            }
+            log.error('SSE fetch failed', url, err)
+            emitter.readyState = SSE_CLOSED
+            emitError(new Event('error'))
         }
     })()
 
