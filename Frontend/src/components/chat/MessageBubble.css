@@ -3,8 +3,7 @@
     align-items: flex-end;
     gap: 8px;
     animation: fadeInUp 0.3s ease;
-    margin-bottom: 12px;
-    group: true;
+    margin-bottom: 14px;
 }
 
 .message-row.user {
@@ -37,14 +36,18 @@
 .message-content {
     display: flex;
     flex-direction: column;
-    max-width: 75%;
+    max-width: min(75%, 680px);
     gap: 4px;
+}
+
+.message-row.user .message-content {
+    align-items: flex-end;
 }
 
 .message-bubble {
     max-width: 100%;
-    padding: 10px 14px;
-    border-radius: var(--radius-lg);
+    padding: 12px 16px;
+    border-radius: 16px;
     font-size: 14px;
     line-height: 1.55;
     word-wrap: break-word;
@@ -137,17 +140,22 @@
 .message-timestamp {
     font-size: 11px;
     color: var(--text-muted);
-    opacity: 0;
-    transition: opacity var(--transition-fast);
+    opacity: 0.85;
     margin-top: 2px;
+    padding: 0 4px;
 }
 
-.message-row.ai:hover .message-timestamp {
-    opacity: 1;
-}
+@media (hover: hover) and (pointer: fine) {
+    .message-timestamp {
+        opacity: 0;
+        transition: opacity var(--transition-fast);
+    }
 
-.message-row.user:hover .message-timestamp {
-    opacity: 1;
+    .message-row.ai:hover .message-timestamp,
+    .message-row.user:hover .message-timestamp,
+    .message-row:focus-within .message-timestamp {
+        opacity: 0.9;
+    }
 }
 
 /* Markdown body styling for AI responses */
@@ -255,11 +263,17 @@
     margin-top: 10px;
 }
 
+@media (min-width: 560px) {
+    .menu-items-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
 .menu-card {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    padding: 10px 12px;
+    padding: 12px 14px;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
@@ -269,12 +283,13 @@
     font-family: inherit;
     font-size: 13px;
     line-height: 1.4;
-    transition: background var(--transition-fast), border-color var(--transition-fast);
+    transition: background var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
 }
 
 .menu-card:hover {
     background: rgba(165, 110, 255, 0.1);
     border-color: var(--border-accent);
+    transform: translateY(-1px);
 }
 
 .menu-card:active {
@@ -422,6 +437,30 @@
     align-self: flex-start;
     line-height: 1.6;
     letter-spacing: 0.01em;
+}
+
+.handled-by[data-agent='Catering'] {
+    color: #86efac;
+    border-color: rgba(134, 239, 172, 0.28);
+    background: rgba(134, 239, 172, 0.08);
+}
+
+.handled-by[data-agent='IT Support'] {
+    color: #93c5fd;
+    border-color: rgba(147, 197, 253, 0.28);
+    background: rgba(147, 197, 253, 0.08);
+}
+
+.handled-by[data-agent='Facilities & Maintenance'] {
+    color: #fcd34d;
+    border-color: rgba(252, 211, 77, 0.28);
+    background: rgba(252, 211, 77, 0.08);
+}
+
+.handled-by[data-agent='Absence'] {
+    color: #c4b5fd;
+    border-color: rgba(196, 181, 253, 0.28);
+    background: rgba(196, 181, 253, 0.08);
 }
 
 /* ===== Order Confirmation Card ===== */

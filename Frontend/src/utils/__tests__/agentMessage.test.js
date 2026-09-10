@@ -121,7 +121,7 @@ describe('parseAgentMessage', () => {
         expect(payload).toBeNull()
     })
 
-    it('normalizes payload.breadcrumb on menu replies (trims, drops invalid entries)', () => {
+    it('drops legacy payload.breadcrumb on menu replies (backend no longer emits crumbs)', () => {
         const raw = JSON.stringify({
             replyType: 'json',
             textString: 'Here is Cold',
@@ -131,30 +131,25 @@ describe('parseAgentMessage', () => {
                 breadcrumb: [
                     { label: '  Menu ', levelKey: ' root ' },
                     { label: 'Drinks', levelKey: 'cat/1' },
-                    { label: '', levelKey: 'sub/bad' }, // dropped
-                    { label: 'Cold', levelKey: 'sub/2' },
                 ],
             },
         })
         const { payload } = parseAgentMessage(raw)
-        expect(payload?.breadcrumb).toEqual([
-            { label: 'Menu', levelKey: 'root' },
-            { label: 'Drinks', levelKey: 'cat/1' },
-            { label: 'Cold', levelKey: 'sub/2' },
-        ])
+        expect(payload?.menuitems?.[0]?.label).toBe('Juice')
+        expect(payload?.breadcrumb).toBeUndefined()
     })
 
-    it('sets breadcrumb to null when payload omits it', () => {
+    it('parses menu JSON without a breadcrumb field', () => {
         const raw = JSON.stringify({
             replyType: 'json',
             textString: 'menu',
             payload: { subtype: 'menu', menuitems: [{ id: '1', name: 'A' }] },
         })
         const { payload } = parseAgentMessage(raw)
-        expect(payload?.breadcrumb).toBeNull()
+        expect(payload?.breadcrumb).toBeUndefined()
     })
 
-    it('parses IT/F&M unified menu JSON (textString, menuitems, breadcrumb, ticket fields null)', () => {
+    it('parses IT/F&M unified menu JSON (textString, menuitems, ticket fields null)', () => {
         const raw = JSON.stringify({
             replyType: 'json',
             textString: 'Here are IT support areas.',
@@ -181,7 +176,7 @@ describe('parseAgentMessage', () => {
         expect(text).toBe('Here are IT support areas.')
         expect(payload?.subtype).toBe('menu')
         expect(payload?.menuitems?.[0]?.label).toBe('Network')
-        expect(payload?.breadcrumb).toEqual([{ label: 'IT Support', levelKey: 'root' }])
+        expect(payload?.breadcrumb).toBeUndefined()
     })
 
     it('parses a ticket reply into the nested ticket object (current contract)', () => {
@@ -281,7 +276,34 @@ describe('parseAgentMessage', () => {
         expect(text).toBe('Please choose an IT support area.')
         expect(payload?.subtype).toBe('menu')
         expect(payload?.menuitems).toHaveLength(2)
-        expect(payload?.breadcrumb).toEqual([{ label: 'IT Support', levelKey: 'root' }])
+        expect(payload?.breadcrumb).toBeUndefined()
+    })
+
+    it('does not promote an unknown subtype with menuitems to menu', () => {
+        const raw = JSON.stringify({
+            replyType: 'json',
+            textString: 'Plain help text.',
+            payload: {
+                subtype: 'unexpected_card',
+                menuitems: [{ id: '1', name: 'Should not become a card' }],
+            },
+        })
+        const { text, payload } = parseAgentMessage(raw)
+        expect(text).toBe('Plain help text.')
+        expect(payload?.subtype).toBe('unexpected_card')
+        expect(payload?.menuitems).toEqual([])
+    })
+
+    it('does not surface the raw JSON envelope when textString is whitespace-only', () => {
+        const raw = JSON.stringify({
+            replyType: 'json',
+            textString: '   ',
+            payload: { subtype: 'none', menuitems: [], order: null },
+        })
+        const { text, payload } = parseAgentMessage(raw)
+        expect(text).toBe('')
+        expect(text).not.toContain('replyType')
+        expect(payload).toBeNull()
     })
 })
 

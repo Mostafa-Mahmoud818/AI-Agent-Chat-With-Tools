@@ -188,16 +188,47 @@ describe('MessageBubble', () => {
         expect(onMenuItemClick).toHaveBeenCalledWith(expect.objectContaining({ id: 'area-1' }), 'IT_SUPPORT')
     })
 
-    it('renders empty-menu copy when subtype is menu but list is empty', () => {
+    it('disables menu cards while busy', () => {
+        const onMenuItemClick = vi.fn()
+        const item = { id: 'area-1', label: 'Network', description: '' }
+        const msg = {
+            id: 'm-busy',
+            role: 'ai',
+            text: 'Areas',
+            timestamp: new Date(),
+            handledBy: 'IT_SUPPORT',
+            payload: { subtype: 'menu', menuitems: [item] },
+        }
+        render(<MessageBubble message={msg} onMenuItemClick={onMenuItemClick} menuDisabled />)
+        const card = screen.getByRole('button', { name: /Network/i })
+        expect(card).toBeDisabled()
+        fireEvent.click(card)
+        expect(onMenuItemClick).not.toHaveBeenCalled()
+    })
+
+    it('renders empty-menu copy when subtype is menu, list is empty, and text is blank', () => {
         const msg = {
             id: 'm4',
             role: 'ai',
-            text: 'Here are the categories.',
+            text: '',
             timestamp: new Date(),
             payload: { subtype: 'menu', menuitems: [] },
         }
         render(<MessageBubble message={msg} />)
         expect(screen.getByText('No items are currently available. Please try again later or contact support.')).toBeInTheDocument()
+    })
+
+    it('does not stack empty-menu copy when textString already explains the empty menu', () => {
+        const msg = {
+            id: 'm4b',
+            role: 'ai',
+            text: 'No categories are available right now. Please try again later.',
+            timestamp: new Date(),
+            payload: { subtype: 'menu', menuitems: [] },
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText(/No categories are available/i)).toBeInTheDocument()
+        expect(screen.queryByText('No items are currently available. Please try again later or contact support.')).not.toBeInTheDocument()
     })
 
     it('renders OUTDOOR navigation card with an Open in Maps link from coordinates', () => {
@@ -262,6 +293,23 @@ describe('MessageBubble', () => {
         timestamp: new Date(),
         handledBy: 'IT_SUPPORT',
         payload: { subtype: 'ticket', menuitems: [], order: null, ticket, ...extra },
+    })
+
+    it('ticket card uses Absence title for ABS- reference codes', () => {
+        const msg = {
+            ...ticketMessage('t-abs', {
+                id: '9f4c2d8e-1234-4abc-9def-1234567890ab',
+                referenceCode: 'ABS-2026-00001',
+                status: 'SUBMITTED',
+                createdAt: null,
+            }),
+            handledBy: 'Absence Request Agent',
+            text: 'Your absence request ABS-2026-00001 has been submitted.',
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText('Absence request submitted')).toBeInTheDocument()
+        expect(screen.getByText('Answered by Absence')).toBeInTheDocument()
+        expect(screen.queryByText('Support Ticket Created')).not.toBeInTheDocument()
     })
 
     it('ticket card never renders the internal ticket id UUID', () => {
@@ -378,17 +426,89 @@ describe('MessageBubble', () => {
         expect(screen.queryByText(/0a1b2c3d/)).not.toBeInTheDocument()
     })
 
-    it('renders error copy when subtype is error and suppresses textString', () => {
+    it('renders backend error textString when present', () => {
         const msg = {
             id: 'm5',
             role: 'ai',
-            text: 'this text must not leak',
+            text: 'Catalog lookup failed for this visit.',
             timestamp: new Date(),
             payload: { subtype: 'error', menuitems: [], order: null },
         }
         render(<MessageBubble message={msg} />)
+        expect(screen.getByText('Catalog lookup failed for this visit.')).toBeInTheDocument()
+        expect(screen.queryByText(/while loading the menu/i)).not.toBeInTheDocument()
+    })
+
+    it('uses menu error copy when error has no text and the route has a real menu', () => {
+        const msg = {
+            id: 'm5b',
+            role: 'ai',
+            text: '   ',
+            timestamp: new Date(),
+            handledBy: 'CATERING',
+            payload: { subtype: 'error', menuitems: [], order: null },
+        }
+        render(<MessageBubble message={msg} />)
         expect(screen.getByText('Something went wrong while loading the menu. Please try again or contact support if the issue persists.')).toBeInTheDocument()
-        expect(screen.queryByText('this text must not leak')).not.toBeInTheDocument()
+    })
+
+    it('uses generic error copy (not menu copy) for a non-menu route with no text', () => {
+        // Regression test: `payload.menuitems` is contractually `[]` on EVERY error envelope
+        // (e.g. Visitor Experience's unrecoverable navigation-shape error also uses subtype:"error"
+        // with no menuitems), so it must never be used to infer "this was a menu failure" — the
+        // route must be checked instead.
+        const msg = {
+            id: 'm5c',
+            role: 'ai',
+            text: '   ',
+            timestamp: new Date(),
+            handledBy: 'VISITOR_EXPERIENCE',
+            payload: { subtype: 'error', menuitems: [], order: null },
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText('Something went wrong. Please try again or contact support if the issue persists.')).toBeInTheDocument()
+        expect(screen.queryByText(/while loading the menu/i)).not.toBeInTheDocument()
+    })
+
+    it('uses neutral error copy when error has no text and no menuitems field', () => {
+        const msg = {
+            id: 'm5c',
+            role: 'ai',
+            text: '',
+            timestamp: new Date(),
+            payload: { subtype: 'error' },
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText('Something went wrong. Please try again or contact support if the issue persists.')).toBeInTheDocument()
+    })
+
+    it('formats Error Banner Agent and banner_error the same', () => {
+        const { rerender } = render(
+            <MessageBubble
+                message={{
+                    id: 'eb1',
+                    role: 'ai',
+                    text: 'Pick a category',
+                    timestamp: new Date(),
+                    handledBy: 'Error Banner Agent',
+                    payload: { subtype: 'menu', menuitems: [{ id: '1', label: 'A' }] },
+                }}
+            />,
+        )
+        expect(screen.getByText(/Answered by Error Banner/)).toBeInTheDocument()
+        rerender(
+            <MessageBubble
+                message={{
+                    id: 'eb2',
+                    role: 'ai',
+                    text: 'Pick a category',
+                    timestamp: new Date(),
+                    handledBy: 'banner_error',
+                    payload: { subtype: 'menu', menuitems: [{ id: '1', label: 'A' }] },
+                }}
+            />,
+        )
+        expect(screen.getByText(/Answered by Error Banner/)).toBeInTheDocument()
     })
 
     it('renders visits_query card with title, host, and suppresses visitId UUID', () => {

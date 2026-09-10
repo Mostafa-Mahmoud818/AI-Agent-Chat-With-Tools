@@ -1,15 +1,34 @@
 /**
- * @file Composer input (textarea + mic + send) for the chat pane.
+ * @file Composer input (textarea + mic + send + optional attach/date) for the chat pane.
  * @module components/chat/ChatInput
  */
 
 import { useState, useRef, useCallback, forwardRef, useImperativeHandle, useEffect } from 'react'
 import PropTypes from 'prop-types'
-import { AUDIO_MAX_BYTES, CHAT_INPUT_MAX } from '../../config/chattingValidationLimits.js'
-import { transcribeSpeech, ApiError } from '../../services/api.js'
+import {
+    ABSENCE_ATTACHMENT_ALLOWED_TYPES,
+    ABSENCE_ATTACHMENT_MAX_BYTES,
+    AUDIO_MAX_BYTES,
+    CHAT_INPUT_MAX,
+} from '../../config/chattingValidationLimits.js'
+import { transcribeSpeech, uploadAbsenceChatAttachment, uploadErrorBannerChatAttachment, ApiError } from '../../services/api.js'
+import { isBannerErrorHandledBy, isStudentAbsenceHandledBy } from '../../utils/menuSelection.js'
 import './ChatInput.css'
 
 const PREFERRED_MIME = 'audio/webm'
+
+/**
+ * Inclusive HTML min for dateTo = calendar day after afterDate (exclusive server rule).
+ * @param {string|null|undefined} afterDate YYYY-MM-DD
+ * @returns {string|undefined}
+ */
+export function exclusiveDateMin(afterDate) {
+    if (!afterDate || !/^\d{4}-\d{2}-\d{2}$/.test(String(afterDate).trim())) return undefined
+    const d = new Date(`${String(afterDate).trim()}T00:00:00Z`)
+    if (Number.isNaN(d.getTime())) return undefined
+    d.setUTCDate(d.getUTCDate() + 1)
+    return d.toISOString().slice(0, 10)
+}
 
 function resizeTextarea(textarea) {
     if (!textarea) return
@@ -17,19 +36,54 @@ function resizeTextarea(textarea) {
     textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px'
 }
 
-const ChatInput = forwardRef(function ChatInput({ onSend, placeholder, disabled }, ref) {
+function formatBytes(n) {
+    if (n == null || !Number.isFinite(n)) return ''
+    if (n < 1024) return `${n} B`
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`
+}
+
+/**
+ * @param {{
+ *   onSend: (text: string, opts?: { displayText?: string|null }) => void|boolean|Promise<void|boolean>,
+ *   placeholder?: string,
+ *   disabled?: boolean,
+ *   composerMode?: 'default'|'attachment_request'|'date_request'|null,
+ *   dateConstraint?: { field?: string|null, afterDate?: string|null }|null,
+ *   attachmentHandledBy?: string|null,
+ * }} props
+ */
+const ChatInput = forwardRef(function ChatInput({
+    onSend,
+    placeholder,
+    disabled,
+    composerMode = 'default',
+    dateConstraint = null,
+    attachmentHandledBy = null,
+}, ref) {
     const [text, setText] = useState('')
     const [recording, setRecording] = useState(false)
     const [transcribing, setTranscribing] = useState(false)
     const [sttError, setSttError] = useState(null)
-    const [languageHint, setLanguageHint] = useState('') // '' = auto-detect, 'en', 'ar'
+    const [attachError, setAttachError] = useState(null)
+    const [uploading, setUploading] = useState(false)
+    const [attachPreview, setAttachPreview] = useState(null)
+    const [languageHint, setLanguageHint] = useState('')
+    const [pickedDate, setPickedDate] = useState('')
     const inputRef = useRef(null)
+    const fileInputRef = useRef(null)
     const mediaRecorderRef = useRef(null)
     const audioChunksRef = useRef([])
     const mediaStreamRef = useRef(null)
     const recordedMimeRef = useRef(PREFERRED_MIME)
     const recordingRef = useRef(false)
     const languageHintRef = useRef('')
+
+    const showAttach = composerMode === 'attachment_request'
+    const showDate = composerMode === 'date_request'
+    const dateMin = showDate && dateConstraint?.field === 'dateTo'
+        ? exclusiveDateMin(dateConstraint.afterDate)
+        : undefined
 
     useEffect(() => {
         recordingRef.current = recording
@@ -38,6 +92,14 @@ const ChatInput = forwardRef(function ChatInput({ onSend, placeholder, disabled 
     useEffect(() => {
         languageHintRef.current = languageHint
     }, [languageHint])
+
+    useEffect(() => {
+        // Clear attach/date local state when composer mode changes.
+        setAttachError(null)
+        setAttachPreview(null)
+        setPickedDate('')
+        if (fileInputRef.current) fileInputRef.current.value = ''
+    }, [composerMode])
 
     useImperativeHandle(ref, () => ({
         focus() {
@@ -71,8 +133,9 @@ const ChatInput = forwardRef(function ChatInput({ onSend, placeholder, disabled 
         stopMediaTracks()
     }, [stopMediaTracks])
 
-    const canSend = text.trim() && !disabled && !transcribing
-    const micDisabled = disabled || transcribing
+    const busy = disabled || transcribing || uploading
+    const canSend = Boolean(text.trim() || (showDate && pickedDate)) && !busy
+    const micDisabled = busy
 
     const handleInput = useCallback((e) => {
         setText(e.target.value)
@@ -80,17 +143,22 @@ const ChatInput = forwardRef(function ChatInput({ onSend, placeholder, disabled 
         resizeTextarea(e.target)
     }, [])
 
-    const submit = useCallback(() => {
+    const submit = useCallback(async () => {
+        if (busy) return
         const trimmed = text.trim()
-        if (!trimmed || disabled || transcribing) return
-        onSend(trimmed)
+        const dateToSend = showDate && pickedDate && !trimmed ? pickedDate : trimmed
+        if (!dateToSend) return
+        const accepted = await Promise.resolve(onSend(dateToSend))
+        if (accepted === false) return
         setText('')
+        setPickedDate('')
         setSttError(null)
+        setAttachError(null)
         if (inputRef.current) {
             inputRef.current.style.height = 'auto'
             inputRef.current.focus()
         }
-    }, [text, disabled, transcribing, onSend])
+    }, [text, busy, onSend, showDate, pickedDate])
 
     const handleSubmit = useCallback((e) => {
         e.preventDefault()
@@ -104,8 +172,68 @@ const ChatInput = forwardRef(function ChatInput({ onSend, placeholder, disabled 
         }
     }, [submit])
 
+    const handleDateChange = useCallback((e) => {
+        const v = e.target.value
+        setPickedDate(v)
+        if (v) setText(v)
+    }, [])
+
+    const handleFileChange = useCallback(async (e) => {
+        const file = e.target.files?.[0]
+        if (!file) return
+        setAttachError(null)
+        setAttachPreview(null)
+
+        if (file.size > ABSENCE_ATTACHMENT_MAX_BYTES) {
+            setAttachError('Supporting document must not exceed 10 MB.')
+            e.target.value = ''
+            return
+        }
+        const mime = (file.type || '').toLowerCase()
+        if (mime && !ABSENCE_ATTACHMENT_ALLOWED_TYPES.includes(mime)) {
+            setAttachError('Unsupported file type. Allowed: PDF, JPEG, PNG, WEBP, DOC, DOCX.')
+            e.target.value = ''
+            return
+        }
+
+        setUploading(true)
+        try {
+            let uploadFn = null
+            if (isBannerErrorHandledBy(attachmentHandledBy)) {
+                uploadFn = uploadErrorBannerChatAttachment
+            } else if (isStudentAbsenceHandledBy(attachmentHandledBy)) {
+                uploadFn = uploadAbsenceChatAttachment
+            }
+            if (!uploadFn) {
+                setAttachError('Could not determine where to send this file. Please try again from the assistant prompt.')
+                return
+            }
+            const result = await uploadFn(file)
+            const displayText = `Attached: ${result.originalFileName || file.name}${result.sizeBytes != null ? ` (${formatBytes(result.sizeBytes)})` : ''}`
+            setAttachPreview({
+                name: result.originalFileName || file.name,
+                sizeBytes: result.sizeBytes,
+            })
+            const accepted = await Promise.resolve(onSend(result.chatFollowUpMessage, { displayText }))
+            if (accepted === false) {
+                setAttachPreview(null)
+                return
+            }
+            setText('')
+            setAttachPreview(null)
+        } catch (err) {
+            const message = err instanceof ApiError
+                ? err.message
+                : 'Could not upload attachment. Please try again.'
+            setAttachError(message)
+        } finally {
+            setUploading(false)
+            if (fileInputRef.current) fileInputRef.current.value = ''
+        }
+    }, [onSend, attachmentHandledBy])
+
     const handleMicClick = useCallback(async () => {
-        if (disabled || transcribing) return
+        if (busy) return
 
         if (recordingRef.current) {
             mediaRecorderRef.current?.stop()
@@ -179,7 +307,7 @@ const ChatInput = forwardRef(function ChatInput({ onSend, placeholder, disabled 
             mediaRecorderRef.current = null
             setSttError('Microphone access denied or unavailable.')
         }
-    }, [appendTranscript, disabled, stopMediaTracks, transcribing])
+    }, [appendTranscript, busy, stopMediaTracks])
 
     const micLabel = transcribing
         ? 'Transcribing speech'
@@ -194,6 +322,58 @@ const ChatInput = forwardRef(function ChatInput({ onSend, placeholder, disabled 
                     {sttError}
                 </div>
             )}
+            {attachError && (
+                <div className="chat-input-stt-error" role="alert">
+                    {attachError}
+                </div>
+            )}
+            {showAttach && (
+                <div className="chat-input-attach-row">
+                    <input
+                        id="chat-input-file"
+                        ref={fileInputRef}
+                        type="file"
+                        className="sr-only"
+                        accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,application/pdf,image/jpeg,image/png,image/webp,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        disabled={busy}
+                        onChange={handleFileChange}
+                        aria-label="Attach supporting document"
+                    />
+                    <label htmlFor="chat-input-file" className={`chat-input-attach-btn${busy ? ' is-disabled' : ''}`}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                        </svg>
+                        {uploading ? 'Uploading…' : 'Choose file'}
+                    </label>
+                    <span className="chat-input-attach-hint">
+                        {uploading
+                            ? 'Uploading…'
+                            : 'PDF, image, or DOC/DOCX · max 10 MB — or type if you cannot attach.'}
+                    </span>
+                    {attachPreview && (
+                        <span className="chat-input-attach-preview">
+                            {attachPreview.name}
+                            {attachPreview.sizeBytes != null ? ` (${formatBytes(attachPreview.sizeBytes)})` : ''}
+                        </span>
+                    )}
+                </div>
+            )}
+            {showDate && (
+                <div className="chat-input-date-row">
+                    <label htmlFor="chat-input-date" className="chat-input-date-label">
+                        {dateConstraint?.field === 'dateTo' ? 'End date' : 'Start date'}
+                    </label>
+                    <input
+                        id="chat-input-date"
+                        type="date"
+                        className="chat-input-date"
+                        value={pickedDate}
+                        min={dateMin}
+                        disabled={busy}
+                        onChange={handleDateChange}
+                    />
+                </div>
+            )}
             <div className="chat-input-wrapper">
                 <textarea
                     ref={inputRef}
@@ -201,10 +381,16 @@ const ChatInput = forwardRef(function ChatInput({ onSend, placeholder, disabled 
                     value={text}
                     onChange={handleInput}
                     onKeyDown={handleKeyDown}
-                    placeholder={placeholder}
+                    placeholder={
+                        showAttach
+                            ? (placeholder || 'Type a message, or attach a file above…')
+                            : showDate
+                                ? (placeholder || 'Pick a date above, or type YYYY-MM-DD…')
+                                : placeholder
+                    }
                     rows={1}
                     maxLength={CHAT_INPUT_MAX}
-                    disabled={disabled || transcribing}
+                    disabled={busy}
                     autoFocus
                 />
                 <select
@@ -246,6 +432,14 @@ const ChatInput = forwardRef(function ChatInput({ onSend, placeholder, disabled 
                     </svg>
                 </button>
             </div>
+            <div className="chat-input-meta">
+                <span className="chat-input-hint">Enter to send · Shift+Enter for a new line</span>
+                {text.length > 0 && (
+                    <span className={`chat-input-count${text.length > CHAT_INPUT_MAX - 80 ? ' is-warn' : ''}`}>
+                        {text.length}/{CHAT_INPUT_MAX}
+                    </span>
+                )}
+            </div>
         </form>
     )
 })
@@ -254,6 +448,12 @@ ChatInput.propTypes = {
     onSend: PropTypes.func.isRequired,
     placeholder: PropTypes.string,
     disabled: PropTypes.bool,
+    composerMode: PropTypes.oneOf(['default', 'attachment_request', 'date_request']),
+    dateConstraint: PropTypes.shape({
+        field: PropTypes.string,
+        afterDate: PropTypes.string,
+    }),
+    attachmentHandledBy: PropTypes.string,
 }
 
 export default ChatInput

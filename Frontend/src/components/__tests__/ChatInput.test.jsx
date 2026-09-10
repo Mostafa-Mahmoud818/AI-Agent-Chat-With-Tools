@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
-import { transcribeSpeech } from '../../services/api.js'
+import { transcribeSpeech, uploadAbsenceChatAttachment, uploadErrorBannerChatAttachment } from '../../services/api.js'
 import ChatInput from '../chat/ChatInput'
 
 vi.mock('../../services/api.js', async (importOriginal) => {
@@ -8,6 +8,8 @@ vi.mock('../../services/api.js', async (importOriginal) => {
     return {
         ...actual,
         transcribeSpeech: vi.fn(),
+        uploadAbsenceChatAttachment: vi.fn(),
+        uploadErrorBannerChatAttachment: vi.fn(),
     }
 })
 
@@ -36,6 +38,8 @@ class MockMediaRecorder {
 describe('ChatInput', () => {
     beforeEach(() => {
         vi.mocked(transcribeSpeech).mockReset()
+        vi.mocked(uploadAbsenceChatAttachment).mockReset()
+        vi.mocked(uploadErrorBannerChatAttachment).mockReset()
         vi.stubGlobal('MediaRecorder', MockMediaRecorder)
         vi.stubGlobal('navigator', {
             mediaDevices: {
@@ -145,5 +149,109 @@ describe('ChatInput', () => {
         await waitFor(() => {
             expect(textarea).toHaveValue('Vendor Meeting the second one')
         })
+    })
+
+    it('shows attach control in attachment_request mode and sends verbatim follow-up', async () => {
+        vi.mocked(uploadAbsenceChatAttachment).mockResolvedValueOnce({
+            chatFollowUpMessage: '[attachment] path=a/b.pdf filename=note.pdf type=application/pdf',
+            originalFileName: 'note.pdf',
+            sizeBytes: 42,
+        })
+        const onSend = vi.fn()
+        render(<ChatInput onSend={onSend} placeholder="Type..." composerMode="attachment_request" attachmentHandledBy="STUDENT_ABSENCE" />)
+
+        const fileInput = screen.getByLabelText('Attach supporting document')
+        const file = new File(['x'], 'note.pdf', { type: 'application/pdf' })
+        await act(async () => {
+            fireEvent.change(fileInput, { target: { files: [file] } })
+        })
+
+        await waitFor(() => {
+            expect(uploadAbsenceChatAttachment).toHaveBeenCalledTimes(1)
+            expect(onSend).toHaveBeenCalledWith(
+                '[attachment] path=a/b.pdf filename=note.pdf type=application/pdf',
+                { displayText: 'Attached: note.pdf (42 B)' },
+            )
+        })
+    })
+
+    it('routes banner_error attach uploads to errorbanner endpoint', async () => {
+        vi.mocked(uploadErrorBannerChatAttachment).mockResolvedValueOnce({
+            chatFollowUpMessage: '[attachment] path=banner/x.png filename=x.png type=image/png',
+            originalFileName: 'x.png',
+            sizeBytes: 10,
+        })
+        const onSend = vi.fn(async () => true)
+        render(
+            <ChatInput
+                onSend={onSend}
+                placeholder="Type..."
+                composerMode="attachment_request"
+                attachmentHandledBy="Error Banner Agent"
+            />,
+        )
+
+        const fileInput = screen.getByLabelText('Attach supporting document')
+        const file = new File(['x'], 'x.png', { type: 'image/png' })
+        await act(async () => {
+            fireEvent.change(fileInput, { target: { files: [file] } })
+        })
+
+        await waitFor(() => {
+            expect(uploadErrorBannerChatAttachment).toHaveBeenCalledTimes(1)
+            expect(uploadAbsenceChatAttachment).not.toHaveBeenCalled()
+        })
+    })
+
+    it('rejects oversized attach clientside without uploading', async () => {
+        const onSend = vi.fn()
+        render(<ChatInput onSend={onSend} placeholder="Type..." composerMode="attachment_request" attachmentHandledBy="STUDENT_ABSENCE" />)
+        const fileInput = screen.getByLabelText('Attach supporting document')
+        const big = new File([new Uint8Array(10 * 1024 * 1024 + 1)], 'big.pdf', { type: 'application/pdf' })
+        await act(async () => {
+            fireEvent.change(fileInput, { target: { files: [big] } })
+        })
+        expect(uploadAbsenceChatAttachment).not.toHaveBeenCalled()
+        expect(onSend).not.toHaveBeenCalled()
+        expect(screen.getByText(/must not exceed 10 MB/i)).toBeInTheDocument()
+    })
+
+    it('does not upload when attachmentHandledBy is missing (no absence default)', async () => {
+        const onSend = vi.fn()
+        render(<ChatInput onSend={onSend} placeholder="Type..." composerMode="attachment_request" />)
+        const fileInput = screen.getByLabelText('Attach supporting document')
+        const file = new File(['x'], 'note.pdf', { type: 'application/pdf' })
+        await act(async () => {
+            fireEvent.change(fileInput, { target: { files: [file] } })
+        })
+        expect(uploadAbsenceChatAttachment).not.toHaveBeenCalled()
+        expect(uploadErrorBannerChatAttachment).not.toHaveBeenCalled()
+        expect(onSend).not.toHaveBeenCalled()
+        expect(screen.getByText(/could not determine where to send this file/i)).toBeInTheDocument()
+    })
+
+    it('keeps composer text when onSend returns false', async () => {
+        const onSend = vi.fn(async () => false)
+        render(<ChatInput onSend={onSend} placeholder="Type..." />)
+        const textarea = screen.getByPlaceholderText('Type...')
+        fireEvent.change(textarea, { target: { value: 'Keep me' } })
+        await act(async () => {
+            fireEvent.submit(textarea.closest('form'))
+        })
+        await waitFor(() => expect(onSend).toHaveBeenCalledWith('Keep me'))
+        expect(textarea).toHaveValue('Keep me')
+    })
+
+    it('shows date picker with exclusive min for dateTo constraint', () => {
+        render(
+            <ChatInput
+                onSend={vi.fn()}
+                placeholder="Type..."
+                composerMode="date_request"
+                dateConstraint={{ field: 'dateTo', afterDate: '2026-09-01' }}
+            />,
+        )
+        expect(screen.getByLabelText('End date')).toBeInTheDocument()
+        expect(screen.getByLabelText('End date')).toHaveAttribute('min', '2026-09-02')
     })
 })

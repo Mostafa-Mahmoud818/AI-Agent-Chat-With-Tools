@@ -3,22 +3,27 @@
  * @module utils/agentMessage
  *
  * Agents share one envelope: `replyType`, `textString`, `payload.subtype`
- * (`menu` | `ticket` | `order_confirmation` | `indoor_navigation` | `outdoor_navigation` | `error` | `none`).
- * Card data lives in a nested object per subtype: `payload.order` (catering), `payload.ticket` (IT / F&amp;M),
- * `payload.navigation` (Visitor Experience).
+ * (`menu` | `ticket` | `order_confirmation` | `indoor_navigation` | `outdoor_navigation` |
+ * `attachment_request` | `date_request` | `error` | `none`).
+ * Card data lives in a nested object per subtype: `payload.order` (catering), `payload.ticket` (IT / F&amp;M / absence),
+ * `payload.navigation` (Visitor Experience), `payload.dateConstraint` (absence date_request).
  * Legacy-only: `textContent` (old IT/F&amp;M), the flat `ticketId`/`ticketStatus`/`referenceCode` payload keys
  * (replaced by `payload.ticket` on 2026-07-27) and `visits_query` (removed backend flag) are still parsed for history.
- * This module normalizes fences, flattened legacy shapes, breadcrumbs, menu item fields (including optional `selectionSignal`),
+ * This module normalizes fences, flattened legacy shapes, menu item fields (including optional `selectionSignal`),
  * ticket objects, and Visitor Experience navigation payloads.
  */
-import { isMenuSelectionUserInput } from './menuSelection.js'
+import {createLogger} from './logger.js'
+import { isAttachmentMarkerUserInput, isMenuSelectionUserInput } from './menuSelection.js'
+
+const log = createLogger('agentMessage')
 
 /**
  * Prefer `textString` (current backend/prompt contract). Fall back to legacy `textContent` for old turns.
+ * Never surface the raw JSON envelope when both fields are whitespace-only.
  * @param {object} parsed Parsed top-level agent JSON.
- * @param {string} fallback Raw string if both fields are whitespace-only.
+ * @param {string} _fallback Unused — kept for call-site compatibility; envelope must not be shown.
  */
-function primaryAssistantText(parsed, fallback) {
+function primaryAssistantText(parsed, _fallback) {
     if (parsed.textString != null) {
         const s = String(parsed.textString)
         // Explicit empty string is an intentional signal (e.g. error payload); whitespace-only falls back.
@@ -28,7 +33,8 @@ function primaryAssistantText(parsed, fallback) {
         const s = String(parsed.textContent)
         if (s === '' || s.trim() !== '') return s
     }
-    return fallback
+    log.warn('Agent JSON missing usable textString/textContent; suppressing raw envelope')
+    return ''
 }
 
 /** @param {string|null|undefined} replyType */
@@ -37,7 +43,16 @@ function isStructuredAgentReply(replyType) {
 }
 
 /** Subtypes that carry a structured card and must be normalized regardless of `replyType`. */
-const STRUCTURED_SUBTYPES = new Set(['menu', 'ticket', 'order_confirmation', 'indoor_navigation', 'outdoor_navigation', 'visits_query'])
+const STRUCTURED_SUBTYPES = new Set([
+    'menu',
+    'ticket',
+    'order_confirmation',
+    'indoor_navigation',
+    'outdoor_navigation',
+    'attachment_request',
+    'date_request',
+    'visits_query',
+])
 
 /**
  * True when the payload declares a known structured subtype. Structured cards are canonically sent
@@ -89,13 +104,12 @@ export function parseAgentMessage(raw) {
             typeof parsed.payload === 'string' &&
             Array.isArray(parsed.menuitems)
         ) {
-            const { payload: subtype, menuitems, breadcrumb, order, ticket, ticketId, ticketStatus, referenceCode, ...rest } = parsed
+            const { payload: subtype, menuitems, order, ticket, ticketId, ticketStatus, referenceCode, ...rest } = parsed
             parsed = {
                 ...rest,
                 payload: {
                     subtype,
                     menuitems,
-                    breadcrumb: breadcrumb ?? [],
                     order: order ?? null,
                     ticket: ticket ?? null,
                     // Legacy flat ticket keys — folded into `payload.ticket` by normalizePayload.
@@ -143,6 +157,23 @@ function normalizePayload(payload, replyType) {
         return { ...payload, menuitems: [], order: null }
     }
 
+    // Absence attach control — no nested object; keep subtype for composer mode.
+    if (payload.subtype === 'attachment_request') {
+        return { ...payload, subtype: 'attachment_request', menuitems: [], order: null, ticket: null }
+    }
+
+    // Absence date picker — preserve dateConstraint { field, afterDate? }.
+    if (payload.subtype === 'date_request') {
+        return {
+            ...payload,
+            subtype: 'date_request',
+            dateConstraint: toDateConstraint(payload.dateConstraint),
+            menuitems: [],
+            order: null,
+            ticket: null,
+        }
+    }
+
     // Named subtypes with their own card UI — must come BEFORE the generic menuitems array checks
     // so that menuitems:[] doesn't accidentally promote them to subtype "menu".
     if (payload.subtype === 'order_confirmation') {
@@ -167,21 +198,47 @@ function normalizePayload(payload, replyType) {
     }
 
     if (payload.subtype === 'menu' && Array.isArray(payload.menuitems)) {
-        return { ...payload, menuitems: toMenuItems(payload.menuitems), breadcrumb: toBreadcrumb(payload.breadcrumb) }
+        const {breadcrumb: _drop, ...rest} = payload
+        return {...rest, menuitems: toMenuItems(payload.menuitems)}
     }
 
+    // Unknown / missing subtype with menuitems — do NOT promote to menu UI (4.5).
     if (Array.isArray(payload.menuitems)) {
-        return { ...payload, subtype: 'menu', menuitems: toMenuItems(payload.menuitems), breadcrumb: toBreadcrumb(payload.breadcrumb) }
+        log.warn('Ignoring menuitems on non-menu subtype', {subtype: payload.subtype})
+        const {breadcrumb: _drop, menuitems: _m, ...rest} = payload
+        return Object.keys(rest).length > 0 ? {...rest, menuitems: []} : null
     }
 
-    if (Array.isArray(payload.items)) {
+    if (Array.isArray(payload.items) && payload.subtype === 'menu') {
         const menuitems = toMenuItems(payload.items)
         if (menuitems.length > 0) {
             return { ...payload, subtype: 'menu', menuitems }
         }
     }
 
+    if (Array.isArray(payload.items) && (payload.subtype == null || payload.subtype === '')) {
+        // Legacy bare items array without subtype — treat as menu only when explicitly menu-shaped history.
+        // Prefer plain text for unknown subtypes.
+        log.warn('Ignoring items array without subtype:menu')
+    }
+
     return payload
+}
+
+/**
+ * Normalizes {@code payload.dateConstraint} for date_request replies.
+ * @param {*} raw
+ * @returns {{ field: string|null, afterDate: string|null }|null}
+ */
+function toDateConstraint(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+    const field = raw.field != null ? String(raw.field).trim() : null
+    const afterDate = raw.afterDate != null ? String(raw.afterDate).trim() : null
+    if (!field && !afterDate) return null
+    return {
+        field: field || null,
+        afterDate: afterDate || null,
+    }
 }
 
 /**
@@ -362,21 +419,6 @@ function toNavigation(raw, isOutdoor) {
     }
 }
 
-/** Normalizes `payload.breadcrumb` into a trimmed [{label, levelKey}] list; returns null on invalid shape. */
-function toBreadcrumb(raw) {
-    if (!Array.isArray(raw) || raw.length === 0) return null
-    const crumbs = raw
-        .map((c) => {
-            if (!c || typeof c !== 'object') return null
-            const label = c.label != null ? String(c.label).trim() : ''
-            const levelKey = c.levelKey != null ? String(c.levelKey).trim() : ''
-            if (!label || !levelKey) return null
-            return { label, levelKey }
-        })
-        .filter(Boolean)
-    return crumbs.length > 0 ? crumbs : null
-}
-
 /**
  * Maps chronological `TurnDto` rows to alternating user/assistant messages for the transcript.
  *
@@ -394,11 +436,11 @@ export function turnsToMessages(turns) {
         // response `payload.subtype`, which is a CONTENT-level decision (which card to render).
         const isSystemTurn = t.turnKind === 'SYSTEM' || t.userInput == null
         if (!isSystemTurn) {
-            // displayText is only meaningful for menu-card clicks (short label). Free-typed turns
-            // must show userInput — ignore any stale displayText left on the row from prior menu turns.
-            const displayText = isMenuSelectionUserInput(t.userInput)
-                ? (t.displayText ?? null)
-                : null
+            // displayText is meaningful for menu-card clicks and attachment markers (short label).
+            // Free-typed turns must show userInput — ignore any stale displayText left on the row.
+            const trustDisplayText =
+                isMenuSelectionUserInput(t.userInput) || isAttachmentMarkerUserInput(t.userInput)
+            const displayText = trustDisplayText ? (t.displayText ?? null) : null
             messages.push({
                 id: `turn-${t.id}-u`,
                 role: 'user',

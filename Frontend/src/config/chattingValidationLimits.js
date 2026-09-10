@@ -15,6 +15,19 @@ export const CONVERSATION_TITLE_MAX = 255
 /** Max audio upload size for speech transcription. Mirrors backend {@code SpeechProperties.DEFAULT_MAX_BYTES} (25 MiB). */
 export const AUDIO_MAX_BYTES = 26_214_400
 
+/** Max absence supporting document size. Mirrors {@code AbsenceAttachmentStorageService.MAX_BYTES} (10 MiB). */
+export const ABSENCE_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024
+
+/** Allowed MIME types for absence chat attachments. */
+export const ABSENCE_ATTACHMENT_ALLOWED_TYPES = [
+    'application/pdf',
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+]
+
 /** Allowed transcription language hints; blank/null = auto-detect. Mirrors backend {@code SpeechProperties} allowed languages. */
 export const SPEECH_LANGUAGE_HINTS = ['en', 'ar']
 

@@ -3,12 +3,12 @@ import PropTypes from 'prop-types'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import SparkIcon from '../ui/SparkIcon.jsx'
-import MenuBreadcrumb from '../navigation/MenuBreadcrumb.jsx'
 import './MessageBubble.css'
 
 const MENU_PAGE_SIZE = 6
 const EMPTY_MENU_COPY = 'No items are currently available. Please try again later or contact support.'
 const MENU_ERROR_COPY = 'Something went wrong while loading the menu. Please try again or contact support if the issue persists.'
+const GENERIC_ERROR_COPY = 'Something went wrong. Please try again or contact support if the issue persists.'
 
 /** BRD NFR-05: zero price shown as $0.0 (not $0.00); other prices use two decimals with currency prefix. */
 function formatMenuItemPriceDisplay(price) {
@@ -30,7 +30,7 @@ const markdownComponents = {
     ),
 }
 
-function MenuItems({ items, onItemClick }) {
+function MenuItems({ items, onItemClick, disabled = false }) {
     const [page, setPage] = useState(0)
     const totalPages = Math.max(1, Math.ceil(items.length / MENU_PAGE_SIZE))
 
@@ -52,8 +52,10 @@ function MenuItems({ items, onItemClick }) {
                     return (
                         <button
                             key={item.id}
+                            type="button"
                             className={`menu-card${isProduct ? ' product' : ''}`}
                             onClick={() => onItemClick?.(item)}
+                            disabled={disabled}
                             title={`Select ${item.label}`}
                         >
                             <div className="menu-card-header">
@@ -80,7 +82,7 @@ function MenuItems({ items, onItemClick }) {
                         type="button"
                         className="menu-pager-btn"
                         onClick={() => setPage(p => Math.max(0, p - 1))}
-                        disabled={safePage === 0}
+                        disabled={safePage === 0 || disabled}
                         aria-label="Previous page"
                     >
                         ‹ Previous
@@ -92,7 +94,7 @@ function MenuItems({ items, onItemClick }) {
                         type="button"
                         className="menu-pager-btn"
                         onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
-                        disabled={safePage === totalPages - 1}
+                        disabled={safePage === totalPages - 1 || disabled}
                         aria-label="Next page"
                     >
                         Next ›
@@ -218,6 +220,10 @@ function OrderConfirmationCard({ payload }) {
     )
 }
 
+function isAbsenceTicket(referenceCode) {
+    return typeof referenceCode === 'string' && /^ABS-/i.test(referenceCode.trim())
+}
+
 function TicketCard({ payload }) {
     // Schema: payload.ticket holds the nested ticket object {id, referenceCode, status, createdAt},
     // mirroring payload.order. parseAgentMessage folds pre-2026-07-27 turns (flat ticketId /
@@ -240,7 +246,7 @@ function TicketCard({ payload }) {
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 13a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" />
                 </svg>
-                <span>Support Ticket Created</span>
+                <span>{isAbsenceTicket(ticketRef) ? 'Absence request submitted' : 'Support Ticket Created'}</span>
             </div>
             {hasMeta && (
                 <div className="ticket-card-meta">
@@ -372,26 +378,54 @@ function VisitsQueryCard({ visits }) {
     )
 }
 
+function formatMessageTime(timestamp) {
+    if (!timestamp) return ''
+    const d = timestamp instanceof Date ? timestamp : new Date(timestamp)
+    if (Number.isNaN(d.getTime())) return ''
+    return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+}
+
 function formatHandledBy(value) {
     if (!value) return null
     const trimmed = String(value).trim()
     const normalized = trimmed.toUpperCase()
-    // Persisted TurnDto enum names
+    // Persisted TurnDto enum / wire tokens
     if (normalized === 'IT_SUPPORT') return 'IT Support'
     if (normalized === 'CATERING') return 'Catering'
     if (normalized === 'FACILITIES_MAINTENANCE') return 'Facilities & Maintenance'
     if (normalized === 'VISITOR_EXPERIENCE') return 'Assistant'
+    if (normalized === 'FRONT_DOOR') return 'Assistant'
+    if (normalized === 'STUDENT_ABSENCE') return 'Absence'
+    if (normalized === 'BANNER_ERROR') return 'Error Banner'
     if (normalized === 'ERROR') return 'Error'
-    // SSE labels from backend (AgentVariableSupport) — shorten for UI consistency with history
+    // SSE labels from backend (AgentVariableSupport)
     if (normalized === 'VISITOR EXPERIENCE AGENT') return 'Assistant'
+    if (normalized === 'FRONT DOOR AGENT') return 'Assistant'
     if (normalized === 'IT SUPPORT AGENT') return 'IT Support'
     if (normalized === 'CATERING AGENT') return 'Catering'
     if (normalized === 'FACILITIES & MAINTENANCE AGENT') return 'Facilities & Maintenance'
     if (normalized === 'FACILITIES MAINTENANCE AGENT') return 'Facilities & Maintenance'
+    if (normalized === 'ABSENCE REQUEST AGENT') return 'Absence'
+    if (normalized === 'ERROR BANNER AGENT') return 'Error Banner'
     return trimmed.replace(/_/g, ' ')
 }
 
-function MessageBubble({ message, onMenuItemClick, onBreadcrumbClick }) {
+// Routes with a real browsable menu/catalog. `payload.menuitems` is contractually `[]` on EVERY
+// `subtype:"error"` envelope (not just menu-loading failures — e.g. Visitor Experience's
+// unrecoverable navigation-shape error also uses `subtype:"error"` with no menuitems), so it can
+// never distinguish "this was a menu failure" from any other error. The route can.
+const MENU_CAPABLE_HANDLERS = new Set([
+    'IT_SUPPORT', 'CATERING', 'FACILITIES_MAINTENANCE', 'STUDENT_ABSENCE', 'BANNER_ERROR',
+    'IT SUPPORT AGENT', 'CATERING AGENT', 'FACILITIES & MAINTENANCE AGENT', 'FACILITIES MAINTENANCE AGENT',
+    'ABSENCE REQUEST AGENT', 'ERROR BANNER AGENT',
+])
+
+function isMenuCapableHandler(value) {
+    if (!value) return false
+    return MENU_CAPABLE_HANDLERS.has(String(value).trim().toUpperCase())
+}
+
+function MessageBubble({ message, onMenuItemClick, menuDisabled = false }) {
     const isAI = message.role === 'ai'
     const isSystem = message.role === 'system'
     const subtype = isAI ? message.payload?.subtype : null
@@ -399,8 +433,6 @@ function MessageBubble({ message, onMenuItemClick, onBreadcrumbClick }) {
     const isMenuSubtype = isAI && subtype === 'menu'
     const hasMenu = isMenuSubtype && menuItems.length > 0
     const isEmptyMenu = isMenuSubtype && menuItems.length === 0
-    const crumbs = isMenuSubtype ? message.payload?.breadcrumb : null
-    const hasBreadcrumb = Array.isArray(crumbs) && crumbs.length > 0
     const isErrorPayload = isAI && subtype === 'error'
     const hasOrderConfirmation = isAI && subtype === 'order_confirmation'
     const hasTicket = isAI && subtype === 'ticket'
@@ -427,8 +459,18 @@ function MessageBubble({ message, onMenuItemClick, onBreadcrumbClick }) {
         ? stripThinkingTags(message.text)
         : (message.displayText || message.text)
 
+    const errorCopy = (() => {
+        if (!isErrorPayload) return null
+        const backendText = typeof displayText === 'string' ? displayText.trim() : ''
+        if (backendText) return backendText
+        if (isMenuCapableHandler(message.handledBy)) return MENU_ERROR_COPY
+        return GENERIC_ERROR_COPY
+    })()
+
+    const showEmptyMenuCopy = isEmptyMenu && !(typeof displayText === 'string' && displayText.trim())
+
     return (
-        <div className={`message-row ${isAI ? 'ai' : 'user'}${systemOrigin ? ' system-turn' : ''}`} role="listitem"
+        <div className={`message-row ${isAI ? 'ai' : 'user'}${systemOrigin ? ' system-turn' : ''}${message.failed ? ' failed' : ''}`} role="listitem"
              aria-label={systemOrigin ? 'Status update' : isAI ? 'AI response' : 'Your message'}>
             {isAI && !systemOrigin && (
                 <div className="msg-avatar" aria-hidden="true">
@@ -439,7 +481,7 @@ function MessageBubble({ message, onMenuItemClick, onBreadcrumbClick }) {
                 <div className={`message-bubble ${isAI ? 'ai-bubble' : 'user-bubble'}`}>
                     {isAI ? (
                         isErrorPayload ? (
-                            <div className="menu-error" role="alert">{MENU_ERROR_COPY}</div>
+                            <div className="menu-error" role="alert">{errorCopy}</div>
                         ) : (
                             <div className="message-text markdown-body">
                                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
@@ -450,16 +492,14 @@ function MessageBubble({ message, onMenuItemClick, onBreadcrumbClick }) {
                     ) : (
                         <div className="message-text">{displayText}</div>
                     )}
-                    {hasBreadcrumb && (
-                        <MenuBreadcrumb crumbs={crumbs} onCrumbClick={onBreadcrumbClick} />
-                    )}
                     {hasMenu && (
                         <MenuItems
                             items={menuItems}
+                            disabled={menuDisabled}
                             onItemClick={(item) => onMenuItemClick?.(item, message.handledBy)}
                         />
                     )}
-                    {isEmptyMenu && (
+                    {showEmptyMenuCopy && (
                         <div className="menu-empty" role="status">{EMPTY_MENU_COPY}</div>
                     )}
                     {hasOrderConfirmation && (
@@ -476,7 +516,15 @@ function MessageBubble({ message, onMenuItemClick, onBreadcrumbClick }) {
                     )}
                 </div>
                 {isAI && !systemOrigin && handledByLabel && (
-                    <span className="handled-by">Answered by {handledByLabel}</span>
+                    <span className="handled-by" data-agent={handledByLabel}>Answered by {handledByLabel}</span>
+                )}
+                {formatMessageTime(message.timestamp) && (
+                    <time
+                        className="message-timestamp"
+                        dateTime={message.timestamp instanceof Date ? message.timestamp.toISOString() : undefined}
+                    >
+                        {formatMessageTime(message.timestamp)}
+                    </time>
                 )}
             </div>
         </div>
@@ -490,9 +538,10 @@ MessageBubble.propTypes = {
         system: PropTypes.bool,
         text: PropTypes.string.isRequired,
         handledBy: PropTypes.string,
+        failed: PropTypes.bool,
         timestamp: PropTypes.instanceOf(Date),
         payload: PropTypes.shape({
-            subtype: PropTypes.oneOf(['menu', 'order_confirmation', 'ticket', 'indoor_navigation', 'outdoor_navigation', 'visits_query', 'none', 'error']),
+            subtype: PropTypes.oneOf(['menu', 'order_confirmation', 'ticket', 'indoor_navigation', 'outdoor_navigation', 'visits_query', 'none', 'error', 'attachment_request', 'date_request']),
             menuitems: PropTypes.array,
             visits: PropTypes.shape({
                 scope: PropTypes.string,
@@ -520,10 +569,6 @@ MessageBubble.propTypes = {
                 longitude: PropTypes.number,
             }),
             items: PropTypes.array,
-            breadcrumb: PropTypes.arrayOf(PropTypes.shape({
-                label: PropTypes.string.isRequired,
-                levelKey: PropTypes.string.isRequired,
-            })),
             // IT / F&M ticket — nested ticket object per agent schema (mirrors `order`)
             ticket: PropTypes.shape({
                 id: PropTypes.string,
@@ -554,8 +599,7 @@ MessageBubble.propTypes = {
     }).isRequired,
     /** Called with (item, handledBy) when a card is clicked; handledBy is message.handledBy for route-specific menu prefixes. */
     onMenuItemClick: PropTypes.func,
-    /** Called with the crumb object ({label, levelKey}) when a breadcrumb ancestor is clicked. */
-    onBreadcrumbClick: PropTypes.func,
+    menuDisabled: PropTypes.bool,
 }
 
 export default memo(MessageBubble)
