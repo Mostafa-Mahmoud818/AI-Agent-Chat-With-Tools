@@ -1,0 +1,813 @@
+{
+  "info": {
+    "name": "Chat Stack — Timeout Scenarios (Stage)",
+    "_postman_id": "f3a1c9de-6b2d-4e7a-9c31-8a5d4b7e2f10",
+    "description": "Drives the shortened stage-only timeout/resilience config seeded by `V168__common_modulith_stage_fast_timeouts_for_qa.sql` against `ChattingOrchestrationSecureController` (`/api/v1/secure/chatting/orchestration`).\n\n## Setup\n1. Set `base_url` to the stage modulith host (default below is the stage fallback host from `application-stage.properties`).\n2. Get `access_token` + `visit_id` - two ways:\n   - Automated (recommended): set `auth_email` to a real email with stage visit history, run A1 (sends an OTP to that inbox), set `otp_code` from the email, run A2 (saves `access_token`), then run A3 (resolves + saves `visit_id`). Same email-OTP flow this frontend uses. See folder A. Auth (User A).\n   - Manual: if you already have a valid bearer JWT and visit UUID from another source, just set `access_token` / `visit_id` directly and skip folder A.\n3. Run both requests in **0. Shared — Create Conversation + Start Orchestration** once per scenario folder — `conversationId` is not something you make up client-side (`.../orchestration/conversations/{id}/start` 404s unless that conversation already exists and is owned by your token), so **Create conversation** creates a real one first and saves it as the `conversation_id` collection variable, then **Start orchestration** correlates onto it.\n4. (Optional, only needed for folder 4) Repeat step 2 for a SECOND, different email/user via folder **B. Auth (User B)** (`auth_email_2`/`otp_code_2` -> `access_token_2`/`visit_id_2`), then run **0b. Shared (User B)** — see folder 4's description for why a lone client can't cleanly trigger bulkhead exhaustion.\n\n## Which scenarios Postman can actually drive\n- **Wait-based** (idle timeout, SSE emitter timeout, replay-cache window): fully drivable — either via each folder's own pre-request `setTimeout` delay (Postman v10+ sandbox) or by running the folder in the **Collection Runner** with an inter-request **Delay** set as noted in each folder's description. For idle timeout specifically, confirmed on stage: the actual trigger point is ~19s after the session's `startedAt`, not exactly the configured `PT15S` (the timer only arms once the process reaches its wait-gateway, after the agent's first turn finishes) — folders 1 and 7 wait 30s to give a safe margin.\n- **Concurrency-based** (bulkhead exhaustion, per-client rate limit, max concurrent SSE streams): drivable via a pre-request script that fires several `pm.sendRequest` calls fire-and-forget immediately before the visible request goes out. This is best-effort — exact timing isn't guaranteed over HTTP, so an occasional run may not trigger the rejection; re-run if so. For guaranteed concurrency, fire the same request N times in parallel from Newman/curl instead.\n- **LLM-latency-dependent** (classifier call-timeout, classifier circuit breaker, summarizer call-timeout): NOT deterministically triggerable from Postman — these only fire when the real OpenAI call happens to exceed the shortened budget (3s / 10s). The relevant folders build the preconditions (multi-route persona input, long conversation history) and note what to grep for in logs; whether the timeout actually fires depends on live model latency.\n- **Infra-dependent** (Camunda join-timeout + retry exhaustion, HTTP-connector connect/read timeout): NOT achievable from Postman at all — they require actually degrading Zeebe or the modulith pod itself. See the **9. Infra-Dependent (not Postman-drivable)** folder for what to do operationally instead.\n\n## Status codes / log lines to watch for\n- `503` body code `SERVLET_BOUND_TIMEOUT` — servlet-bound Camunda wait exceeded or bulkhead full (`ServletBoundedCamundaMessagePublisher`).\n- `429` body code `PER_CLIENT_RATE_LIMIT` — per-client Camunda admission budget exhausted (`PerClientRateLimiterGuard`).\n- A follow-up after idle timeout does NOT fail — confirmed on real stage: it transparently rolls over into a fresh session (`202`, no client-visible error). Confirm the rollover directly via `GET /v1/internal/chatting/conversations/{id}/sessions` (a second session row, new `processInstanceKey`) rather than the response code; `[step-svc] markSessionTerminal ... terminal=true` in the logs is the equivalent signal if you have log access instead.\n- `chatting.camunda.servlet_bound_timeout`, `chatting.camunda.per_client_rate_limited`, `chatting.classifier.timeout`, `chatting.classifier.circuit_open` — Micrometer counters to check on the metrics endpoint or dashboards during a run.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    { "key": "base_url", "value": "https://stg-modulith.naitive.ai", "type": "string" },
+    { "key": "access_token", "value": "", "type": "string" },
+    { "key": "visit_id", "value": "", "type": "string" },
+    { "key": "conversation_id", "value": "", "type": "string" },
+    { "key": "access_token_2", "value": "", "type": "string" },
+    { "key": "visit_id_2", "value": "", "type": "string" },
+    { "key": "conversation_id_b", "value": "", "type": "string" },
+    { "key": "auth_email", "value": "", "type": "string" },
+    { "key": "otp_code", "value": "", "type": "string" },
+    { "key": "refresh_token", "value": "", "type": "string" },
+    { "key": "auth_email_2", "value": "", "type": "string" },
+    { "key": "otp_code_2", "value": "", "type": "string" },
+    { "key": "refresh_token_2", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "A. Auth (User A) — Email OTP -> access_token + visit_id",
+      "item": [
+        {
+          "name": "A1. Check eligibility (sends OTP)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('check-eligibility OK', function () {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const data = pm.response.json().data;",
+                  "if (data && data.eligible === false) {",
+                  "    console.error('NOT ELIGIBLE for OTP — no account/visit history for this email on this backend.');",
+                  "} else {",
+                  "    console.log('OTP sent to', pm.collectionVariables.get('auth_email'), '- reasons:', data && data.reasons, 'personas:', data && data.personas);",
+                  "    console.log('Check that inbox, then set `otp_code` and run A2.');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/public/visitor-management/check-eligibility",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "public", "visitor-management", "check-eligibility"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{auth_email}}\"\n}"
+            },
+            "description": "Set `auth_email` first. This is a public endpoint (`auth: noauth` overrides the collection's bearer auth, which would otherwise send a stale/empty token here). Sends the OTP email as a side effect and reports whether this email is eligible (`data.eligible`, `data.reasons`, `data.personas`) — mirrors `otpAccessTokenFlow.js#prepareOtpChallenge` from this frontend (DEV/TEST/STAGE all use this same public flow; only LOCAL has an extra provisioning call first).\n\nAfter this succeeds, check the `auth_email` inbox for the OTP code, paste it into the `otp_code` collection variable, then run **A2**."
+          }
+        },
+        {
+          "name": "A2. Exchange OTP for token (set otp_code first)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('otp exchange accepted', function () {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const data = pm.response.json().data;",
+                  "if (!data || !data.access_token) {",
+                  "    console.error('No access_token in response — check the code is current (codes are short-lived and single-use).');",
+                  "} else {",
+                  "    pm.collectionVariables.set('access_token', data.access_token);",
+                  "    if (data.refresh_token) pm.collectionVariables.set('refresh_token', data.refresh_token);",
+                  "    console.log('access_token saved. expires_in=', data.expires_in, 'hasRefreshToken=', Boolean(data.refresh_token));",
+                  "    console.log('Now run A3 to resolve visit_id.');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/public/identity/auth/otp/email/token",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "public", "identity", "auth", "otp", "email", "token"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{auth_email}}\",\n  \"code\": \"{{otp_code}}\"\n}"
+            },
+            "description": "Run **A1** first and set `otp_code` from the email you received. Exchanges the OTP for a real bearer token and saves it as the `access_token` collection variable (and `refresh_token`, if the response includes one) — mirrors `otpAccessTokenFlow.js#exchangeOtpForToken`. The code is short-lived and single-use; if this fails, re-run **A1** for a fresh one."
+          }
+        },
+        {
+          "name": "A3. Resolve visit_id (my-visits)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('my-visits OK', function () {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const data = pm.response.json().data;",
+                  "const content = data && data.content;",
+                  "if (Array.isArray(content) && content.length > 0 && content[0].visitId) {",
+                  "    pm.collectionVariables.set('visit_id', content[0].visitId);",
+                  "    console.log('visit_id resolved:', content[0].visitId);",
+                  "} else {",
+                  "    console.warn('No visits in the \"all\" list yet. Try re-running this in a few seconds ' +",
+                  "        '(post-login sync can lag), or manually set `visit_id` to a known visit UUID for this user.');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/secure/visitor-management/my-visits?page=0&size=5",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "secure", "visitor-management", "my-visits"],
+              "query": [
+                { "key": "page", "value": "0" },
+                { "key": "size", "value": "5" }
+              ]
+            },
+            "description": "Run **A2** first. Uses the collection's bearer auth (`{{access_token}}`, now populated by A2) to list this user's visits and saves the first `visitId` found as the `visit_id` collection variable — mirrors `visitResolution.js#fetchVisitIdFromMyVisitsLists` (this frontend also falls back to `/my-visits/upcoming` and `/my-visits/past` if `/my-visits` alone comes back empty; re-run this request a couple of times if the first attempt is empty, since post-login visit sync can lag a few seconds).\n\nOnce this succeeds, `access_token` and `visit_id` are both set and you can proceed to **0. Shared** below."
+          }
+        }
+      ]
+    },
+    {
+      "name": "B. Auth (User B) — Email OTP -> access_token_2 + visit_id_2 (only for folder 4)",
+      "item": [
+        {
+          "name": "B1. Check eligibility (sends OTP)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('check-eligibility (User B) OK', function () {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const data = pm.response.json().data;",
+                  "if (data && data.eligible === false) {",
+                  "    console.error('NOT ELIGIBLE for OTP — no account/visit history for this email on this backend.');",
+                  "} else {",
+                  "    console.log('OTP sent to', pm.collectionVariables.get('auth_email_2'), '- reasons:', data && data.reasons);",
+                  "    console.log('Check that inbox, then set `otp_code_2` and run B2.');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/public/visitor-management/check-eligibility",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "public", "visitor-management", "check-eligibility"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{auth_email_2}}\"\n}"
+            },
+            "description": "Same as **A1** but for a SECOND, different email (`auth_email_2`) — needed only for folder **4. Camunda Servlet-Bound Bulkhead Exhaustion**."
+          }
+        },
+        {
+          "name": "B2. Exchange OTP for token (set otp_code_2 first)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('otp exchange (User B) accepted', function () {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const data = pm.response.json().data;",
+                  "if (!data || !data.access_token) {",
+                  "    console.error('No access_token in response — check the code is current.');",
+                  "} else {",
+                  "    pm.collectionVariables.set('access_token_2', data.access_token);",
+                  "    if (data.refresh_token) pm.collectionVariables.set('refresh_token_2', data.refresh_token);",
+                  "    console.log('access_token_2 saved. Now run B3 to resolve visit_id_2.');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/public/identity/auth/otp/email/token",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "public", "identity", "auth", "otp", "email", "token"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{auth_email_2}}\",\n  \"code\": \"{{otp_code_2}}\"\n}"
+            },
+            "description": "Run **B1** first and set `otp_code_2` from the email User B received. Saves the token as `access_token_2`."
+          }
+        },
+        {
+          "name": "B3. Resolve visit_id_2 (my-visits)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('my-visits (User B) OK', function () {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const data = pm.response.json().data;",
+                  "const content = data && data.content;",
+                  "if (Array.isArray(content) && content.length > 0 && content[0].visitId) {",
+                  "    pm.collectionVariables.set('visit_id_2', content[0].visitId);",
+                  "    console.log('visit_id_2 resolved:', content[0].visitId);",
+                  "} else {",
+                  "    console.warn('No visits found for User B yet — re-run in a few seconds, or set `visit_id_2` manually.');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token_2}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/secure/visitor-management/my-visits?page=0&size=5",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "secure", "visitor-management", "my-visits"],
+              "query": [
+                { "key": "page", "value": "0" },
+                { "key": "size", "value": "5" }
+              ]
+            },
+            "description": "Run **B2** first. Uses `access_token_2` explicitly (auth set to `noauth` + manual header, since the collection-level bearer auth defaults to `access_token`, not `_2`). Saves the first `visitId` found as `visit_id_2`.\n\nOnce this succeeds, `access_token_2` and `visit_id_2` are both set for folder 4's two-user bulkhead test."
+          }
+        }
+      ]
+    },
+    {
+      "name": "0. Shared — Create Conversation + Start Orchestration (VISIT)",
+      "item": [
+        {
+          "name": "Create conversation",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('create conversation accepted', function () {",
+                  "    pm.expect([200, 201]).to.include(pm.response.code);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "pm.collectionVariables.set('conversation_id', data.data.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/secure/chatting/conversations",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "secure", "chatting", "conversations"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"initialTitle\": \"Timeout scenario test\",\n  \"initialSummary\": null\n}"
+            },
+            "description": "`conversationId` is NOT something you make up client-side — `.../orchestration/conversations/{id}/start` requires a conversation row that already exists and is owned by this token (`ChattingEntityLoader#requireConversationForClientUpdate` 404s otherwise). This creates a real conversation (+ its initial session) on `ChattingSecureController` and saves the returned id as the `conversation_id` collection variable. Run this BEFORE **Start orchestration** below, and before every scenario folder that follows — none of them generate their own conversation id anymore."
+          }
+        },
+        {
+          "name": "Start orchestration",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('start accepted', function () {",
+                  "    pm.expect([200, 201]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/secure/chatting/orchestration/conversations/{{conversation_id}}/start",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "secure", "chatting", "orchestration", "conversations", "{{conversation_id}}", "start"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"inputText\": \"Hi, I need help with my visit\",\n  \"chatContext\": {\n    \"schemaVersion\": \"1.0\",\n    \"contextType\": \"VISIT\",\n    \"contextData\": { \"id\": \"{{visit_id}}\" }\n  },\n  \"displayText\": null\n}"
+            },
+            "description": "Run **Create conversation** immediately before this request (same folder). Correlates the first message onto that conversation's freshly-created session, seeding `idleTimeoutDuration` etc. from `ChattingOrchestrationProperties.Process` into the Camunda process. Run both requests in this folder first, in order, before any scenario folder below."
+          }
+        }
+      ]
+    },
+    {
+      "name": "0b. Shared (User B) — Create Conversation + Start Orchestration (only for folder 4)",
+      "item": [
+        {
+          "name": "Create conversation (User B)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('create conversation (User B) accepted', function () {",
+                  "    pm.expect([200, 201]).to.include(pm.response.code);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "pm.collectionVariables.set('conversation_id_b', data.data.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token_2}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/secure/chatting/conversations",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "secure", "chatting", "conversations"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"initialTitle\": \"Timeout scenario test (User B)\",\n  \"initialSummary\": null\n}"
+            },
+            "description": "Same as **0. Shared**'s Create conversation, but for a SECOND, different user (`access_token_2`) — needed only for folder **4. Camunda Servlet-Bound Bulkhead Exhaustion**. Auth is set to `noauth` at the request level (so the collection's `{{access_token}}` bearer auth isn't also injected on top) and the `Authorization: Bearer {{access_token_2}}` header is set manually instead. Saves the result to `conversation_id_b`."
+          }
+        },
+        {
+          "name": "Start orchestration (User B)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('start (User B) accepted', function () {",
+                  "    pm.expect([200, 201]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token_2}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/secure/chatting/orchestration/conversations/{{conversation_id_b}}/start",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "secure", "chatting", "orchestration", "conversations", "{{conversation_id_b}}", "start"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"inputText\": \"Hi, I need help with my visit\",\n  \"chatContext\": {\n    \"schemaVersion\": \"1.0\",\n    \"contextType\": \"VISIT\",\n    \"contextData\": { \"id\": \"{{visit_id_2}}\" }\n  },\n  \"displayText\": null\n}"
+            },
+            "description": "Run **Create conversation (User B)** immediately before this request. Correlates onto User B's freshly-created session, using `visit_id_2` (must be owned by `access_token_2`'s user). Only needed for folder 4."
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Idle-Session Timeout (process.idle-timeout = PT15S)",
+      "item": [
+        {
+          "name": "Follow-up after 30s idle wait",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Postman v10+ sandbox supports async pre-request scripts.",
+                  "// Sleeps 30s. Confirmed on stage 2026-08-30: the timer only starts once the",
+                  "// process reaches its wait-gateway, AFTER the agent's first turn finishes",
+                  "// processing, so it actually fires ~19s after startedAt, not exactly PT15S.",
+                  "// A 16s wait was tested and confirmed too short (session still ACTIVE, no",
+                  "// rollover); 30s gives a safe margin.",
+                  "await new Promise((resolve) => setTimeout(resolve, 30000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('session already idle-timed-out -> follow-up transparently rolls over (still accepted)', function () {",
+                  "    pm.expect(pm.response.code).to.equal(202);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/secure/chatting/orchestration/conversations/{{conversation_id}}/user-messages",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "secure", "chatting", "orchestration", "conversations", "{{conversation_id}}", "user-messages"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"followUpInput\": \"Are you still there?\",\n  \"displayText\": null,\n  \"clientMessageId\": null\n}"
+            },
+            "description": "Run both requests in **0. Shared** first (Create conversation, then Start orchestration), then run this one. Its pre-request script sleeps 30s before sending the follow-up.\n\nIf your Postman version doesn't support async pre-request scripts, delete the sleep script and instead run this 2-request sequence (Start, then this) via **Collection Runner** with the inter-request **Delay** set to 30000ms.\n\n**Confirmed on real stage, 2026-08-30**, using the internal endpoint `GET /v1/internal/chatting/conversations/{id}/sessions` (no JWT needed — network-trust only): the old session transitions to `TIMED_OUT` ~19s after its `startedAt`, not exactly the configured `PT15S` — the timer only starts once the process reaches its wait-gateway, *after* the agent's first turn finishes processing (BeginTurn -> classify -> LLM/tool-call turn -> CompleteTurn), which adds a few seconds. A follow-up sent after that point creates a genuinely NEW session (a different `processInstanceKey`) via `SessionLifecycleService.startOrPublishAfterRollover`, while the old session stays `TIMED_OUT` untouched — confirmed directly, not inferred. Both the old and new session return the same `202` to the client either way; use the internal endpoint above to see which one actually happened, not the response code.\n\n**Known failure mode (tested and confirmed):** waiting only 16s undershoots the real trigger point — the session is still `ACTIVE` at that point and the follow-up publishes onto it normally, no rollover. Use 30s, not 16s.\n\n**Verify in logs (if you have access):** `[step-svc] markSessionTerminal ... terminal=true`."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. SSE Emitter Timeout & Replay Cache (20s / 45s)",
+      "item": [
+        {
+          "name": "Open assistant-round stream",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "text/event-stream" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/secure/chatting/orchestration/conversations/{{conversation_id}}/assistant-round/stream",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "secure", "chatting", "orchestration", "conversations", "{{conversation_id}}", "assistant-round", "stream"]
+            },
+            "description": "Run both requests in **0. Shared** first. Postman can open this SSE stream and show events as they arrive, but grading exact close timing from a test script is unreliable — time it manually (stopwatch / Postman's response timer) or via `curl -N` for precision.\n\n**Scenario A — emitter timeout (20s):** send a follow-up that forces multi-step tool-call latency (e.g. a catering order needing catalogue lookup + confirmation) so the turn takes >20s. The stream should close at ~20s (`sse.emitter-timeout-ms` = `spring.mvc.async.request-timeout` = 20000).\n\n**Scenario B — replay cache (45s):** immediately after the stream above closes, re-open this same request within 45s — expect the last terminal event replayed instantly (`ResponseReplayCache`). Wait past 45s (`hardening.response-cache-expire-after-write` = PT45S) before reconnecting a second time — expect no replay, just a fresh wait.\n\n**Verify in logs:** a timeout shows as `SSE stream failed to open` / emitter completion in `AgentChatResponseSseEmitterFactory` / `AgentResponsePushService`."
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Max Concurrent SSE Streams Per User (sse.max-emitters-per-user = 2)",
+      "item": [
+        {
+          "name": "3rd concurrent stream (burst of 3, 3 distinct conversations)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// AgentResponsePushService keeps only ONE live emitter per conversationId (a 2nd",
+                  "// subscribe on the same id REPLACES the 1st instead of racing it for the per-user",
+                  "// cap). So this creates+starts 2 MORE conversations for the SAME user first, then",
+                  "// opens 2 fire-and-forget streams on those, leaving the visible request below to",
+                  "// open the 3rd stream on the original {{conversation_id}} from folder 0.",
+                  "const base = pm.collectionVariables.get('base_url');",
+                  "const token = pm.collectionVariables.get('access_token');",
+                  "const visitId = pm.collectionVariables.get('visit_id');",
+                  "",
+                  "async function createAndStart(label) {",
+                  "    const createRes = await pm.sendRequest({",
+                  "        url: base + '/api/v1/secure/chatting/conversations',",
+                  "        method: 'POST',",
+                  "        header: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },",
+                  "        body: { mode: 'raw', raw: JSON.stringify({ initialTitle: label, initialSummary: null }) }",
+                  "    });",
+                  "    const conversationId = createRes.json().data.id;",
+                  "    await pm.sendRequest({",
+                  "        url: base + '/api/v1/secure/chatting/orchestration/conversations/' + conversationId + '/start',",
+                  "        method: 'POST',",
+                  "        header: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },",
+                  "        body: {",
+                  "            mode: 'raw',",
+                  "            raw: JSON.stringify({",
+                  "                inputText: 'sse cap test',",
+                  "                chatContext: { schemaVersion: '1.0', contextType: 'VISIT', contextData: { id: visitId } },",
+                  "                displayText: null",
+                  "            })",
+                  "        }",
+                  "    });",
+                  "    return conversationId;",
+                  "}",
+                  "",
+                  "const conv2 = await createAndStart('sse-cap-2');",
+                  "const conv3 = await createAndStart('sse-cap-3');",
+                  "",
+                  "// Fire these 2 fire-and-forget (not awaited) so they stay open concurrently with",
+                  "// the visible request instead of completing before it goes out.",
+                  "[conv2, conv3].forEach((conversationId, i) => {",
+                  "    pm.sendRequest({",
+                  "        url: base + '/api/v1/secure/chatting/orchestration/conversations/' + conversationId + '/assistant-round/stream',",
+                  "        method: 'GET',",
+                  "        header: { Authorization: 'Bearer ' + token, Accept: 'text/event-stream' }",
+                  "    }, function (err, res) {",
+                  "        console.log('burst stream', i, res && res.code, err);",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "text/event-stream" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/secure/chatting/orchestration/conversations/{{conversation_id}}/assistant-round/stream",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "secure", "chatting", "orchestration", "conversations", "{{conversation_id}}", "assistant-round", "stream"]
+            },
+            "description": "Run both requests in **0. Shared** first. This request's pre-request script needs an async-capable Postman sandbox (v10+): it awaits creating+starting 2 MORE conversations for the same user, opens fire-and-forget streams on those two, then this visible request opens the 3rd stream on the original `conversation_id` — 3 different conversations, same user, exceeding `sse.max-emitters-per-user` = 2.\n\nUsing 3 different conversations (not 3 opens on one id) matters: `AgentResponsePushService` keeps only one live emitter per conversationId, so opening a 2nd stream on the SAME id would just replace the 1st (`REPLACED_PRIOR_EMITTER`) instead of racing it against the per-user cap.\n\nBest-effort timing — over real network latency the 3 calls may not land perfectly concurrently; re-run if all 3 succeed. For a guaranteed test, log in as the same user in 3 separate browser tabs/devices and open 3 different conversations' streams instead.\n\n**Verify in logs:** `AgentResponsePushService` logging the per-user emitter cap being hit (`REJECTED_CAP`)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Camunda Servlet-Bound Bulkhead Exhaustion (pool=1, queue=2 -> max 3 in-flight)",
+      "item": [
+        {
+          "name": "4th concurrent follow-up (2 users x 2 calls)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// PerClientRateLimiterGuard.acquireOrThrow(clientId) runs at the top of BOTH start()",
+                  "// and sendAgentReply(), sharing ONE 2-per-5s budget PER CLIENT. A single client's",
+                  "// 4-call burst would get rate-limited down to at most 2 calls before ever reaching",
+                  "// the bulkhead, so this needs a SECOND, different user (access_token_2 /",
+                  "// conversation_id_b, from folder 0b) so neither user's own rate limit interferes",
+                  "// with a genuine 4-way race for the bulkhead's shared capacity of 3.",
+                  "const base = pm.collectionVariables.get('base_url');",
+                  "const tokenA = pm.collectionVariables.get('access_token');",
+                  "const convA = pm.collectionVariables.get('conversation_id');",
+                  "const tokenB = pm.collectionVariables.get('access_token_2');",
+                  "const convB = pm.collectionVariables.get('conversation_id_b');",
+                  "",
+                  "if (!tokenB || !convB) {",
+                  "    console.warn('access_token_2 / conversation_id_b not set — run 0b. Shared (User B) first. ' +",
+                  "        'Falling back to 3 extra calls from the SAME user as a degraded, best-effort test: ' +",
+                  "        'expect PER_CLIENT_RATE_LIMIT (429) on most of these rather than a clean bulkhead signal.');",
+                  "    const body = JSON.stringify({ followUpInput: 'burst message (single-user fallback)', displayText: null, clientMessageId: null });",
+                  "    for (let i = 0; i < 3; i++) {",
+                  "        pm.sendRequest({",
+                  "            url: base + '/api/v1/secure/chatting/orchestration/conversations/' + convA + '/user-messages',",
+                  "            method: 'POST',",
+                  "            header: { Authorization: 'Bearer ' + tokenA, 'Content-Type': 'application/json' },",
+                  "            body: { mode: 'raw', raw: body }",
+                  "        }, function (err, res) {",
+                  "            console.log('burst follow-up (fallback)', i, res && res.code, err);",
+                  "        });",
+                  "    }",
+                  "} else {",
+                  "    // 1 extra fire-and-forget from User A (the visible request below is A's 2nd), plus",
+                  "    // 2 fire-and-forget from User B -> 4 total, 2 per user, each within that user's own budget.",
+                  "    const requests = [",
+                  "        { token: tokenA, conv: convA, label: 'A1' },",
+                  "        { token: tokenB, conv: convB, label: 'B1' },",
+                  "        { token: tokenB, conv: convB, label: 'B2' }",
+                  "    ];",
+                  "    requests.forEach((r) => {",
+                  "        pm.sendRequest({",
+                  "            url: base + '/api/v1/secure/chatting/orchestration/conversations/' + r.conv + '/user-messages',",
+                  "            method: 'POST',",
+                  "            header: { Authorization: 'Bearer ' + r.token, 'Content-Type': 'application/json' },",
+                  "            body: { mode: 'raw', raw: JSON.stringify({ followUpInput: 'bulkhead burst ' + r.label, displayText: null, clientMessageId: null }) }",
+                  "        }, function (err, res) {",
+                  "            console.log('burst follow-up', r.label, res && res.code, err);",
+                  "        });",
+                  "    });",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('this call (User A, 2nd) is likely rejected as SERVLET_BOUND_TIMEOUT (503) - best effort', function () {",
+                  "    console.log('status', pm.response.code, pm.response.text());",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/secure/chatting/orchestration/conversations/{{conversation_id}}/user-messages",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "secure", "chatting", "orchestration", "conversations", "{{conversation_id}}", "user-messages"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"followUpInput\": \"main burst call (User A, 2nd)\",\n  \"displayText\": null,\n  \"clientMessageId\": null\n}"
+            },
+            "description": "Setup for this folder specifically:\n1. Run both requests in **0. Shared** (User A).\n2. Set `access_token_2` + `visit_id_2` to a second, different user, and run both requests in **0b. Shared (User B)**.\n3. WAIT at least 6 seconds (past the 5s per-client rate-limit window) before sending this request, so both users' budgets are fully fresh for the burst.\n\nThis request's pre-request script fires 1 more call from User A + 2 calls from User B via `pm.sendRequest`, then this visible request is User A's 2nd — 4 total, 2 per user, racing the shared `camundaServletBound` bulkhead (pool=1 + queue=2 = 3 max in-flight, all operations across the whole app share this one pool regardless of which user or conversation they belong to).\n\nWithout `access_token_2`/`conversation_id_b` set, the script falls back to a single-user 3-call burst, but that's a degraded test — `PerClientRateLimiterGuard` (2 calls per 5s per client) will very likely reject 2 of those 3 with `429 PER_CLIENT_RATE_LIMIT` before they ever reach the bulkhead, so you may not see the bulkhead reject anything at all. The two-user path above is the one that actually isolates this scenario.\n\nBest-effort timing over HTTP either way — if nothing gets rejected, re-run, or use the k6 script (`docs/k6/chat-stack-concurrency.k6.js`) for a deterministic version of this same test.\n\n**Expect:** at least one call gets `503` body code `SERVLET_BOUND_TIMEOUT`.\n\n**Verify in logs/metrics:** `[camunda-bounded] ... rejected — pool/queue full (pool=1, capacity=2)`; metric `chatting.camunda.servlet_bound_timeout`."
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Per-Client Rate Limit (2 per 5s)",
+      "item": [
+        {
+          "name": "3rd follow-up within 5s window (burst of 3)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const url = pm.collectionVariables.get('base_url') + '/api/v1/secure/chatting/orchestration/conversations/' + pm.collectionVariables.get('conversation_id') + '/user-messages';",
+                  "const token = pm.collectionVariables.get('access_token');",
+                  "const body = JSON.stringify({ followUpInput: 'rate-limit burst', displayText: null, clientMessageId: null });",
+                  "// Fire 2 fire-and-forget follow-ups first; this request's own call is the 3rd within the 5s window.",
+                  "// per-client-rate-limit-per-period=2, per-client-rate-limit-period-seconds=5.",
+                  "for (let i = 0; i < 2; i++) {",
+                  "    pm.sendRequest({",
+                  "        url: url,",
+                  "        method: 'POST',",
+                  "        header: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },",
+                  "        body: { mode: 'raw', raw: body }",
+                  "    }, function (err, res) {",
+                  "        console.log('rate-limit burst', i, res && res.code, err);",
+                  "    });",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('3rd call within 5s is likely rate-limited (429) - best effort', function () {",
+                  "    console.log('status', pm.response.code, pm.response.text());",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/secure/chatting/orchestration/conversations/{{conversation_id}}/user-messages",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "secure", "chatting", "orchestration", "conversations", "{{conversation_id}}", "user-messages"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"followUpInput\": \"main rate-limit call\",\n  \"displayText\": null,\n  \"clientMessageId\": null\n}"
+            },
+            "description": "Run both requests in **0. Shared** first. This is the same authenticated user (`clientId` = JWT user id) sending a 3rd Camunda-message call inside a 5-second window — exceeding `per-client-rate-limit-per-period` = 2.\n\nUnlike bulkhead exhaustion, this is per-user, so 3 calls from the SAME token within 5s is what matters — the burst here doesn't need to race with other users.\n\n**Expect:** `429` body code `PER_CLIENT_RATE_LIMIT` on the call(s) beyond the 2-per-5s budget.\n\n**Verify in logs/metrics:** `Camunda per-client rate limit exceeded`; metric `chatting.camunda.per_client_rate_limited`."
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Classifier LLM Timeout & Circuit Breaker (call-timeout=3s, wait-in-open=5s) — load-dependent",
+      "item": [
+        {
+          "name": "Ambiguous follow-up (repeat via Collection Runner)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/secure/chatting/orchestration/conversations/{{conversation_id}}/user-messages",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "secure", "chatting", "orchestration", "conversations", "{{conversation_id}}", "user-messages"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"followUpInput\": \"I'm not sure, maybe something about a ticket or an order, not sure which\",\n  \"displayText\": null,\n  \"clientMessageId\": null\n}"
+            },
+            "description": "NOT deterministically triggerable from Postman — the classifier only runs (and can only time out) when the persona has 2+ reachable routes (`PersonaRouteRegistry.allowedRoutes` > 1); a single-route persona short-circuits and skips the LLM call entirely. Use a persona/context known to have multiple routes for this to have any chance of firing.\n\nRun this request repeatedly (Collection Runner, 20-30 iterations, 0 delay) to generate load — whether `classifier-llm.call-timeout` (3s) or the circuit breaker (`wait-duration-in-open-state` = 5s after `failureRateThreshold`=50% over `slidingWindowSize`=20 calls) actually trips depends on real OpenAI response latency at the time, not anything Postman controls.\n\n**Expect on timeout:** classification silently falls back to the persona's fallback route rather than erroring the request.\n\n**Verify in logs/metrics:** `[classifier] timed out after 3s — falling back to ...` / `chatting.classifier.timeout`; breaker trip: `[classifier] circuit breaker CLOSED -> OPEN` / `chatting.classifier.circuit_open`, then `-> HALF_OPEN` ~5s later."
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Summarizer LLM Timeout (call-timeout=10s) — load-dependent",
+      "item": [
+        {
+          "name": "Build long history, then re-start to trigger rollover",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// See folder 1's finding: the idle timer fires ~19s after startedAt, not",
+                  "// exactly PT15S, and 16s was confirmed too short. 30s gives a safe margin.",
+                  "await new Promise((resolve) => setTimeout(resolve, 30000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/secure/chatting/orchestration/conversations/{{conversation_id}}/start",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "secure", "chatting", "orchestration", "conversations", "{{conversation_id}}", "start"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"inputText\": \"One more thing\",\n  \"chatContext\": {\n    \"schemaVersion\": \"1.0\",\n    \"contextType\": \"VISIT\",\n    \"contextData\": { \"id\": \"{{visit_id}}\" }\n  },\n  \"displayText\": null\n}"
+            },
+            "description": "Procedure for this folder (uses the SAME `conversation_id` throughout — do NOT run folder 0 again in between):\n1. Run both requests in **0. Shared** once (Create conversation, then Start orchestration) to seed `conversation_id`.\n2. Send 10-15 follow-ups on that same conversation (reuse the folder-2 \"Follow-up\" request body, or run it via Collection Runner with several iterations) to build up conversation history — bigger history means a bigger summarization prompt.\n3. Run THIS request last. Its pre-request script waits 30s (confirmed on stage: the idle timer actually fires ~19s after the session's `startedAt`, not exactly PT15S — 16s was tested and found too short) so the prior session is no longer ACTIVE, then calls `/start` again on the same `conversation_id` — `SessionLifecycleService.startOrPublishAfterRollover` detects the non-ACTIVE session and rolls over, which asynchronously triggers `SessionResumeSummarizer` on the closed session. To confirm the rollover actually happened rather than guessing, check `GET /v1/internal/chatting/conversations/{id}/sessions` for a second session row.\n\nNOT deterministically triggerable — whether the summarization call actually exceeds `summarizer-llm.call-timeout` (10s, down from the default 60s) depends on real OpenAI latency for that prompt size, not anything Postman controls. A bigger history in step 2 raises the odds.\n\n**Expect on timeout:** summary write is skipped silently (empty summary) — no user-facing error, since this runs async after commit.\n\n**Verify in logs:** `[resume-summarizer] LLM call timed out after 10s`."
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. Infra-Dependent (not Postman-drivable)",
+      "item": [
+        {
+          "name": "README — join-timeout / retry-exhaustion / HTTP-connector timeout",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/actuator/health",
+              "host": ["{{base_url}}"],
+              "path": ["actuator", "health"]
+            },
+            "description": "These two shortened-timeout scenarios cannot be forced from Postman alone — they require actual infrastructure slowness/unavailability, not client-side request patterns:\n\n**Camunda join-timeout (3s) + retry exhaustion (retry-max-attempts=1):** needs Zeebe itself to be slow or briefly unreachable — e.g. restart/scale down the Zeebe broker or gateway pod in stage during a test call to `user-messages` or `start`. Expect the servlet thread to fail fast in ~3s (single attempt, no retry) with `503 SERVLET_BOUND_TIMEOUT`, instead of the old ~183s retry budget. Verify via log `Camunda correlate failed after 1 attempts` / `Camunda publish failed after 1 attempts`.\n\n**HTTP-connector timeout (connect/read = 3s each):** bounds Camunda's HTTP-JSON connector calling back into the modulith's own internal endpoints. Trigger by making an internal tool call slow (e.g. a downstream ACL-proxy or servicerequests call under load) or by restarting the modulith pod mid-request so the connector can't connect within 3s. Check the specific BPMN service task's configured `retries`/`retryBackoff` for what happens next.\n\nThis request is just a harmless health-check placeholder so the folder isn't empty — replace/ignore it once you're driving these scenarios operationally instead of via Postman."
+          }
+        }
+      ]
+    }
+  ]
+}
