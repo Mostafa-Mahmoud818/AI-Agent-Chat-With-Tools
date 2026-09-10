@@ -18,6 +18,7 @@ export default function ThinkingIndicator() {
                     <span className="dot" />
                     <span className="dot" />
                 </div>
+                <span className="thinking-label">Working on it…</span>
             </div>
         </div>
     )

@@ -19,13 +19,21 @@
 }
 
 .thinking-bubble {
-    padding: 14px 18px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
     background: var(--ai-bubble-bg);
     border: 1px solid var(--ai-bubble-border);
     border-radius: var(--radius-lg);
     border-bottom-left-radius: 4px;
     animation: scaleIn 0.3s ease 0.1s backwards;
     box-shadow: 0 2px 8px rgba(165, 110, 255, 0.08);
+}
+
+.thinking-label {
+    font-size: 12px;
+    color: var(--text-muted);
 }
 
 .thinking-dots {

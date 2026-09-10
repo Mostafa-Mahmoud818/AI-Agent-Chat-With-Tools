@@ -1,9 +1,9 @@
 /**
- * @file Main chat pane: orchestration lifecycle, SSE, menu cache + breadcrumbs, transcript.
+ * @file Main chat pane: orchestration lifecycle, SSE, transcript.
  * @module components/chat/ChatWindow
  */
 
-import {useCallback, useEffect, useRef, useState} from 'react'
+import {useCallback, useEffect, useMemo, useRef, useState} from 'react'
 import PropTypes from 'prop-types'
 import {
     ApiError,
@@ -11,35 +11,29 @@ import {
     createResponseStream,
     fetchAllConversationTurns,
     sendReply,
+    SSE_CONCURRENT_STREAMS_ERROR,
     startOrchestration,
 } from '../../services/api'
 import {parseAgentMessage, turnsToMessages} from '../../utils/agentMessage.js'
 import {formatMenuSelectionMessage} from '../../utils/menuSelection.js'
 import {
-    deriveBreadcrumb,
-    parseSelectionSignal,
-    rebuildChainFromMessages,
-    reconcileChainWithResponse,
-    updateChainOnSelection,
-} from '../../utils/breadcrumb.js'
-import {
-    cacheLevel,
-    getCachedLevel,
-    invalidateSession,
-    isRestartIntent,
-    setActiveConversation,
-} from '../../utils/menuCache.js'
-import {
-    getChatContextForStart,
+    getStudentIdComposerPlaceholder,
+    getStudentIdRequiredMessage,
     getVisitIdComposerPlaceholder,
     getVisitIdRequiredMessage,
-    hasConfiguredVisitId,
-    OTHER_VISIT_READONLY_MESSAGE,
 } from '../../config/chatContext.js'
+import {
+    getChatContextForStart,
+    getOtherContextComposerPlaceholder,
+    getOtherContextReadonlyMessage,
+    hasConfiguredActivePersonaContext,
+    PERSONA_STUDENT,
+    PERSONA_VISIT,
+    resolveActivePersona,
+} from '../../config/personaSession.js'
 import {getAccessToken} from '../../auth/tokenStore.js'
-import {isGuestChatAuth} from '../../config/chatAuth.js'
-import {resolveVisitIdForCurrentUser} from '../../auth/visitResolution.js'
-import {SSE_CONCURRENT_STREAMS_ERROR} from '../../services/api.js'
+import {tryResolveVisitIdForCurrentUser} from '../../auth/visitResolution.js'
+import {tryResolveStudentIdForCurrentUser} from '../../auth/studentResolution.js'
 import {createLogger} from '../../utils/logger.js'
 import MessageBubble from './MessageBubble.jsx'
 import ChatInput from './ChatInput.jsx'
@@ -49,16 +43,42 @@ import './ChatWindow.css'
 
 const log = createLogger('ChatWindow')
 
-const guestMode = isGuestChatAuth(import.meta.env)
+const VISIT_PROMPT_GROUPS = [
+    {label: 'Start', prompts: ['What can you do?']},
+    {label: 'Catering', prompts: ['Show me the catering products menu']},
+    {
+        label: 'IT Support',
+        prompts: [
+            'Create a support ticket for my laptop issue',
+            'I need help with my VPN connection',
+        ],
+    },
+    {
+        label: 'Facilities',
+        prompts: [
+            'Submit a facilities & maintenance request',
+            'The AC in meeting room 3 is not working',
+            'I need cleaning scheduled for my office',
+        ],
+    },
+]
 
-const QUICK_PROMPTS = [
-    'What can you do?',
-    'Show me the catering products menu',
-    'Create a support ticket for my laptop issue',
-    'I need help with my VPN connection',
-    'Submit a facilities & maintenance request',
-    'The AC in meeting room 3 is not working',
-    'I need cleaning scheduled for my office',
+const STUDENT_PROMPT_GROUPS = [
+    {label: 'Start', prompts: ['What can you do?']},
+    {
+        label: 'Absence',
+        prompts: [
+            'I need to submit an absence',
+            'Help me request an excused absence',
+        ],
+    },
+    {
+        label: 'Error Banner',
+        prompts: [
+            'I got a Banner registration error',
+            "I can't register - Banner error",
+        ],
+    },
 ]
 
 function isSessionGone(err) {
@@ -66,16 +86,69 @@ function isSessionGone(err) {
         (err.errorCode === 'session_expired' || err.status === 410)
 }
 
+/**
+ * Derive composer mode from the latest AI message payload (live or history resume).
+ * Payload-less non-system AI (parsed `subtype: none` → `payload: null`) clears attach/date mode.
+ * System-origin turns are skipped so a status update does not drop an owed date/attach.
+ *
+ * @param {Array<{ role: string, system?: boolean, payload?: object|null, handledBy?: string|null }>} messages
+ * @returns {{
+ *   mode: 'default'|'attachment_request'|'date_request',
+ *   dateConstraint: object|null,
+ *   attachmentHandledBy: string|null,
+ * }}
+ */
+function nearestAiHandledBy(messages, fromIndexInclusive) {
+    for (let i = fromIndexInclusive; i >= 0; i--) {
+        const m = messages[i]
+        if (m?.role === 'ai' && m.system !== true && m.handledBy) return m.handledBy
+    }
+    return null
+}
+
+export function deriveComposerModeFromMessages(messages) {
+    if (!Array.isArray(messages) || messages.length === 0) {
+        return {mode: 'default', dateConstraint: null, attachmentHandledBy: null}
+    }
+    for (let i = messages.length - 1; i >= 0; i--) {
+        const m = messages[i]
+        if (m?.role !== 'ai') continue
+        if (m.system === true) continue
+        if (!m.payload?.subtype) {
+            return {mode: 'default', dateConstraint: null, attachmentHandledBy: null}
+        }
+        const subtype = m.payload.subtype
+        if (subtype === 'attachment_request') {
+            return {
+                mode: 'attachment_request',
+                dateConstraint: null,
+                attachmentHandledBy: m.handledBy ?? nearestAiHandledBy(messages, i - 1),
+            }
+        }
+        if (subtype === 'date_request') {
+            return {
+                mode: 'date_request',
+                dateConstraint: m.payload.dateConstraint ?? null,
+                attachmentHandledBy: null,
+            }
+        }
+        return {mode: 'default', dateConstraint: null, attachmentHandledBy: null}
+    }
+    return {mode: 'default', dateConstraint: null, attachmentHandledBy: null}
+}
+
 export default function ChatWindow({
-                                       sidebarConversationId = null,
-                                       conversationReadOnly = false,
-                                       onNewChat: onNewChatParent,
-                                       onConversationCreated,
-                                       onConversationActivity,
-                                   }) {
+    sidebarConversationId = null,
+    conversationReadOnly = false,
+    selectedConversation = null,
+    headerAccessory = null,
+    onNewChat: onNewChatParent,
+    onConversationCreated,
+    onConversationActivity,
+    onBusyChange,
+}) {
     const [messages, setMessages] = useState([])
     const [conversationId, setConversationId] = useState(null)
-    const [menuCacheConversationKey, setMenuCacheConversationKey] = useState(null)
     const [phase, setPhase] = useState('idle')
     const [error, setError] = useState(null)
     const [sending, setSending] = useState(false)
@@ -84,7 +157,29 @@ export default function ChatWindow({
     const messagesEndRef = useRef(null)
     const chatInputRef = useRef(null)
     const esRef = useRef(null)
-    const selectionChainRef = useRef([])
+    /** Synchronous send lock — survives until terminal/reconcile, not POST resolution. */
+    const sendLockRef = useRef(false)
+    /** Bumped on New Chat / conversation switch so late async cannot mutate the wrong pane. */
+    const generationRef = useRef(0)
+
+    const activePersona = resolveActivePersona()
+    const contextConfigured = hasConfiguredActivePersonaContext()
+    const composerDerived = useMemo(() => deriveComposerModeFromMessages(messages), [messages])
+    const menuInteractionBusy = sending || phase === 'thinking'
+
+    useEffect(() => {
+        onBusyChange?.(menuInteractionBusy)
+    }, [menuInteractionBusy, onBusyChange])
+
+    const bumpGeneration = useCallback(() => {
+        generationRef.current += 1
+        return generationRef.current
+    }, [])
+
+    const releaseSendLock = useCallback(() => {
+        sendLockRef.current = false
+        setSending(false)
+    }, [])
 
     const scrollToBottom = useCallback(() => {
         messagesEndRef.current?.scrollIntoView({behavior: 'smooth'})
@@ -98,43 +193,23 @@ export default function ChatWindow({
         log.debug('phase', phase)
     }, [phase])
 
-    useEffect(() => {
-        setActiveConversation(menuCacheConversationKey)
-    }, [menuCacheConversationKey])
-
-    useEffect(() => {
-        return () => {
-            if (esRef.current) {
-                esRef.current.close()
-                esRef.current = null
-            }
-        }
-    }, [])
-
     const addMessage = useCallback((role, text, optsOrHandledBy = null, payload = null) => {
-        const handledBy = optsOrHandledBy && typeof optsOrHandledBy === 'object' ? null : optsOrHandledBy
-        const displayText = optsOrHandledBy && typeof optsOrHandledBy === 'object' ? (optsOrHandledBy.displayText ?? null) : null
+        const opts = optsOrHandledBy && typeof optsOrHandledBy === 'object' ? optsOrHandledBy : null
+        const handledBy = opts ? null : optsOrHandledBy
+        const displayText = opts?.displayText ?? null
+        const id = opts?.id ?? crypto.randomUUID()
+        const failed = opts?.failed === true
         setMessages((prev) => [...prev, {
-            id: crypto.randomUUID(),
+            id,
             role,
             text,
             displayText,
             timestamp: new Date(),
-            handledBy,
-            payload
+            handledBy: opts ? (opts.handledBy ?? null) : handledBy,
+            payload,
+            failed: failed || undefined,
         }])
-    }, [])
-
-    const applyCacheSideEffects = useCallback((cacheKey, payload) => {
-        if (!cacheKey || !payload) return
-        if (payload.subtype === 'order_confirmation') {
-            invalidateSession(cacheKey)
-            return
-        }
-        if (payload.subtype === 'menu' && Array.isArray(payload.breadcrumb) && payload.breadcrumb.length > 0) {
-            const last = payload.breadcrumb[payload.breadcrumb.length - 1]
-            if (last?.levelKey) cacheLevel(cacheKey, last.levelKey, payload)
-        }
+        return id
     }, [])
 
     const stopStreaming = useCallback(() => {
@@ -144,58 +219,65 @@ export default function ChatWindow({
         }
     }, [])
 
+    useEffect(() => {
+        return () => {
+            // Invalidate this fiber so a POST that resolves after remount cannot open SSE.
+            bumpGeneration()
+            stopStreaming()
+        }
+    }, [bumpGeneration, stopStreaming])
+
     const handleSessionExpired = useCallback(() => {
         stopStreaming()
         setPhase('expired')
+        releaseSendLock()
         addMessage('system', 'Session has expired due to inactivity. Please start a new conversation.')
-    }, [stopStreaming, addMessage])
+    }, [stopStreaming, addMessage, releaseSendLock])
 
     useEffect(() => {
         if (sidebarConversationId != null) return
+        bumpGeneration()
         stopStreaming()
+        sendLockRef.current = false
         setMessages([])
         setConversationId(null)
-        setMenuCacheConversationKey(null)
         setPhase('idle')
         setError(null)
         setSending(false)
         setConversationLoading(false)
         setFirstOutgoingNeedsStart(false)
-        selectionChainRef.current = []
-    }, [sidebarConversationId, stopStreaming])
+    }, [sidebarConversationId, stopStreaming, bumpGeneration])
 
     useEffect(() => {
         if (!sidebarConversationId) return undefined
+        const gen = bumpGeneration()
         let cancelled = false
 
         async function load() {
             stopStreaming()
+            sendLockRef.current = false
+            setSending(false)
             setConversationLoading(true)
             setError(null)
             setFirstOutgoingNeedsStart(false)
             try {
                 const turns = await fetchAllConversationTurns(sidebarConversationId)
-                if (cancelled) return
+                if (cancelled || generationRef.current !== gen) return
                 const loadedMessages = turnsToMessages(turns)
-                const cacheKey = String(sidebarConversationId)
-                selectionChainRef.current = rebuildChainFromMessages(loadedMessages)
                 setMessages(loadedMessages)
                 setConversationId(sidebarConversationId)
-                setMenuCacheConversationKey(cacheKey)
-                for (const m of loadedMessages) if (m.role === 'ai') applyCacheSideEffects(cacheKey, m.payload)
                 setFirstOutgoingNeedsStart((turns?.length ?? 0) === 0)
                 setPhase(turns.length > 0 ? 'ready' : 'idle')
                 setTimeout(() => chatInputRef.current?.focus(), 50)
             } catch (err) {
-                if (cancelled) return
+                if (cancelled || generationRef.current !== gen) return
                 log.error('Failed to load conversation', err)
                 setError(err instanceof ApiError ? err.message : 'Failed to load conversation')
                 setMessages([])
                 setConversationId(null)
-                setMenuCacheConversationKey(null)
                 setPhase('idle')
             } finally {
-                if (!cancelled) setConversationLoading(false)
+                if (!cancelled && generationRef.current === gen) setConversationLoading(false)
             }
         }
 
@@ -203,14 +285,15 @@ export default function ChatWindow({
         return () => {
             cancelled = true
         }
-    }, [sidebarConversationId, stopStreaming, applyCacheSideEffects])
+    }, [sidebarConversationId, stopStreaming, bumpGeneration])
 
-    const startStreaming = useCallback((convId, eventsCacheKey = null) => {
+    const startStreaming = useCallback((convId, streamGen) => {
         stopStreaming()
         const es = createResponseStream(convId)
         esRef.current = es
         let terminalHandled = false
-        const resolveCacheKey = () => eventsCacheKey ?? menuCacheConversationKey
+        const stillCurrent = () => generationRef.current === streamGen
+
         const notifySidebarActivity = () => {
             try {
                 onConversationActivity?.(convId)
@@ -219,41 +302,62 @@ export default function ChatWindow({
             }
         }
         const setReadyWithError = (message) => {
+            if (!stillCurrent()) return
             terminalHandled = true
             stopStreaming()
             setError(message)
             setPhase('ready')
+            releaseSendLock()
             setTimeout(() => chatInputRef.current?.focus(), 100)
         }
 
+        const recoverMissedReply = (waitingCopy, failedCopy) => {
+            if (!stillCurrent()) return
+            setError(waitingCopy)
+            setPhase('ready')
+            releaseSendLock()
+            fetchAllConversationTurns(convId)
+                .then((turns) => {
+                    if (generationRef.current !== streamGen) return
+                    setMessages(turnsToMessages(turns))
+                    setError(null)
+                })
+                .catch((reconcileErr) => {
+                    log.warn('missed-reply reconcile failed', reconcileErr)
+                    if (generationRef.current !== streamGen) return
+                    setError(failedCopy)
+                })
+                .finally(() => {
+                    if (generationRef.current === streamGen) {
+                        setTimeout(() => chatInputRef.current?.focus(), 100)
+                    }
+                })
+        }
+
         es.onmessage = (event) => {
+            if (terminalHandled) return
+            if (!stillCurrent()) return
             try {
                 const data = JSON.parse(event.data)
                 if (data.status === 'processing') return setPhase('thinking')
                 if (data.status === 'ready') {
                     terminalHandled = true
                     stopStreaming()
+                    if (!stillCurrent()) return
                     if (!data.message) {
-                        // Terminal round with no text: recover the composer instead of hanging on
-                        // 'thinking'. Backend always populates message today; this is defensive.
-                        log.warn('SSE terminal "ready" with empty message')
-                        setPhase('ready')
-                        setError(null)
-                        setTimeout(() => chatInputRef.current?.focus(), 100)
+                        log.warn('SSE terminal "ready" with empty message — reconciling transcript')
+                        recoverMissedReply(
+                            'The assistant reply did not arrive. Refreshing the conversation…',
+                            'Connection closed before a reply arrived. Please try again.',
+                        )
                         return
                     }
                     const {text, payload} = parseAgentMessage(data.message)
-                    let finalPayload = payload
-                    if (payload?.subtype === 'menu' && Array.isArray(payload.menuitems) && payload.menuitems.length > 0) {
-                        const chain = reconcileChainWithResponse(selectionChainRef.current, payload.menuitems, data.handledBy)
-                        selectionChainRef.current = chain
-                        finalPayload = {...payload, breadcrumb: deriveBreadcrumb(data.handledBy, chain)}
-                    }
-                    applyCacheSideEffects(resolveCacheKey(), finalPayload)
-                    addMessage('ai', text, data.handledBy, finalPayload)
+                    addMessage('ai', text, data.handledBy, payload)
                     notifySidebarActivity()
                     setPhase('ready')
                     setError(null)
+                    releaseSendLock()
                     setTimeout(() => chatInputRef.current?.focus(), 100)
                     return
                 }
@@ -263,191 +367,255 @@ export default function ChatWindow({
                     if (msg === SSE_CONCURRENT_STREAMS_ERROR) {
                         return setReadyWithError('Too many open chat streams. Close other tabs and try again.')
                     }
-                    return setReadyWithError(msg)
+                    return setReadyWithError(msg || 'Something went wrong. Please try again.')
                 }
                 if (data.status === 'expired') {
                     terminalHandled = true
                     stopStreaming()
+                    if (!stillCurrent()) return
                     handleSessionExpired()
                     return
                 }
-                // Unknown/unhandled status: log for observability. Not treated as terminal so a
-                // future non-terminal status can't be mis-handled as an error.
                 log.warn('Unhandled SSE status', data?.status)
             } catch (err) {
                 log.error('SSE message parse error', err)
             }
         }
 
+        es.onclosedWithoutTerminal = () => {
+            if (terminalHandled) return
+            if (!stillCurrent()) return
+            terminalHandled = true
+            stopStreaming()
+            recoverMissedReply(
+                'The assistant reply did not arrive. Refreshing the conversation…',
+                'Connection closed before a reply arrived. Please try again.',
+            )
+        }
+
         es.onerror = () => {
             if (terminalHandled) return
-            if (es.readyState === EventSource.CLOSED) setReadyWithError('Connection lost. Please try again.')
+            if (!stillCurrent()) return
+            if (es.readyState === 2 /* EventSource.CLOSED */) {
+                setReadyWithError('Connection lost. Please try again.')
+            }
         }
 
         return es
-    }, [addMessage, stopStreaming, handleSessionExpired, applyCacheSideEffects, menuCacheConversationKey, onConversationActivity])
+    }, [addMessage, stopStreaming, handleSessionExpired, onConversationActivity, releaseSendLock])
 
-    const reconcileTranscriptFromServer = useCallback(async (convId) => {
+    const reconcileTranscriptFromServer = useCallback(async (convId, expectedGen) => {
         const turns = await fetchAllConversationTurns(convId)
+        if (expectedGen != null && generationRef.current !== expectedGen) return
         const loadedMessages = turnsToMessages(turns)
-        const cacheKey = String(convId)
-        selectionChainRef.current = rebuildChainFromMessages(loadedMessages)
         setMessages(loadedMessages)
-        setMenuCacheConversationKey(cacheKey)
-        for (const m of loadedMessages) {
-            if (m.role === 'ai') applyCacheSideEffects(cacheKey, m.payload)
-        }
         setPhase('ready')
-    }, [applyCacheSideEffects])
+        releaseSendLock()
+    }, [releaseSendLock])
 
-    /**
-     * Opens SSE before POST so the client is subscribed before Camunda emits the terminal event.
-     */
-    const runOrchestrationRound = useCallback(async (convId, eventsCacheKey, postFn) => {
-        startStreaming(convId, eventsCacheKey)
+    const runOrchestrationRound = useCallback(async (convId, postFn, streamGen) => {
+        // POST first so discardLastResponse clears stale READY before subscribe (no previous-round replay).
         try {
             await postFn()
         } catch (err) {
             stopStreaming()
             throw err
         }
+        if (generationRef.current !== streamGen) return false
+        startStreaming(convId, streamGen)
+        return true
     }, [startStreaming, stopStreaming])
 
-    const visitIdConfigured = hasConfiguredVisitId()
+    const contextRequiredMessage = activePersona === PERSONA_STUDENT
+        ? getStudentIdRequiredMessage()
+        : getVisitIdRequiredMessage()
+
+    const contextComposerPlaceholder = activePersona === PERSONA_STUDENT
+        ? getStudentIdComposerPlaceholder()
+        : getVisitIdComposerPlaceholder()
 
     const handleSendMessage = useCallback(async (text, opts = {}) => {
-        if (sending || conversationLoading) return
+        if (sendLockRef.current || sending || conversationLoading) return false
+        // Take the lock synchronously, before any await below — otherwise a second call arriving
+        // during the persona-context resolution awaits would still see the lock/`sending` both false
+        // and proceed concurrently (the exact double-dispatch this lock exists to prevent).
+        const streamGen = generationRef.current
+        sendLockRef.current = true
         if (conversationReadOnly) {
-            setError(OTHER_VISIT_READONLY_MESSAGE)
-            return
+            releaseSendLock()
+            setError(getOtherContextReadonlyMessage(selectedConversation))
+            return false
         }
         const needsOrchestrationStart = !conversationId || firstOutgoingNeedsStart
-        if (needsOrchestrationStart && !hasConfiguredVisitId() && !isGuestChatAuth(import.meta.env)) {
+        if (needsOrchestrationStart && !hasConfiguredActivePersonaContext()) {
             const token = getAccessToken()
-            if (token) {
+            const persona = resolveActivePersona()
+            if (token && persona === PERSONA_VISIT) {
                 try {
-                    await resolveVisitIdForCurrentUser(import.meta.env, token)
+                    await tryResolveVisitIdForCurrentUser(import.meta.env, token, {attempts: 1, delayMs: 0})
                 } catch (err) {
-                    setError(err instanceof Error ? err.message : getVisitIdRequiredMessage(import.meta.env, guestMode))
+                    if (generationRef.current === streamGen) releaseSendLock()
+                    setError(err instanceof Error ? err.message : contextRequiredMessage)
                     setPhase(conversationId ? 'ready' : 'idle')
-                    return
+                    return false
                 }
+            } else if (token && persona === PERSONA_STUDENT) {
+                await tryResolveStudentIdForCurrentUser(import.meta.env, token)
             }
         }
-        if (needsOrchestrationStart && !hasConfiguredVisitId()) {
-            setError(getVisitIdRequiredMessage(import.meta.env, guestMode))
+        if (needsOrchestrationStart && !hasConfiguredActivePersonaContext()) {
+            if (generationRef.current === streamGen) releaseSendLock()
+            setError(contextRequiredMessage)
             setPhase(conversationId ? 'ready' : 'idle')
-            return
+            return false
         }
-        const cacheKey = menuCacheConversationKey
-        if (cacheKey && isRestartIntent(text)) {
-            invalidateSession(cacheKey)
-            selectionChainRef.current = []
-        }
+
         setError(null)
         setSending(true)
-        addMessage('user', text, {displayText: opts.displayText ?? null})
+        const optimisticId = crypto.randomUUID()
+        addMessage('user', text, {displayText: opts.displayText ?? null, id: optimisticId})
         setPhase('thinking')
         try {
+            let streamed = false
             if (!conversationId) {
                 const {conversationId: convId} = await createConversation(text, opts.displayText ?? null)
+                if (generationRef.current !== streamGen) return false
                 setConversationId(convId)
-                setMenuCacheConversationKey(convId)
-                setFirstOutgoingNeedsStart(false)
+                // Until start succeeds, further sends must still call /start (not /user-messages).
+                setFirstOutgoingNeedsStart(true)
                 onConversationCreated?.()
-                await runOrchestrationRound(
-                    convId,
+                streamed = await runOrchestrationRound(
                     convId,
                     () => startOrchestration(convId, text, getChatContextForStart(), opts.displayText ?? null),
+                    streamGen,
                 )
+                if (generationRef.current === streamGen) {
+                    setFirstOutgoingNeedsStart(false)
+                }
             } else if (firstOutgoingNeedsStart) {
-                const cacheKey = menuCacheConversationKey ?? conversationId
-                await runOrchestrationRound(
+                streamed = await runOrchestrationRound(
                     conversationId,
-                    cacheKey,
                     () => startOrchestration(conversationId, text, getChatContextForStart(), opts.displayText ?? null),
+                    streamGen,
                 )
-                setFirstOutgoingNeedsStart(false)
+                if (generationRef.current === streamGen) {
+                    setFirstOutgoingNeedsStart(false)
+                }
             } else {
-                const cacheKey = menuCacheConversationKey ?? conversationId
-                await runOrchestrationRound(
+                streamed = await runOrchestrationRound(
                     conversationId,
-                    cacheKey,
                     () => sendReply(conversationId, text, opts.displayText ?? null),
+                    streamGen,
                 )
             }
+            return streamed === true && generationRef.current === streamGen
         } catch (err) {
-            if (isSessionGone(err)) return handleSessionExpired()
-            if (err instanceof ApiError && err.status === 400) {
+            if (generationRef.current === streamGen) {
+                setMessages((prev) => prev.filter((m) => m.id !== optimisticId))
+            }
+            if (isSessionGone(err)) {
+                handleSessionExpired()
+                return false
+            }
+            if (generationRef.current !== streamGen) {
+                // A newer round has already taken over (e.g. New Chat mid-flight bumped the
+                // generation without this round's own lock/phase ever being released). This stale
+                // round's failure must not release the lock or touch phase/error for the round now
+                // actually in progress.
+                return false
+            }
+            releaseSendLock()
+            if (err instanceof ApiError && (err.status === 400 || err.status === 422)) {
                 setError(err.message)
                 setPhase(conversationId ? 'ready' : 'idle')
-                return
+                return false
+            }
+            if (err instanceof ApiError && err.status === 403) {
+                const msg = err.message?.includes('START_FAILED')
+                    ? err.message.replace(/^START_FAILED:\s*/i, '')
+                    : (err.message || 'This visit or student record is not available for this account.')
+                setError(msg)
+                setPhase(conversationId ? 'ready' : 'idle')
+                return false
             }
             if (err instanceof ApiError && err.status === 409 && conversationId) {
                 try {
-                    await reconcileTranscriptFromServer(conversationId)
+                    await reconcileTranscriptFromServer(conversationId, streamGen)
                 } catch (reconcileErr) {
                     log.warn('409 reconcile failed', reconcileErr)
-                    setPhase('ready')
+                    if (generationRef.current === streamGen) setPhase('ready')
                 }
-                return
+                return false
+            }
+            if (err instanceof ApiError && (err.status === 429 || err.status === 503)) {
+                setError(err.message || (err.status === 429
+                    ? 'Too many requests. Please wait a moment and try again.'
+                    : 'The assistant is temporarily unavailable. Please try again.'))
+                setPhase(conversationId ? 'ready' : 'idle')
+                return false
             }
             setError(conversationId ? 'Failed to send message. The session may have expired.' : 'Failed to start conversation. Is the backend running?')
             setPhase(conversationId ? 'ready' : 'idle')
-        } finally {
-            setSending(false)
+            return false
         }
-    }, [conversationId, conversationReadOnly, menuCacheConversationKey, sending, conversationLoading, firstOutgoingNeedsStart, addMessage, runOrchestrationRound, handleSessionExpired, onConversationCreated, reconcileTranscriptFromServer])
+    }, [
+        conversationId,
+        conversationReadOnly,
+        selectedConversation,
+        sending,
+        conversationLoading,
+        firstOutgoingNeedsStart,
+        addMessage,
+        runOrchestrationRound,
+        handleSessionExpired,
+        onConversationCreated,
+        reconcileTranscriptFromServer,
+        contextRequiredMessage,
+        releaseSendLock,
+    ])
 
     const handleMenuItemClick = useCallback((item, menuHandledBy) => {
+        if (menuInteractionBusy) return
         if (item?.selectionSignal && typeof item.selectionSignal === 'string') {
             const signal = item.selectionSignal.trim()
-            const parsed = parseSelectionSignal(signal)
-            if (parsed) selectionChainRef.current = updateChainOnSelection(selectionChainRef.current, parsed)
             const displayLabel = item.label ?? item.name ?? null
             handleSendMessage(signal, {displayText: displayLabel})
             return
         }
         const {agentInput, displayText} = formatMenuSelectionMessage(item, menuHandledBy)
-        const fallbackParsed = parseSelectionSignal(agentInput)
-        if (fallbackParsed) selectionChainRef.current = updateChainOnSelection(selectionChainRef.current, fallbackParsed)
         handleSendMessage(agentInput, {displayText})
-    }, [handleSendMessage])
-
-    const handleBreadcrumbClick = useCallback((crumb) => {
-        if (!crumb?.levelKey) return
-        const cached = menuCacheConversationKey ? getCachedLevel(menuCacheConversationKey, crumb.levelKey) : null
-        if (!cached) return handleSendMessage(`Go back to ${crumb.label}`)
-        setMessages((prev) => {
-            for (let i = prev.length - 1; i >= 0; i--) {
-                const m = prev[i]
-                if (m.role === 'ai' && m.payload?.subtype === 'menu') {
-                    const next = prev.slice()
-                    next[i] = {...m, payload: cached}
-                    return next
-                }
-            }
-            return prev
-        })
-    }, [menuCacheConversationKey, handleSendMessage])
+    }, [handleSendMessage, menuInteractionBusy])
 
     const handleNewChat = useCallback(() => {
-        if (menuCacheConversationKey) invalidateSession(menuCacheConversationKey)
+        bumpGeneration()
         stopStreaming()
+        sendLockRef.current = false
         setMessages([])
         setConversationId(null)
-        setMenuCacheConversationKey(null)
         setPhase('idle')
         setError(null)
         setSending(false)
         setConversationLoading(false)
         setFirstOutgoingNeedsStart(false)
-        selectionChainRef.current = []
         onNewChatParent?.()
-    }, [menuCacheConversationKey, stopStreaming, onNewChatParent])
+    }, [stopStreaming, onNewChatParent, bumpGeneration])
 
     const showEmptyState = messages.length === 0 && phase === 'idle' && !conversationLoading
-    const showNewChatBtn = messages.length > 0 || conversationId != null || menuCacheConversationKey != null
+    const showNewChatBtn = messages.length > 0 || conversationId != null
+    const promptGroups = activePersona === PERSONA_STUDENT ? STUDENT_PROMPT_GROUPS : VISIT_PROMPT_GROUPS
+    const statusTone = conversationLoading
+        ? 'loading'
+        : phase === 'thinking'
+            ? 'busy'
+            : phase === 'expired'
+                ? 'expired'
+                : 'ready'
+    const emptyBody = activePersona === PERSONA_STUDENT
+        ? 'Ask about capabilities, submit a new absence request, or report a Banner registration error. Status questions for existing ABS- and EB- codes are handled by the front-door assistant in this same chat.'
+        : 'Start with our Visitor Experience assistant for greetings and capabilities, then explore the catering catalog, submit IT-support tickets, or report facilities & maintenance issues.'
+
+    const composerDisabled = sending
+        || (contextConfigured ? false : (!conversationId || firstOutgoingNeedsStart))
 
     return (
         <div className="chat-window glass">
@@ -458,22 +626,36 @@ export default function ChatWindow({
                     </div>
                     <div className="chat-header-info">
                         <h1>AI Agent</h1>
-                        <span className="chat-status">
-                            {conversationLoading ? 'Loading…' : phase === 'thinking' ? 'Processing...' : phase === 'expired' ? 'Session expired' : 'Powered by Camunda'}
+                        <span className={`chat-status chat-status--${statusTone}`}>
+                            <span className="chat-status-dot" aria-hidden="true"/>
+                            {conversationLoading
+                                ? 'Loading…'
+                                : phase === 'thinking'
+                                    ? 'Processing...'
+                                    : phase === 'expired'
+                                        ? 'Session expired'
+                                        : activePersona === PERSONA_STUDENT
+                                            ? 'Student persona'
+                                            : activePersona === PERSONA_VISIT
+                                                ? 'Visitor persona'
+                                                : 'Powered by Camunda'}
                         </span>
                     </div>
                 </div>
-                {showNewChatBtn && (
-                    <button className="new-chat-btn" onClick={handleNewChat} title="New conversation"
-                            aria-label="Start new conversation">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                             strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <line x1="12" y1="5" x2="12" y2="19"/>
-                            <line x1="5" y1="12" x2="19" y2="12"/>
-                        </svg>
-                        New Chat
-                    </button>
-                )}
+                <div className="chat-header-right">
+                    {headerAccessory}
+                    {showNewChatBtn && (
+                        <button className="new-chat-btn" onClick={handleNewChat} disabled={menuInteractionBusy}
+                                title="New conversation" aria-label="Start new conversation">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <line x1="12" y1="5" x2="12" y2="19"/>
+                                <line x1="5" y1="12" x2="19" y2="12"/>
+                            </svg>
+                            New Chat
+                        </button>
+                    )}
+                </div>
             </div>
 
             <div className="chat-messages" role="list" aria-label="Chat messages">
@@ -483,31 +665,40 @@ export default function ChatWindow({
                     <div className="empty-state">
                         <div className="empty-icon"><SparkIcon size={48} withCircle/></div>
                         <h2>How can I help you today?</h2>
-                        <p>Start with our Visitor Experience assistant for greetings and capabilities, then explore the
-                            catering catalog, submit IT-support tickets, or report facilities &amp; maintenance
-                            issues.</p>
-                        {!visitIdConfigured && (
+                        <p>{emptyBody}</p>
+                        {!contextConfigured && (
                             <div className="visit-id-hint" role="status">
-                                {getVisitIdRequiredMessage(import.meta.env, guestMode)}
+                                {contextRequiredMessage}
                             </div>
                         )}
                         <div className="quick-prompts">
-                            {QUICK_PROMPTS.map((prompt) => (
-                                <button
-                                    key={prompt}
-                                    className="quick-prompt"
-                                    disabled={!visitIdConfigured || sending || conversationReadOnly}
-                                    onClick={() => handleSendMessage(prompt)}
-                                >
-                                    {prompt}
-                                </button>
+                            {promptGroups.map((group) => (
+                                <div key={group.label} className="quick-prompt-group">
+                                    <span className="quick-prompt-group-label">{group.label}</span>
+                                    <div className="quick-prompt-group-items">
+                                        {group.prompts.map((prompt) => (
+                                            <button
+                                                key={prompt}
+                                                className="quick-prompt"
+                                                disabled={!contextConfigured || sending || conversationReadOnly}
+                                                onClick={() => handleSendMessage(prompt)}
+                                            >
+                                                {prompt}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
                             ))}
                         </div>
                     </div>
                 )}
                 {messages.map((msg) => (
-                    <MessageBubble key={msg.id} message={msg} onMenuItemClick={handleMenuItemClick}
-                                   onBreadcrumbClick={handleBreadcrumbClick}/>
+                    <MessageBubble
+                        key={msg.id}
+                        message={msg}
+                        onMenuItemClick={handleMenuItemClick}
+                        menuDisabled={menuInteractionBusy}
+                    />
                 ))}
                 {phase === 'thinking' &&
                     <div aria-live="polite" aria-label="Agent is thinking"><ThinkingIndicator/></div>}
@@ -535,20 +726,25 @@ export default function ChatWindow({
             <div className="chat-bottom">
                 {conversationReadOnly && !conversationLoading && (
                     <div className="waiting-hint" role="status" aria-live="polite">
-                        <span>{OTHER_VISIT_READONLY_MESSAGE}</span>
+                        <span>{getOtherContextReadonlyMessage(selectedConversation)}</span>
                     </div>
                 )}
                 {!conversationReadOnly && (phase === 'idle' || phase === 'ready') && !conversationLoading && (
                     <ChatInput
                         ref={chatInputRef}
                         onSend={handleSendMessage}
-                        disabled={sending || (visitIdConfigured ? false : (!conversationId || firstOutgoingNeedsStart))}
+                        disabled={composerDisabled}
+                        composerMode={composerDerived.mode}
+                        dateConstraint={composerDerived.dateConstraint}
+                        attachmentHandledBy={composerDerived.attachmentHandledBy}
                         placeholder={
-                            !visitIdConfigured && (!conversationId || firstOutgoingNeedsStart)
-                                ? getVisitIdComposerPlaceholder(import.meta.env, guestMode)
-                                : phase === 'idle'
-                                    ? 'Type your message...'
-                                    : 'Type a follow-up...'
+                            !contextConfigured && (!conversationId || firstOutgoingNeedsStart)
+                                ? contextComposerPlaceholder
+                                : conversationReadOnly
+                                    ? getOtherContextComposerPlaceholder(selectedConversation)
+                                    : phase === 'idle'
+                                        ? 'Type your message...'
+                                        : 'Type a follow-up...'
                         }
                     />
                 )}
@@ -568,7 +764,10 @@ export default function ChatWindow({
 ChatWindow.propTypes = {
     sidebarConversationId: PropTypes.string,
     conversationReadOnly: PropTypes.bool,
+    selectedConversation: PropTypes.object,
+    headerAccessory: PropTypes.node,
     onNewChat: PropTypes.func,
     onConversationCreated: PropTypes.func,
     onConversationActivity: PropTypes.func,
+    onBusyChange: PropTypes.func,
 }
