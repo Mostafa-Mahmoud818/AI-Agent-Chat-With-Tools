@@ -19,7 +19,7 @@ import {check} from 'k6';
  * k6 run -e AUTH_EMAIL=you@example.com -e OTP_CODE=123456 docs/k6/chat-stack-auth.k6.js
  * ```
  *
- * Phase 2 prints a copy-pasteable `ACCESS_TOKEN=...` / `VISIT_ID=...` block for
+ * Phase 2 prints a copy-pasteable `ACCESS_TOKEN=...` / `VISIT_ID=...` / `USER_ID=...` block for
  * `chat-stack-concurrency.k6.js`. Run the whole thing twice (different AUTH_EMAIL, different
  * LABEL) to get the second user `chat-stack-concurrency.k6.js` needs for its bulkhead test:
  *
@@ -154,15 +154,34 @@ function resolveVisitId(accessToken) {
 }
 
 /**
+ * Resolves Identity user UUID via `GET .../identity/profile/me` (`data.id`) — the envelope
+ * `userId` that must match chatting clientId (not JWT sub).
+ *
+ * @param {string} accessToken - Bearer token from {@link exchangeOtpForToken}.
+ * @returns {(string|null)} The Identity user UUID, or `null` if the call fails.
+ */
+function resolveUserId(accessToken) {
+    const res = http.get(`${BASE_URL}/api/v1/secure/identity/profile/me`, {
+        headers: {Authorization: `Bearer ${accessToken}`},
+    });
+    if (res.status !== 200) {
+        console.warn(`[${LABEL}] profile/me failed: status=${res.status} body=${res.body}`);
+        return null;
+    }
+    const data = res.json().data;
+    return (data && data.id) || null;
+}
+
+/**
  * k6 VU entry point. Phase-switches on whether {@link OTP_CODE} is set:
  *
  * - **Phase 1** (no `OTP_CODE`): sends the OTP via {@link checkEligibilityAndSendOtp} and prints
  *   the phase-2 command to run once the code arrives, then returns — it deliberately does NOT
  *   proceed to exchange, since sending a fresh OTP would invalidate any code already in flight.
  * - **Phase 2** (`OTP_CODE` set): exchanges the code for a token via {@link exchangeOtpForToken},
- *   resolves a visit id via {@link resolveVisitId}, and prints a copy-pasteable
- *   `ACCESS_TOKEN=... VISIT_ID=...` block (suffixed `_2` when `LABEL` isn't `primary`) for use
- *   with `chat-stack-concurrency.k6.js`.
+ *   resolves a visit id via {@link resolveVisitId}, resolves user id via {@link resolveUserId},
+ *   and prints a copy-pasteable `ACCESS_TOKEN=... VISIT_ID=... USER_ID=...` block (suffixed `_2`
+ *   when `LABEL` isn't `primary`) for use with `chat-stack-concurrency.k6.js`.
  *
  * @returns {void}
  */
@@ -194,17 +213,30 @@ export default function () {
         );
     }
 
+    const userId = resolveUserId(accessToken);
+    if (!userId) {
+        console.warn(
+            `[${LABEL}] Could not resolve USER_ID from profile/me. Set it manually from ` +
+            `GET ${BASE_URL}/api/v1/secure/identity/profile/me → data.id`
+        );
+    }
+
     const varSuffix = LABEL === 'primary' ? '' : '_2';
     console.log('\n============================================================');
     console.log(`AUTH COMPLETE (label=${LABEL})`);
     console.log(`ACCESS_TOKEN${varSuffix}=${accessToken}`);
     console.log(`VISIT_ID${varSuffix}=${visitId || '(not resolved — see warning above)'}`);
+    console.log(`USER_ID${varSuffix}=${userId || '(not resolved — see warning above)'}`);
     if (refreshToken) console.log(`REFRESH_TOKEN${varSuffix}=${refreshToken}`);
     console.log('\nUse with chat-stack-concurrency.k6.js, e.g.:');
     if (varSuffix === '') {
-        console.log(`  -e ACCESS_TOKEN=${accessToken} -e VISIT_ID=${visitId || '<paste-manually>'}`);
+        console.log(
+            `  -e ACCESS_TOKEN=${accessToken} -e VISIT_ID=${visitId || '<paste-manually>'} -e USER_ID=${userId || '<paste-manually>'}`
+        );
     } else {
-        console.log(`  -e ACCESS_TOKEN_2=${accessToken} -e VISIT_ID_2=${visitId || '<paste-manually>'}`);
+        console.log(
+            `  -e ACCESS_TOKEN_2=${accessToken} -e VISIT_ID_2=${visitId || '<paste-manually>'} -e USER_ID_2=${userId || '<paste-manually>'}`
+        );
     }
     console.log('============================================================\n');
 }

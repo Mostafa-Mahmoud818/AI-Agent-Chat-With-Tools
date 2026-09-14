@@ -9,20 +9,21 @@
  * Base URL: {@code VITE_API_ORIGIN}, or {@code VITE_API_RELATIVE=1} for same-origin `/api`
  * (Vite proxy), or {@code VITE_API_BACKEND} preset — see {@link resolveApiOrigin}.
  *
- * **`chatContext` on orchestration start:** VISIT or STUDENT envelope — see
+ * **`chatContext` on orchestration start:** VISITOR or STUDENT envelope — see
  * {@code personaSession.getChatContextForStart} and {@link startOrchestration}.
  *
  * **Turn history:** {@code GET .../conversations/{id}/turns?limit=N} →
  * {@code ApiResponse<ConversationTurnDto[]>} chronological (oldest first).
  *
- * **SSE payload:** {@code AssistantTurnReplyDto} — {@code status}: ready | processing | error | expired;
+ * **SSE payload:** {@code AssistantTurnReplyDto} — {@code status}: ready | error | expired;
+ * (processing exists in the enum but is not emitted by the server today)
  * {@code message}, {@code handledBy}.
  */
 
 import {createLogger} from '../utils/logger.js'
 import {resolveApiOrigin} from '../config/apiOrigin.js'
 import {ensureFreshAccessToken, refreshAccessToken} from '../auth/tokenRefresh.js'
-import {isValidContextId} from '../config/chatContext.js'
+import {isValidContextId, isVisitorContextType} from '../config/chatContext.js'
 import {
     ABSENCE_ATTACHMENT_MAX_BYTES,
     AUDIO_MAX_BYTES,
@@ -392,9 +393,10 @@ export async function unarchiveConversation(conversationId) {
  *
  * @param {string} conversationId
  * @param {string} inputText
- * @param {{ schemaVersion?: string, contextType: string, contextData: { id: string } }} chatContext
- *        Required. Shape: `{ schemaVersion: "1.0", contextType: "VISIT"|"STUDENT",
- *        contextData: { id: "<uuid>" } }`.
+ * @param {{ schemaVersion?: string, contextType: string, userId: string, contextData: object }} chatContext
+ *        Required. VISITOR: `{ schemaVersion: "1.0", contextType: "VISITOR", userId: "<uuid>",
+ *        contextData: { visitId: "<uuid>" } }`. STUDENT: `{ ..., contextType: "STUDENT",
+ *        userId: "<uuid>", contextData: {} }`.
  * @param {string|null} [displayText]
  * @returns {Promise<object>}
  */
@@ -402,11 +404,40 @@ export async function startOrchestration(conversationId, inputText, chatContext,
     if (!chatContext || !chatContext.contextType) {
         throw new ApiError(0, 'invalid_chat_context', 'chatContext is required on orchestration start')
     }
-    if (!isValidContextId(chatContext.contextData?.id)) {
+    if (!isValidContextId(chatContext.userId)) {
         throw new ApiError(
             0,
             'invalid_chat_context',
-            'chatContext.contextData.id must be a UUID (canonical id key; visitId alias is not accepted)',
+            'chatContext.userId must be a UUID (Identity user id from profile/me)',
+        )
+    }
+    const type = String(chatContext.contextType).trim().toUpperCase()
+    const data = chatContext.contextData
+    if (data == null || typeof data !== 'object' || Array.isArray(data)) {
+        throw new ApiError(0, 'invalid_chat_context', 'chatContext.contextData must be an object')
+    }
+    if (isVisitorContextType(type)) {
+        if (data.id != null) {
+            throw new ApiError(
+                0,
+                'invalid_chat_context',
+                'chatContext.contextData.id is not accepted; use contextData.visitId',
+            )
+        }
+        if (!isValidContextId(data.visitId)) {
+            throw new ApiError(
+                0,
+                'invalid_chat_context',
+                'chatContext.contextData.visitId must be a UUID for VISITOR',
+            )
+        }
+    } else if (type === 'STUDENT') {
+        // Empty object; ignore unknown keys if present (backend StudentContextData has no fields).
+    } else {
+        throw new ApiError(
+            0,
+            'invalid_chat_context',
+            `Unsupported chatContext.contextType: ${chatContext.contextType}`,
         )
     }
     const base = getOrchestrationBase()
@@ -420,13 +451,13 @@ export async function startOrchestration(conversationId, inputText, chatContext,
     }
 
     const res = await post(`${base}/conversations/${cid}/start`, body, ORCHESTRATION_POST_TIMEOUT_MS)
-    const data = await unwrapResponse(res)
+    const dataResp = await unwrapResponse(res)
     log.info('Orchestration started', {
         conversationId,
         contextType: chatContext.contextType,
-        processInstanceKey: data?.processInstanceKey,
+        processInstanceKey: dataResp?.processInstanceKey,
     })
-    return data
+    return dataResp
 }
 
 /**

@@ -11,7 +11,7 @@ import {
     clearPersonaSession,
     ensureActivePersona,
     PERSONA_STUDENT,
-    PERSONA_VISIT,
+    PERSONA_VISITOR,
     setActivePersona,
 } from '../config/personaSession.js'
 import {createLogger} from '../utils/logger.js'
@@ -28,16 +28,15 @@ export function clearSecureAuthSession() {
 }
 
 /**
- * Stores the access/refresh token pair, resolves visit id and (when OTP eligibility said STUDENT)
- * Identity user UUID from profile/me, and picks an active persona.
-
+ * Stores the access/refresh token pair, resolves visit id, envelope userId from profile/me
+ * (both personas), and STUDENT persona when OTP eligibility said STUDENT.
  *
  * Visit resolution uses few retries (not the 10×15s loop) so student-only accounts are not stalled.
  *
  * @param {ImportMetaEnv} env
  * @param {string} accessToken
  * @param {{ refreshToken?: string|null, expiresIn?: number|string|null }} [tokenExtras]
- * @returns {Promise<{ accessToken: string, visitId: string|null, studentId: string|null, availablePersonas: Array<'VISIT'|'STUDENT'> }>}
+ * @returns {Promise<{ accessToken: string, visitId: string|null, studentId: string|null, availablePersonas: Array<'VISITOR'|'STUDENT'> }>}
  */
 export async function completeSecureAuth(env, accessToken, tokenExtras = {}) {
     const normalized = String(accessToken ?? '').trim()
@@ -47,15 +46,15 @@ export async function completeSecureAuth(env, accessToken, tokenExtras = {}) {
     setTokens({accessToken: normalized, ...tokenExtras})
     wipeLegacyRosterStudentId()
 
-    // Visit with 1 attempt (fast fail for student-only). Student id from profile/me only if
-    // check-eligibility already persisted STUDENT — do not call absence-info.
+    // Visit with 1 attempt (fast fail for student-only). tryResolveStudentId always loads
+    // profile/me → dxpUserId (envelope userId); returns the id only when STUDENT-eligible.
     const [visitId, studentId] = await Promise.all([
         tryResolveVisitIdForCurrentUser(env, normalized, {attempts: 1, delayMs: 0}),
         tryResolveStudentIdForCurrentUser(env, normalized),
     ])
 
     const availablePersonas = []
-    if (visitId) availablePersonas.push(PERSONA_VISIT)
+    if (visitId) availablePersonas.push(PERSONA_VISITOR)
     if (studentId) availablePersonas.push(PERSONA_STUDENT)
 
     if (availablePersonas.length === 0) {

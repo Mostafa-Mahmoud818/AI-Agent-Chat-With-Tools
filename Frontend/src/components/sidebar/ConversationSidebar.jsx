@@ -180,7 +180,7 @@ export default function ConversationSidebar({
                     const archived = Boolean(c.archivedAt)
                     const contextBadge = c.contextType === 'STUDENT'
                         ? 'Student'
-                        : c.contextType === 'VISIT'
+                        : (c.contextType === 'VISITOR' || c.contextType === 'VISIT')
                             ? 'Visit'
                             : null
                     return (

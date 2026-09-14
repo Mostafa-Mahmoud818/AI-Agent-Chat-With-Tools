@@ -28,13 +28,19 @@ vi.mock('../../auth/visitResolution.js', () => ({
     tryResolveVisitIdForCurrentUser: vi.fn(async () => null),
 }))
 
+vi.mock('../../auth/studentResolution.js', () => ({
+    tryResolveDxpUserIdForCurrentUser: vi.fn(async () => '11111111-1111-4111-8111-111111111111'),
+    tryResolveStudentIdForCurrentUser: vi.fn(async () => null),
+}))
+
 const personaMocks = vi.hoisted(() => ({
     resolveActivePersona: vi.fn(() => PERSONA_VISIT),
     hasConfiguredActivePersonaContext: vi.fn(() => true),
     getChatContextForStart: vi.fn(() => ({
         schemaVersion: '1.0',
-        contextType: 'VISIT',
-        contextData: { id: '11111111-1111-4111-8111-111111111111' },
+        contextType: 'VISITOR',
+        userId: '11111111-1111-4111-8111-111111111111',
+        contextData: { visitId: '22222222-2222-4222-8222-222222222222' },
     })),
     getOtherContextReadonlyMessage: vi.fn(() => 'Other context'),
     getOtherContextComposerPlaceholder: vi.fn(() => 'Other'),
@@ -418,6 +424,59 @@ describe('ChatWindow round order and send guard', () => {
         })
         await waitFor(() => expect(api.createResponseStream).toHaveBeenCalledWith('c-follow'))
         expect(order).toEqual(['post', 'stream'])
+    })
+
+    it('keeps the composer open after SSE expired so the user can continue the same conversation', async () => {
+        const stream = mockStreamController()
+        vi.mocked(api.createConversation).mockResolvedValue({ conversationId: 'c1' })
+        vi.mocked(api.startOrchestration).mockResolvedValue({})
+        vi.mocked(api.createResponseStream).mockReturnValue(stream)
+        vi.mocked(api.sendReply).mockResolvedValue(undefined)
+
+        render(<ChatWindow />)
+        const input = screen.getByPlaceholderText(/type your message/i)
+        await act(async () => {
+            fireEvent.change(input, { target: { value: 'Hello' } })
+            fireEvent.submit(input.closest('form'))
+        })
+        await waitFor(() => expect(stream.onmessage).toBeTypeOf('function'))
+
+        await act(async () => {
+            stream.onmessage({
+                data: JSON.stringify({ status: 'expired', message: 'No active assistant round.' }),
+            })
+        })
+
+        expect(screen.getByText(/continue this conversation/i)).toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: /start a new conversation/i })).not.toBeInTheDocument()
+        expect(screen.getByPlaceholderText(/follow-up/i)).toBeInTheDocument()
+
+        await act(async () => {
+            fireEvent.change(screen.getByPlaceholderText(/follow-up/i), { target: { value: 'Follow up' } })
+            fireEvent.submit(screen.getByPlaceholderText(/follow-up/i).closest('form'))
+        })
+        await waitFor(() => expect(api.sendReply).toHaveBeenCalledWith('c1', 'Follow up', null))
+    })
+
+    it('blocks the composer after HTTP 410 on orchestration POST', async () => {
+        vi.mocked(api.createConversation).mockResolvedValue({ conversationId: 'c1' })
+        vi.mocked(api.startOrchestration).mockRejectedValue(
+            new api.ApiError(410, 'session_expired', 'Session expired.'),
+        )
+
+        render(<ChatWindow />)
+        const input = screen.getByPlaceholderText(/type your message/i)
+        await act(async () => {
+            fireEvent.change(input, { target: { value: 'Hello' } })
+            fireEvent.submit(input.closest('form'))
+        })
+
+        await waitFor(() => {
+            expect(screen.getByText(/can no longer accept messages/i)).toBeInTheDocument()
+            expect(screen.getByRole('button', { name: /^start a new conversation$/i })).toBeInTheDocument()
+        })
+        expect(screen.queryByPlaceholderText(/type your message/i)).not.toBeInTheDocument()
+        expect(screen.queryByPlaceholderText(/follow-up/i)).not.toBeInTheDocument()
     })
 
     it('does not open a stream when unmounted during POST', async () => {

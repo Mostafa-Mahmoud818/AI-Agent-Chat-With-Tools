@@ -21,13 +21,19 @@ vi.mock('../../auth/visitResolution.js', () => ({
     tryResolveVisitIdForCurrentUser: vi.fn(async () => null),
 }))
 
+vi.mock('../../auth/studentResolution.js', () => ({
+    tryResolveDxpUserIdForCurrentUser: vi.fn(async () => '11111111-1111-4111-8111-111111111111'),
+    tryResolveStudentIdForCurrentUser: vi.fn(async () => null),
+}))
+
 const personaMocks = vi.hoisted(() => ({
     resolveActivePersona: vi.fn(() => PERSONA_VISIT),
     hasConfiguredActivePersonaContext: vi.fn(() => true),
     getChatContextForStart: vi.fn(() => ({
         schemaVersion: '1.0',
-        contextType: 'VISIT',
-        contextData: { id: '11111111-1111-4111-8111-111111111111' },
+        contextType: 'VISITOR',
+        userId: '11111111-1111-4111-8111-111111111111',
+        contextData: { visitId: '22222222-2222-4222-8222-222222222222' },
     })),
     getOtherContextReadonlyMessage: vi.fn(() => 'Other context'),
     getOtherContextComposerPlaceholder: vi.fn(() => 'Other'),

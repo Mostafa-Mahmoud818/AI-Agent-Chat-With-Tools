@@ -1,19 +1,26 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
     buildVisitChatContext,
+    buildStudentChatContext,
     DEFAULT_VISIT_ID,
     getRuntimeVisitId,
     getVisitIdRequiredMessage,
     getVisitIdComposerPlaceholder,
     hasConfiguredVisitId,
+    hasConfiguredDxpUserId,
     isOtherVisitConversation,
     isPlaceholderVisitId,
     isValidVisitId,
+    isVisitorContextType,
     normalizeVisitId,
     resolveVisitId,
     setRuntimeVisitId,
+    setRuntimeDxpUserId,
     STORAGE_KEY,
 } from '../chatContext.js'
+
+const USER = '11111111-1111-4111-8111-111111111111'
+const VISIT = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
 
 describe('chatContext', () => {
     beforeEach(() => {
@@ -33,16 +40,38 @@ describe('chatContext', () => {
         )
     })
 
-    it('buildVisitChatContext uses VISIT envelope with generic id', () => {
-        setRuntimeVisitId('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee')
+    it('isVisitorContextType accepts VISITOR and legacy VISIT', () => {
+        expect(isVisitorContextType('VISITOR')).toBe(true)
+        expect(isVisitorContextType('VISIT')).toBe(true)
+        expect(isVisitorContextType('STUDENT')).toBe(false)
+    })
+
+    it('buildVisitChatContext uses VISITOR envelope with userId and visitId', () => {
+        setRuntimeVisitId(VISIT)
+        setRuntimeDxpUserId(USER)
         const ctx = buildVisitChatContext()
         expect(ctx).toEqual({
             schemaVersion: '1.0',
-            contextType: 'VISIT',
-            contextData: { id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' },
+            contextType: 'VISITOR',
+            userId: USER,
+            contextData: { visitId: VISIT },
         })
-        expect(ctx.contextData).not.toHaveProperty('visitId')
-        expect(Object.keys(ctx.contextData)).toEqual(['id'])
+        expect(ctx.contextData).not.toHaveProperty('id')
+    })
+
+    it('buildStudentChatContext uses empty contextData and userId', () => {
+        setRuntimeDxpUserId(USER)
+        expect(buildStudentChatContext()).toEqual({
+            schemaVersion: '1.0',
+            contextType: 'STUDENT',
+            userId: USER,
+            contextData: {},
+        })
+    })
+
+    it('buildVisitChatContext throws without userId', () => {
+        setRuntimeVisitId(VISIT)
+        expect(() => buildVisitChatContext({ VITE_DEFAULT_USER_ID: undefined })).toThrow(/userId/)
     })
 
     it('resolveVisitId prefers query param over storage', () => {
@@ -61,7 +90,7 @@ describe('chatContext', () => {
 
     it('isPlaceholderVisitId treats nil UUID as unconfigured', () => {
         expect(isPlaceholderVisitId(DEFAULT_VISIT_ID)).toBe(true)
-        expect(isPlaceholderVisitId('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee')).toBe(false)
+        expect(isPlaceholderVisitId(VISIT)).toBe(false)
         expect(isPlaceholderVisitId(null)).toBe(true)
     })
 
@@ -71,8 +100,14 @@ describe('chatContext', () => {
     })
 
     it('hasConfiguredVisitId is true when visit id is stored', () => {
-        setRuntimeVisitId('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee')
+        setRuntimeVisitId(VISIT)
         expect(hasConfiguredVisitId()).toBe(true)
+    })
+
+    it('hasConfiguredDxpUserId uses storage or VITE_DEFAULT_USER_ID', () => {
+        expect(hasConfiguredDxpUserId({ VITE_DEFAULT_USER_ID: undefined })).toBe(false)
+        setRuntimeDxpUserId(USER)
+        expect(hasConfiguredDxpUserId()).toBe(true)
     })
 
     it('persists runtime visit id in localStorage', () => {
@@ -90,30 +125,31 @@ describe('chatContext', () => {
     })
 
     describe('isOtherVisitConversation', () => {
-        const CURRENT = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+        const CURRENT = VISIT
         const OTHER = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
 
         beforeEach(() => setRuntimeVisitId(CURRENT))
 
-        it('is true for a VISIT conversation from a different visit', () => {
+        it('is true for a VISITOR conversation from a different visit', () => {
+            expect(isOtherVisitConversation({ contextType: 'VISITOR', contextTypeId: OTHER })).toBe(true)
             expect(isOtherVisitConversation({ contextType: 'VISIT', contextTypeId: OTHER })).toBe(true)
         })
 
-        it('is false for a VISIT conversation matching the current visit', () => {
-            expect(isOtherVisitConversation({ contextType: 'VISIT', contextTypeId: CURRENT })).toBe(false)
+        it('is false for a VISITOR conversation matching the current visit', () => {
+            expect(isOtherVisitConversation({ contextType: 'VISITOR', contextTypeId: CURRENT })).toBe(false)
         })
 
-        it('is false for null / new / non-VISIT / id-less conversations', () => {
+        it('is false for null / new / non-VISITOR / id-less conversations', () => {
             expect(isOtherVisitConversation(null)).toBe(false)
             expect(isOtherVisitConversation({})).toBe(false)
             expect(isOtherVisitConversation({ contextType: 'STUDENT', contextTypeId: OTHER })).toBe(false)
-            expect(isOtherVisitConversation({ contextType: 'VISIT', contextTypeId: null })).toBe(false)
+            expect(isOtherVisitConversation({ contextType: 'VISITOR', contextTypeId: null })).toBe(false)
         })
 
         it('is false when no current visit is configured (cannot gate)', () => {
             setRuntimeVisitId('')
             const env = { VITE_DEFAULT_VISIT_ID: undefined }
-            expect(isOtherVisitConversation({ contextType: 'VISIT', contextTypeId: OTHER }, env)).toBe(false)
+            expect(isOtherVisitConversation({ contextType: 'VISITOR', contextTypeId: OTHER }, env)).toBe(false)
         })
     })
 })

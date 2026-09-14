@@ -44,12 +44,14 @@ If both succeed, a **Visitor / Student persona picker** appears (last choice is 
 
 **Chat context for orchestration start** ([`src/config/personaSession.js`](src/config/personaSession.js)):
 
-| Persona | `contextType` | `contextData.id` source |
-|---------|---------------|-------------------------|
-| Visitor | `VISIT` | `visitId` from my-visits / `?visitId=` / `VITE_DEFAULT_VISIT_ID` |
-| Student | `STUDENT` | Identity user UUID from `profile/me` `data.id` (not roster PK / Banner) |
+| Persona | `contextType` | `userId` | `contextData` |
+|---------|---------------|----------|---------------|
+| Visitor | `VISITOR` | Identity UUID from `GET .../identity/profile/me` (`data.id`) | `{ visitId }` from my-visits / `?visitId=` / `VITE_DEFAULT_VISIT_ID` |
+| Student | `STUDENT` | Same Identity UUID from `profile/me` | `{}` (empty) |
 
-QA overrides: `?persona=STUDENT|VISIT` (active persona), `?studentId=<uuid>` (marks STUDENT eligible; chat id still comes from `profile/me`), `?visitId=`.
+`userId` must equal the chatting `clientId` the backend derives from the JWT (Identity user id — **not** JWT `sub`, which is the email). Stored in `localStorage` as `ankabut.chat.dxpUserId`.
+
+QA overrides: `?persona=STUDENT|VISITOR|VISIT` (active persona; `VISIT` canonicalizes to `VISITOR`), `?studentId=<uuid>` (marks STUDENT eligible only), `?visitId=`.
 
 Bearer-token precedence: the OTP dialog writes to `localStorage: ankabut.chat.accessToken` (plus refresh + expiry). On boot, `initTokenStore()` prefers a non-empty `VITE_API_BEARER_TOKEN`; otherwise it loads from localStorage.
 
@@ -105,7 +107,7 @@ src/
 │   └── __tests__/                # Vitest specs
 ├── config/
 │   ├── apiOrigin.js
-│   ├── chatContext.js            # VISIT / STUDENT envelopes + id helpers
+│   ├── chatContext.js            # VISITOR / STUDENT envelopes + id helpers
 │   ├── personaSession.js         # Active persona + chatContext for start
 │   ├── chattingValidationLimits.js
 │   └── runtimeSettings.js
@@ -123,7 +125,8 @@ All env vars are optional — the UI can supply backend env, token, and visit id
 | `VITE_API_ORIGIN` | _(unset)_ | Explicit modulith base URL (no trailing slash) |
 | `VITE_API_RELATIVE` | off | `1` / `true` → same-origin `/api/...` via Vite proxy |
 | `VITE_API_BEARER_TOKEN` | _(none)_ | Optional bootstrap bearer for CI |
-| `VITE_DEFAULT_VISIT_ID` | _(unset)_ | Fallback visit UUID for VISIT `chatContext` |
+| `VITE_DEFAULT_VISIT_ID` | _(unset)_ | Fallback visit UUID for VISITOR `contextData.visitId` |
+| `VITE_DEFAULT_USER_ID` | _(unset)_ | Fallback Identity UUID for envelope `userId` when `profile/me` is unavailable (CI opaque tokens) |
 | `VITE_LOCAL_AUTH_EMAIL` / `VITE_AUTH_EMAIL` | _(unset)_ | Pre-fills the OTP email input |
 | `VITE_LOG_LEVEL` | `info` (prod) / `debug` (dev) | Console logger level |
 
@@ -134,9 +137,9 @@ All env vars are optional — the UI can supply backend env, token, and visit id
 | `ankabut.chat.backendEnv` | `DEV` \| `TEST` \| `STAGE` \| `LOCAL` |
 | `ankabut.chat.accessToken` / `refreshToken` / `accessTokenExpiresAt` | JWT session |
 | `ankabut.chat.visitId` | Active visit UUID |
-| `ankabut.chat.dxpUserId` | Identity user UUID for STUDENT `chatContext.id` |
+| `ankabut.chat.dxpUserId` | Identity user UUID — envelope `userId` for both personas |
 | `ankabut.chat.studentEligible` | `true` when OTP eligibility matched STUDENT |
-| `ankabut.chat.activePersona` | `VISIT` \| `STUDENT` |
+| `ankabut.chat.activePersona` | `VISITOR` \| `STUDENT` |
 
 ### API alignment (Ankabut modulith)
 
@@ -156,12 +159,25 @@ All env vars are optional — the UI can supply backend env, token, and visit id
   "chatContext": {
     "schemaVersion": "1.0",
     "contextType": "STUDENT",
-    "contextData": { "id": "<identity-user-uuid-from-profile-me>" }
+    "userId": "<identity-user-uuid-from-profile-me>",
+    "contextData": {}
   }
 }
 ```
 
-**Start body example (VISIT):** same shape with `contextType: "VISIT"` and `contextData.id` = visit UUID from my-visits (`visitId` field).
+**Start body example (VISITOR):**
+
+```json
+{
+  "inputText": "Show my visits",
+  "chatContext": {
+    "schemaVersion": "1.0",
+    "contextType": "VISITOR",
+    "userId": "<identity-user-uuid-from-profile-me>",
+    "contextData": { "visitId": "<visit-uuid-from-my-visits>" }
+  }
+}
+```
 
 Follow-ups: `{ followUpInput, displayText?, clientMessageId? }`. Open SSE **after** a successful POST start/user-messages (POST-then-stream). Opening the stream before POST can replay a stale previous-round READY. SSE JSON is `AssistantTurnReplyDto` (`status`: `ready` \| `processing` \| `error` \| `expired`, `message`, `handledBy`).
 

@@ -16,7 +16,7 @@ import {bumpConversationLastActivity, sortConversationsForSidebar} from '../../u
 import {createLogger} from '../../utils/logger.js'
 import {getAccessToken} from '../../auth/tokenStore.js'
 import {tryResolveVisitIdForCurrentUser} from '../../auth/visitResolution.js'
-import {tryResolveStudentIdForCurrentUser} from '../../auth/studentResolution.js'
+import {tryResolveDxpUserIdForCurrentUser} from '../../auth/studentResolution.js'
 import {
     ensureActivePersona,
     isOtherContextConversation,
@@ -93,7 +93,7 @@ export default function ChatLayout() {
                 await tryResolveVisitIdForCurrentUser(import.meta.env, token, {attempts: 1, delayMs: 0})
             }
             if (!studentFromDialog) {
-                await tryResolveStudentIdForCurrentUser(import.meta.env, token)
+                await tryResolveDxpUserIdForCurrentUser(import.meta.env, token)
             }
         }
         ensureActivePersona()

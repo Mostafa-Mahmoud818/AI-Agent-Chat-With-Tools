@@ -18,22 +18,22 @@ import {parseAgentMessage, turnsToMessages} from '../../utils/agentMessage.js'
 import {formatMenuSelectionMessage} from '../../utils/menuSelection.js'
 import {
     getStudentIdComposerPlaceholder,
-    getStudentIdRequiredMessage,
     getVisitIdComposerPlaceholder,
-    getVisitIdRequiredMessage,
+    hasConfiguredDxpUserId,
 } from '../../config/chatContext.js'
 import {
+    getActivePersonaContextGapMessage,
     getChatContextForStart,
     getOtherContextComposerPlaceholder,
     getOtherContextReadonlyMessage,
     hasConfiguredActivePersonaContext,
     PERSONA_STUDENT,
-    PERSONA_VISIT,
+    PERSONA_VISITOR,
     resolveActivePersona,
 } from '../../config/personaSession.js'
 import {getAccessToken} from '../../auth/tokenStore.js'
 import {tryResolveVisitIdForCurrentUser} from '../../auth/visitResolution.js'
-import {tryResolveStudentIdForCurrentUser} from '../../auth/studentResolution.js'
+import {tryResolveDxpUserIdForCurrentUser} from '../../auth/studentResolution.js'
 import {createLogger} from '../../utils/logger.js'
 import MessageBubble from './MessageBubble.jsx'
 import ChatInput from './ChatInput.jsx'
@@ -227,7 +227,17 @@ export default function ChatWindow({
         }
     }, [bumpGeneration, stopStreaming])
 
-    const handleSessionExpired = useCallback(() => {
+    /** SSE stream ended without a reply; backend rolls over on the next follow-up in the same conversation. */
+    const handleStreamLapsed = useCallback(() => {
+        stopStreaming()
+        setPhase('ready')
+        releaseSendLock()
+        addMessage('system', 'This assistant round ended. Send another message to continue this conversation.')
+        setTimeout(() => chatInputRef.current?.focus(), 100)
+    }, [stopStreaming, addMessage, releaseSendLock])
+
+    /** POST rejected with 410 — conversation can no longer accept messages. */
+    const handleConversationExpired = useCallback(() => {
         stopStreaming()
         setPhase('expired')
         releaseSendLock()
@@ -339,7 +349,6 @@ export default function ChatWindow({
             if (!stillCurrent()) return
             try {
                 const data = JSON.parse(event.data)
-                if (data.status === 'processing') return setPhase('thinking')
                 if (data.status === 'ready') {
                     terminalHandled = true
                     stopStreaming()
@@ -373,7 +382,7 @@ export default function ChatWindow({
                     terminalHandled = true
                     stopStreaming()
                     if (!stillCurrent()) return
-                    handleSessionExpired()
+                    handleStreamLapsed()
                     return
                 }
                 log.warn('Unhandled SSE status', data?.status)
@@ -402,7 +411,7 @@ export default function ChatWindow({
         }
 
         return es
-    }, [addMessage, stopStreaming, handleSessionExpired, onConversationActivity, releaseSendLock])
+    }, [addMessage, stopStreaming, handleStreamLapsed, onConversationActivity, releaseSendLock])
 
     const reconcileTranscriptFromServer = useCallback(async (convId, expectedGen) => {
         const turns = await fetchAllConversationTurns(convId)
@@ -426,13 +435,13 @@ export default function ChatWindow({
         return true
     }, [startStreaming, stopStreaming])
 
-    const contextRequiredMessage = activePersona === PERSONA_STUDENT
-        ? getStudentIdRequiredMessage()
-        : getVisitIdRequiredMessage()
+    const contextRequiredMessage = getActivePersonaContextGapMessage()
 
-    const contextComposerPlaceholder = activePersona === PERSONA_STUDENT
-        ? getStudentIdComposerPlaceholder()
-        : getVisitIdComposerPlaceholder()
+    const contextComposerPlaceholder = !hasConfiguredDxpUserId()
+        ? 'Sign in again to load your account…'
+        : activePersona === PERSONA_STUDENT
+            ? getStudentIdComposerPlaceholder()
+            : getVisitIdComposerPlaceholder()
 
     const handleSendMessage = useCallback(async (text, opts = {}) => {
         if (sendLockRef.current || sending || conversationLoading) return false
@@ -450,17 +459,18 @@ export default function ChatWindow({
         if (needsOrchestrationStart && !hasConfiguredActivePersonaContext()) {
             const token = getAccessToken()
             const persona = resolveActivePersona()
-            if (token && persona === PERSONA_VISIT) {
-                try {
-                    await tryResolveVisitIdForCurrentUser(import.meta.env, token, {attempts: 1, delayMs: 0})
-                } catch (err) {
-                    if (generationRef.current === streamGen) releaseSendLock()
-                    setError(err instanceof Error ? err.message : contextRequiredMessage)
-                    setPhase(conversationId ? 'ready' : 'idle')
-                    return false
+            if (token) {
+                await tryResolveDxpUserIdForCurrentUser(import.meta.env, token)
+                if (persona === PERSONA_VISITOR) {
+                    try {
+                        await tryResolveVisitIdForCurrentUser(import.meta.env, token, {attempts: 1, delayMs: 0})
+                    } catch (err) {
+                        if (generationRef.current === streamGen) releaseSendLock()
+                        setError(err instanceof Error ? err.message : contextRequiredMessage)
+                        setPhase(conversationId ? 'ready' : 'idle')
+                        return false
+                    }
                 }
-            } else if (token && persona === PERSONA_STUDENT) {
-                await tryResolveStudentIdForCurrentUser(import.meta.env, token)
             }
         }
         if (needsOrchestrationStart && !hasConfiguredActivePersonaContext()) {
@@ -514,7 +524,7 @@ export default function ChatWindow({
                 setMessages((prev) => prev.filter((m) => m.id !== optimisticId))
             }
             if (isSessionGone(err)) {
-                handleSessionExpired()
+                handleConversationExpired()
                 return false
             }
             if (generationRef.current !== streamGen) {
@@ -567,7 +577,7 @@ export default function ChatWindow({
         firstOutgoingNeedsStart,
         addMessage,
         runOrchestrationRound,
-        handleSessionExpired,
+        handleConversationExpired,
         onConversationCreated,
         reconcileTranscriptFromServer,
         contextRequiredMessage,
@@ -636,7 +646,7 @@ export default function ChatWindow({
                                         ? 'Session expired'
                                         : activePersona === PERSONA_STUDENT
                                             ? 'Student persona'
-                                            : activePersona === PERSONA_VISIT
+                                            : activePersona === PERSONA_VISITOR
                                                 ? 'Visitor persona'
                                                 : 'Powered by Camunda'}
                         </span>
@@ -752,7 +762,7 @@ export default function ChatWindow({
                     <div className="waiting-hint"><span>Agent is working on your request...</span></div>}
                 {phase === 'expired' && (
                     <div className="waiting-hint">
-                        <span>Session expired.</span>
+                        <span>This conversation can no longer accept messages.</span>
                         <button className="inline-new-chat" onClick={handleNewChat}>Start a new conversation</button>
                     </div>
                 )}

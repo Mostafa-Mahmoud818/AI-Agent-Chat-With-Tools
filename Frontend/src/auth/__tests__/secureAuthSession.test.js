@@ -31,7 +31,13 @@ vi.mock('../../auth/studentResolution.js', () => ({
             localStorage.setItem('ankabut.chat.dxpUserId', studentResult)
             return studentResult
         }
+        // Visitor-only: still persist envelope userId from profile/me
+        localStorage.setItem('ankabut.chat.dxpUserId', '11111111-1111-4111-8111-111111111111')
         return null
+    }),
+    tryResolveDxpUserIdForCurrentUser: vi.fn(async () => {
+        localStorage.setItem('ankabut.chat.dxpUserId', '11111111-1111-4111-8111-111111111111')
+        return '11111111-1111-4111-8111-111111111111'
     }),
 }))
 

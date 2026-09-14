@@ -1,13 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
     persistStudentEligibility,
+    tryResolveDxpUserIdForCurrentUser,
     tryResolveStudentIdForCurrentUser,
 } from '../studentResolution.js'
 import {
-    getRuntimeStudentId,
+    getRuntimeDxpUserId,
     getStudentEligible,
     LEGACY_STUDENT_STORAGE_KEY,
-    setRuntimeStudentId,
+    setRuntimeDxpUserId,
     setStudentEligible,
     STUDENT_STORAGE_KEY,
 } from '../../config/chatContext.js'
@@ -18,7 +19,7 @@ describe('studentResolution', () => {
     beforeEach(() => {
         localStorage.clear()
         setStudentEligible(false)
-        setRuntimeStudentId(null)
+        setRuntimeDxpUserId(null)
     })
 
     afterEach(() => {
@@ -40,12 +41,48 @@ describe('studentResolution', () => {
         expect(getStudentEligible()).toBe(false)
     })
 
-    it('does not call profile/me when not eligible', async () => {
-        global.fetch = vi.fn()
+    it('setStudentEligible(false) does not wipe dxpUserId', () => {
+        setRuntimeDxpUserId(DXP)
+        setStudentEligible(true)
+        setStudentEligible(false)
+        expect(getStudentEligible()).toBe(false)
+        expect(getRuntimeDxpUserId()).toBe(DXP)
+    })
+
+    it('tryResolveDxpUserIdForCurrentUser resolves for visitor-only (non-eligible)', async () => {
+        global.fetch = vi.fn(async () => ({
+            status: 200,
+            ok: true,
+            json: async () => ({
+                success: true,
+                data: { id: DXP, username: 'ada@example.com' },
+            }),
+        }))
+
+        const id = await tryResolveDxpUserIdForCurrentUser({ VITE_API_BACKEND: 'local' }, 'jwt')
+
+        expect(id).toBe(DXP)
+        expect(getRuntimeDxpUserId()).toBe(DXP)
+        expect(global.fetch).toHaveBeenCalledWith(
+            expect.stringMatching(/\/api\/v1\/secure\/identity\/profile\/me$/),
+            expect.objectContaining({
+                headers: { Authorization: 'Bearer jwt' },
+            }),
+        )
+    })
+
+    it('tryResolveStudentIdForCurrentUser returns null when not eligible but still stores dxpUserId', async () => {
+        global.fetch = vi.fn(async () => ({
+            status: 200,
+            ok: true,
+            json: async () => ({ success: true, data: { id: DXP } }),
+        }))
+
         const id = await tryResolveStudentIdForCurrentUser({ VITE_API_BACKEND: 'local' }, 'jwt')
+
         expect(id).toBeNull()
-        expect(global.fetch).not.toHaveBeenCalled()
-        expect(getRuntimeStudentId()).toBe('')
+        expect(getRuntimeDxpUserId()).toBe(DXP)
+        expect(global.fetch).toHaveBeenCalled()
     })
 
     it('stores Identity UUID from profile/me data.id when eligible', async () => {
@@ -62,13 +99,7 @@ describe('studentResolution', () => {
         const id = await tryResolveStudentIdForCurrentUser({ VITE_API_BACKEND: 'local' }, 'jwt')
 
         expect(id).toBe(DXP)
-        expect(getRuntimeStudentId()).toBe(DXP)
-        expect(global.fetch).toHaveBeenCalledWith(
-            expect.stringMatching(/\/api\/v1\/secure\/identity\/profile\/me$/),
-            expect.objectContaining({
-                headers: { Authorization: 'Bearer jwt' },
-            }),
-        )
+        expect(getRuntimeDxpUserId()).toBe(DXP)
     })
 
     it('wipes leftover roster PK key', async () => {
@@ -88,24 +119,27 @@ describe('studentResolution', () => {
 
     it('keeps stored Identity UUID when profile/me fails', async () => {
         setStudentEligible(true)
-        setRuntimeStudentId(DXP)
+        setRuntimeDxpUserId(DXP)
         global.fetch = vi.fn(async () => ({ status: 503, ok: false }))
 
         const id = await tryResolveStudentIdForCurrentUser({ VITE_API_BACKEND: 'local' }, 'jwt')
 
         expect(id).toBe(DXP)
-        expect(getRuntimeStudentId()).toBe(DXP)
+        expect(getRuntimeDxpUserId()).toBe(DXP)
     })
 
-    it('clears stored UUID when not eligible even if a leftover id remains', async () => {
-        setRuntimeStudentId(DXP)
+    it('does not clear stored UUID when not eligible', async () => {
+        setRuntimeDxpUserId(DXP)
         localStorage.removeItem('ankabut.chat.studentEligible')
-        global.fetch = vi.fn()
+        global.fetch = vi.fn(async () => ({
+            status: 200,
+            ok: true,
+            json: async () => ({ success: true, data: { id: DXP } }),
+        }))
 
         const id = await tryResolveStudentIdForCurrentUser({ VITE_API_BACKEND: 'local' }, 'jwt')
 
         expect(id).toBeNull()
-        expect(global.fetch).not.toHaveBeenCalled()
-        expect(getRuntimeStudentId()).toBe('')
+        expect(getRuntimeDxpUserId()).toBe(DXP)
     })
 })

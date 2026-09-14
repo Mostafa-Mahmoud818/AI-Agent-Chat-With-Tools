@@ -8,14 +8,14 @@ import {
     getAvailablePersonas,
     getActivePersona,
     PERSONA_STUDENT,
-    PERSONA_VISIT,
+    PERSONA_VISITOR,
     setActivePersona,
     ensureActivePersona,
 } from '../../config/personaSession.js'
 import './PersonaPicker.css'
 
 /**
- * @param {{ onPersonaChange?: (persona: 'VISIT'|'STUDENT') => void, disabled?: boolean }} props
+ * @param {{ onPersonaChange?: (persona: 'VISITOR'|'STUDENT') => void, disabled?: boolean }} props
  */
 export default function PersonaPicker({ onPersonaChange, disabled = false }) {
     const available = getAvailablePersonas()
@@ -34,10 +34,10 @@ export default function PersonaPicker({ onPersonaChange, disabled = false }) {
             <span className="persona-picker-label">Persona</span>
             <button
                 type="button"
-                className={`persona-picker-btn${active === PERSONA_VISIT ? ' persona-picker-btn--active' : ''}`}
-                aria-pressed={active === PERSONA_VISIT}
+                className={`persona-picker-btn${active === PERSONA_VISITOR ? ' persona-picker-btn--active' : ''}`}
+                aria-pressed={active === PERSONA_VISITOR}
                 disabled={disabled}
-                onClick={() => select(PERSONA_VISIT)}
+                onClick={() => select(PERSONA_VISITOR)}
             >
                 Visitor
             </button>

@@ -64,7 +64,7 @@ describe('startOrchestration', () => {
         setAccessToken('test-token')
     })
 
-    it('posts VISIT chatContext with canonical contextData.id', async () => {
+    it('posts VISITOR chatContext with userId and contextData.visitId', async () => {
         fetch.mockResolvedValueOnce({
             ok: true,
             status: 200,
@@ -73,20 +73,23 @@ describe('startOrchestration', () => {
 
         const { startOrchestration } = await import('../api.js')
         const visitId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+        const userId = '11111111-1111-4111-8111-111111111111'
         await startOrchestration('conv-1', 'Hello', {
             schemaVersion: '1.0',
-            contextType: 'VISIT',
-            contextData: { id: visitId },
+            contextType: 'VISITOR',
+            userId,
+            contextData: { visitId },
         })
 
         const [, options] = fetch.mock.calls[0]
         const body = JSON.parse(options.body)
         expect(body.chatContext).toEqual({
             schemaVersion: '1.0',
-            contextType: 'VISIT',
-            contextData: { id: visitId },
+            contextType: 'VISITOR',
+            userId,
+            contextData: { visitId },
         })
-        expect(body.chatContext.contextData).not.toHaveProperty('visitId')
+        expect(body.chatContext.contextData).not.toHaveProperty('id')
     })
 
     it('uses a 35s timeout on /start (above servlet-bound correlate)', async () => {
@@ -99,10 +102,12 @@ describe('startOrchestration', () => {
 
         const { startOrchestration, ORCHESTRATION_POST_TIMEOUT_MS } = await import('../api.js')
         const visitId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+        const userId = '11111111-1111-4111-8111-111111111111'
         await startOrchestration('conv-1', 'Hello', {
             schemaVersion: '1.0',
-            contextType: 'VISIT',
-            contextData: { id: visitId },
+            contextType: 'VISITOR',
+            userId,
+            contextData: { visitId },
         })
 
         expect(ORCHESTRATION_POST_TIMEOUT_MS).toBe(35_000)
@@ -110,17 +115,28 @@ describe('startOrchestration', () => {
         setTimeoutSpy.mockRestore()
     })
 
-    it('rejects a legacy visitId alias without sending', async () => {
+    it('rejects legacy contextData.id without sending', async () => {
         const { startOrchestration } = await import('../api.js')
         await expect(startOrchestration('conv-1', 'Hello', {
             schemaVersion: '1.0',
-            contextType: 'VISIT',
+            contextType: 'VISITOR',
+            userId: '11111111-1111-4111-8111-111111111111',
+            contextData: { id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' },
+        })).rejects.toMatchObject({ errorCode: 'invalid_chat_context' })
+        expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('rejects missing userId without sending', async () => {
+        const { startOrchestration } = await import('../api.js')
+        await expect(startOrchestration('conv-1', 'Hello', {
+            schemaVersion: '1.0',
+            contextType: 'VISITOR',
             contextData: { visitId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' },
         })).rejects.toMatchObject({ errorCode: 'invalid_chat_context' })
         expect(fetch).not.toHaveBeenCalled()
     })
 
-    it('posts STUDENT chatContext with Identity user UUID', async () => {
+    it('posts STUDENT chatContext with empty contextData and userId', async () => {
         fetch.mockResolvedValueOnce({
             ok: true,
             status: 200,
@@ -128,11 +144,12 @@ describe('startOrchestration', () => {
         })
 
         const { startOrchestration } = await import('../api.js')
-        const studentId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+        const userId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
         await startOrchestration('conv-2', 'I need an absence', {
             schemaVersion: '1.0',
             contextType: 'STUDENT',
-            contextData: { id: studentId },
+            userId,
+            contextData: {},
         })
 
         const [, options] = fetch.mock.calls[0]
@@ -140,7 +157,8 @@ describe('startOrchestration', () => {
         expect(body.chatContext).toEqual({
             schemaVersion: '1.0',
             contextType: 'STUDENT',
-            contextData: { id: studentId },
+            userId,
+            contextData: {},
         })
     })
 })

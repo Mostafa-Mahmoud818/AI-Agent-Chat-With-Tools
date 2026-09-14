@@ -46,23 +46,24 @@ import {check, sleep} from 'k6';
  *   past our 5s client-side timeout (well short of its real ~20s server-side
  *   `sse.emitter-timeout-ms`), so k6 reports it as a request error with status 0.
  *
- * Don't have ACCESS_TOKEN / VISIT_ID yet? Run `docs/k6/chat-stack-auth.k6.js` first — it drives
- * the same email-OTP flow this frontend uses (check-eligibility -> OTP exchange -> resolve visit
- * id) and prints a copy-pasteable `ACCESS_TOKEN=.../VISIT_ID=...` block. Run it twice (two
- * different emails, `LABEL=primary` and `LABEL=userB`) to get both users this script needs.
+ * Don't have ACCESS_TOKEN / VISIT_ID / USER_ID yet? Run `docs/k6/chat-stack-auth.k6.js` first — it
+ * drives the same email-OTP flow this frontend uses (check-eligibility -> OTP exchange -> resolve
+ * visit id + profile/me user id) and prints a copy-pasteable
+ * `ACCESS_TOKEN=.../VISIT_ID=.../USER_ID=...` block. Run it twice (two different emails,
+ * `LABEL=primary` and `LABEL=userB`) to get both users this script needs.
  *
  * Usage:
  * ```
  * k6 run \
  *   -e BASE_URL=https://stg-modulith.naitive.ai \
- *   -e ACCESS_TOKEN=<jwt> -e VISIT_ID=<uuid-owned-by-that-user> \
- *   [-e ACCESS_TOKEN_2=<jwt-for-a-different-user> -e VISIT_ID_2=<uuid-owned-by-that-user>] \
+ *   -e ACCESS_TOKEN=<jwt> -e VISIT_ID=<uuid> -e USER_ID=<identity-uuid> \
+ *   [-e ACCESS_TOKEN_2=<jwt> -e VISIT_ID_2=<uuid> -e USER_ID_2=<identity-uuid>] \
  *   docs/k6/chat-stack-concurrency.k6.js
  * ```
  *
- * `ACCESS_TOKEN_2` / `VISIT_ID_2` are optional but required for the bulkhead test (#4) to mean
- * anything — without a second, distinct client, that test is skipped with a warning explaining
- * why (see {@link testBulkheadExhaustion}).
+ * `ACCESS_TOKEN_2` / `VISIT_ID_2` / `USER_ID_2` are optional but required for the bulkhead test (#4)
+ * to mean anything — without a second, distinct client, that test is skipped with a warning
+ * explaining why (see {@link testBulkheadExhaustion}).
  */
 
 /**
@@ -76,16 +77,26 @@ const BASE_URL = __ENV.BASE_URL || 'https://stg-modulith.naitive.ai';
 const ACCESS_TOKEN = __ENV.ACCESS_TOKEN;
 /** Visit id owned by {@link ACCESS_TOKEN}'s user, used as chat context. Required. */
 const VISIT_ID = __ENV.VISIT_ID;
+/**
+ * Identity user UUID (`profile/me` data.id) for {@link ACCESS_TOKEN}. Required for start envelope
+ * `userId` (must match chatting clientId — not JWT sub).
+ */
+const USER_ID = __ENV.USER_ID;
 /** Bearer token for a second, distinct test user. Optional — only needed for the bulkhead test. */
 const ACCESS_TOKEN_2 = __ENV.ACCESS_TOKEN_2 || '';
 /** Visit id owned by {@link ACCESS_TOKEN_2}'s user. Optional — pairs with `ACCESS_TOKEN_2`. */
 const VISIT_ID_2 = __ENV.VISIT_ID_2 || '';
+/** Identity user UUID for the second user. Optional — pairs with `ACCESS_TOKEN_2`. */
+const USER_ID_2 = __ENV.USER_ID_2 || '';
 
 if (!ACCESS_TOKEN) {
     throw new Error('Set -e ACCESS_TOKEN=<jwt> for a real authenticated user');
 }
 if (!VISIT_ID) {
     throw new Error("Set -e VISIT_ID=<uuid> for a visit owned by ACCESS_TOKEN's user");
+}
+if (!USER_ID) {
+    throw new Error("Set -e USER_ID=<uuid> from GET .../identity/profile/me data.id for ACCESS_TOKEN's user");
 }
 
 export const options = {
@@ -147,15 +158,16 @@ function createConversation(token, label) {
 
 /**
  * Creates a conversation via {@link createConversation}, then starts orchestration on it with a
- * VISIT chat context.
+ * VISITOR chat context.
  *
  * @param {string} token - Bearer token identifying the owning user.
- * @param {string} visitId - Visit id to attach as the conversation's chat context.
+ * @param {string} visitId - Visit id for `contextData.visitId`.
+ * @param {string} userId - Identity user UUID for envelope `userId`.
  * @param {string} label - Scenario label, used for the conversation title and check/log names.
  * @returns {string} The started conversation's id.
  * @throws {Error} If conversation creation fails.
  */
-function startConversation(token, visitId, label) {
+function startConversation(token, visitId, userId, label) {
     const conversationId = createConversation(token, label);
     if (!conversationId) {
         throw new Error(`${label}: could not create conversation, aborting`);
@@ -165,8 +177,9 @@ function startConversation(token, visitId, label) {
         inputText: 'k6 concurrency test',
         chatContext: {
             schemaVersion: '1.0',
-            contextType: 'VISIT',
-            contextData: {id: visitId},
+            contextType: 'VISITOR',
+            userId: userId,
+            contextData: {visitId: visitId},
         },
         displayText: null,
     });
@@ -221,10 +234,10 @@ function streamRequest(token, conversationId) {
  */
 function testMaxConcurrentSse() {
     console.log('\n--- 3. Max concurrent SSE streams per user (cap = 2) ---');
-    const conv1 = startConversation(ACCESS_TOKEN, VISIT_ID, 'sse-1');
-    const conv2 = startConversation(ACCESS_TOKEN, VISIT_ID, 'sse-2');
+    const conv1 = startConversation(ACCESS_TOKEN, VISIT_ID, USER_ID, 'sse-1');
+    const conv2 = startConversation(ACCESS_TOKEN, VISIT_ID, USER_ID, 'sse-2');
     sleep(6); // reset this client's 5s rate-limit window before spending a 3rd start permit
-    const conv3 = startConversation(ACCESS_TOKEN, VISIT_ID, 'sse-3');
+    const conv3 = startConversation(ACCESS_TOKEN, VISIT_ID, USER_ID, 'sse-3');
     sleep(1);
 
     const responses = http.batch([
@@ -293,17 +306,17 @@ function testRateLimit(conversationId) {
  */
 function testBulkheadExhaustion() {
     console.log('\n--- 4. Camunda servlet-bound bulkhead exhaustion (max 3 in-flight) ---');
-    if (!ACCESS_TOKEN_2 || !VISIT_ID_2) {
+    if (!ACCESS_TOKEN_2 || !VISIT_ID_2 || !USER_ID_2) {
         console.warn(
-            'SKIPPED: set ACCESS_TOKEN_2 and VISIT_ID_2 (a second, different user) to run this test.\n' +
+            'SKIPPED: set ACCESS_TOKEN_2, VISIT_ID_2, and USER_ID_2 (a second, different user) to run this test.\n' +
             "A single client can't cleanly trigger this: PerClientRateLimiterGuard only allows 2 calls " +
             "per 5s per client, so a lone client's burst gets rate-limited before it can even reach " +
             'the bulkhead.'
         );
         return;
     }
-    const convA = startConversation(ACCESS_TOKEN, VISIT_ID, 'bulkhead-userA');
-    const convB = startConversation(ACCESS_TOKEN_2, VISIT_ID_2, 'bulkhead-userB');
+    const convA = startConversation(ACCESS_TOKEN, VISIT_ID, USER_ID, 'bulkhead-userA');
+    const convB = startConversation(ACCESS_TOKEN_2, VISIT_ID_2, USER_ID_2, 'bulkhead-userB');
     sleep(6); // reset both clients' rate-limit windows so all 4 follow-ups below reach the bulkhead
 
     const responses = http.batch([
@@ -337,7 +350,7 @@ export default function () {
     testMaxConcurrentSse();
     sleep(6); // reset the primary client's rate-limit window before the next scenario
 
-    const rateLimitConv = startConversation(ACCESS_TOKEN, VISIT_ID, 'rate-limit-setup');
+    const rateLimitConv = startConversation(ACCESS_TOKEN, VISIT_ID, USER_ID, 'rate-limit-setup');
     testRateLimit(rateLimitConv);
     sleep(6);
 

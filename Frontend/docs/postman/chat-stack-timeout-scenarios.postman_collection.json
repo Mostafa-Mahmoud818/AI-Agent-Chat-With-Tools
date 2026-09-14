@@ -19,9 +19,11 @@
     { "key": "base_url", "value": "https://stg-modulith.naitive.ai", "type": "string" },
     { "key": "access_token", "value": "", "type": "string" },
     { "key": "visit_id", "value": "", "type": "string" },
+    { "key": "user_id", "value": "", "type": "string" },
     { "key": "conversation_id", "value": "", "type": "string" },
     { "key": "access_token_2", "value": "", "type": "string" },
     { "key": "visit_id_2", "value": "", "type": "string" },
+    { "key": "user_id_2", "value": "", "type": "string" },
     { "key": "conversation_id_b", "value": "", "type": "string" },
     { "key": "auth_email", "value": "", "type": "string" },
     { "key": "otp_code", "value": "", "type": "string" },
@@ -32,7 +34,7 @@
   ],
   "item": [
     {
-      "name": "A. Auth (User A) — Email OTP -> access_token + visit_id",
+      "name": "A. Auth (User A) — Email OTP -> access_token + visit_id + user_id",
       "item": [
         {
           "name": "A1. Check eligibility (sends OTP)",
@@ -152,13 +154,46 @@
                 { "key": "size", "value": "5" }
               ]
             },
-            "description": "Run **A2** first. Uses the collection's bearer auth (`{{access_token}}`, now populated by A2) to list this user's visits and saves the first `visitId` found as the `visit_id` collection variable — mirrors `visitResolution.js#fetchVisitIdFromMyVisitsLists` (this frontend also falls back to `/my-visits/upcoming` and `/my-visits/past` if `/my-visits` alone comes back empty; re-run this request a couple of times if the first attempt is empty, since post-login visit sync can lag a few seconds).\n\nOnce this succeeds, `access_token` and `visit_id` are both set and you can proceed to **0. Shared** below."
+            "description": "Run **A2** first. Uses the collection's bearer auth (`{{access_token}}`, now populated by A2) to list this user's visits and saves the first `visitId` found as the `visit_id` collection variable — mirrors `visitResolution.js#fetchVisitIdFromMyVisitsLists` (this frontend also falls back to `/my-visits/upcoming` and `/my-visits/past` if `/my-visits` alone comes back empty; re-run this request a couple of times if the first attempt is empty, since post-login visit sync can lag a few seconds).\n\nThen run **A4** to resolve `user_id` from profile/me before **0. Shared**."
+          }
+        },
+        {
+          "name": "A4. Resolve user_id (profile/me)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('profile/me OK', function () {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const data = pm.response.json().data;",
+                  "if (data && data.id) {",
+                  "    pm.collectionVariables.set('user_id', data.id);",
+                  "    console.log('user_id resolved:', data.id);",
+                  "} else {",
+                  "    console.warn('No data.id in profile/me — set `user_id` manually to the Identity UUID for this user.');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/secure/identity/profile/me",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "secure", "identity", "profile", "me"]
+            },
+            "description": "Run **A2** first. Saves Identity `data.id` as `user_id` — required on every `/start` envelope (`chatContext.userId`). This is the chatting clientId, not JWT `sub`.\n\nOnce A3 + A4 succeed, `access_token`, `visit_id`, and `user_id` are set for **0. Shared**."
           }
         }
       ]
     },
     {
-      "name": "B. Auth (User B) — Email OTP -> access_token_2 + visit_id_2 (only for folder 4)",
+      "name": "B. Auth (User B) — Email OTP -> access_token_2 + visit_id_2 + user_id_2 (only for folder 4)",
       "item": [
         {
           "name": "B1. Check eligibility (sends OTP)",
@@ -279,13 +314,49 @@
                 { "key": "size", "value": "5" }
               ]
             },
-            "description": "Run **B2** first. Uses `access_token_2` explicitly (auth set to `noauth` + manual header, since the collection-level bearer auth defaults to `access_token`, not `_2`). Saves the first `visitId` found as `visit_id_2`.\n\nOnce this succeeds, `access_token_2` and `visit_id_2` are both set for folder 4's two-user bulkhead test."
+            "description": "Run **B2** first. Uses `access_token_2` explicitly (auth set to `noauth` + manual header, since the collection-level bearer auth defaults to `access_token`, not `_2`). Saves the first `visitId` found as `visit_id_2`.\n\nThen run **B4** to resolve `user_id_2` from profile/me."
+          }
+        },
+        {
+          "name": "B4. Resolve user_id_2 (profile/me)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('profile/me (User B) OK', function () {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const data = pm.response.json().data;",
+                  "if (data && data.id) {",
+                  "    pm.collectionVariables.set('user_id_2', data.id);",
+                  "    console.log('user_id_2 resolved:', data.id);",
+                  "} else {",
+                  "    console.warn('No data.id in profile/me for User B — set `user_id_2` manually.');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token_2}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/secure/identity/profile/me",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "secure", "identity", "profile", "me"]
+            },
+            "description": "Run **B2** first. Saves Identity `data.id` as `user_id_2` for User B's VISITOR start envelope."
           }
         }
       ]
     },
     {
-      "name": "0. Shared — Create Conversation + Start Orchestration (VISIT)",
+      "name": "0. Shared — Create Conversation + Start Orchestration (VISITOR)",
       "item": [
         {
           "name": "Create conversation",
@@ -348,7 +419,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"inputText\": \"Hi, I need help with my visit\",\n  \"chatContext\": {\n    \"schemaVersion\": \"1.0\",\n    \"contextType\": \"VISIT\",\n    \"contextData\": { \"id\": \"{{visit_id}}\" }\n  },\n  \"displayText\": null\n}"
+              "raw": "{\n  \"inputText\": \"Hi, I need help with my visit\",\n  \"chatContext\": {\n    \"schemaVersion\": \"1.0\",\n    \"contextType\": \"VISITOR\",\n    \"userId\": \"{{user_id}}\",\n    \"contextData\": { \"visitId\": \"{{visit_id}}\" }\n  },\n  \"displayText\": null\n}"
             },
             "description": "Run **Create conversation** immediately before this request (same folder). Correlates the first message onto that conversation's freshly-created session, seeding `idleTimeoutDuration` etc. from `ChattingOrchestrationProperties.Process` into the Camunda process. Run both requests in this folder first, in order, before any scenario folder below."
           }
@@ -423,7 +494,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"inputText\": \"Hi, I need help with my visit\",\n  \"chatContext\": {\n    \"schemaVersion\": \"1.0\",\n    \"contextType\": \"VISIT\",\n    \"contextData\": { \"id\": \"{{visit_id_2}}\" }\n  },\n  \"displayText\": null\n}"
+              "raw": "{\n  \"inputText\": \"Hi, I need help with my visit\",\n  \"chatContext\": {\n    \"schemaVersion\": \"1.0\",\n    \"contextType\": \"VISITOR\",\n    \"userId\": \"{{user_id_2}}\",\n    \"contextData\": { \"visitId\": \"{{visit_id_2}}\" }\n  },\n  \"displayText\": null\n}"
             },
             "description": "Run **Create conversation (User B)** immediately before this request. Correlates onto User B's freshly-created session, using `visit_id_2` (must be owned by `access_token_2`'s user). Only needed for folder 4."
           }
@@ -521,6 +592,7 @@
                   "const base = pm.collectionVariables.get('base_url');",
                   "const token = pm.collectionVariables.get('access_token');",
                   "const visitId = pm.collectionVariables.get('visit_id');",
+                  "const userId = pm.collectionVariables.get('user_id');",
                   "",
                   "async function createAndStart(label) {",
                   "    const createRes = await pm.sendRequest({",
@@ -538,7 +610,7 @@
                   "            mode: 'raw',",
                   "            raw: JSON.stringify({",
                   "                inputText: 'sse cap test',",
-                  "                chatContext: { schemaVersion: '1.0', contextType: 'VISIT', contextData: { id: visitId } },",
+                  "                chatContext: { schemaVersion: '1.0', contextType: 'VISITOR', userId: userId, contextData: { visitId: visitId } },",
                   "                displayText: null",
                   "            })",
                   "        }",
@@ -784,7 +856,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"inputText\": \"One more thing\",\n  \"chatContext\": {\n    \"schemaVersion\": \"1.0\",\n    \"contextType\": \"VISIT\",\n    \"contextData\": { \"id\": \"{{visit_id}}\" }\n  },\n  \"displayText\": null\n}"
+              "raw": "{\n  \"inputText\": \"One more thing\",\n  \"chatContext\": {\n    \"schemaVersion\": \"1.0\",\n    \"contextType\": \"VISITOR\",\n    \"userId\": \"{{user_id}}\",\n    \"contextData\": { \"visitId\": \"{{visit_id}}\" }\n  },\n  \"displayText\": null\n}"
             },
             "description": "Procedure for this folder (uses the SAME `conversation_id` throughout — do NOT run folder 0 again in between):\n1. Run both requests in **0. Shared** once (Create conversation, then Start orchestration) to seed `conversation_id`.\n2. Send 10-15 follow-ups on that same conversation (reuse the folder-2 \"Follow-up\" request body, or run it via Collection Runner with several iterations) to build up conversation history — bigger history means a bigger summarization prompt.\n3. Run THIS request last. Its pre-request script waits 30s (confirmed on stage: the idle timer actually fires ~19s after the session's `startedAt`, not exactly PT15S — 16s was tested and found too short) so the prior session is no longer ACTIVE, then calls `/start` again on the same `conversation_id` — `SessionLifecycleService.startOrPublishAfterRollover` detects the non-ACTIVE session and rolls over, which asynchronously triggers `SessionResumeSummarizer` on the closed session. To confirm the rollover actually happened rather than guessing, check `GET /v1/internal/chatting/conversations/{id}/sessions` for a second session row.\n\nNOT deterministically triggerable — whether the summarization call actually exceeds `summarizer-llm.call-timeout` (10s, down from the default 60s) depends on real OpenAI latency for that prompt size, not anything Postman controls. A bigger history in step 2 raises the odds.\n\n**Expect on timeout:** summary write is skipped silently (empty summary) — no user-facing error, since this runs async after commit.\n\n**Verify in logs:** `[resume-summarizer] LLM call timed out after 10s`."
           }

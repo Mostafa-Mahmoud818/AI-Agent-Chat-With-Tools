@@ -33,6 +33,7 @@ per user and do it before anything else.
 1. `A1. Check eligibility` (sends the OTP) → set `otp_code` from the email you receive
 2. `A2. Exchange OTP for token` → saves `access_token`
 3. `A3. Resolve visit_id` → saves `visit_id`
+4. `A4. Resolve user_id` → saves `user_id` from `GET .../identity/profile/me` (`data.id`)
 
 **k6** (two-phase, since OTP needs a human in between):
 ```bash
@@ -40,7 +41,7 @@ k6 run -e AUTH_EMAIL=you@example.com docs/k6/chat-stack-auth.k6.js
 # check inbox, then:
 k6 run -e AUTH_EMAIL=you@example.com -e OTP_CODE=123456 docs/k6/chat-stack-auth.k6.js
 ```
-Copy the printed `ACCESS_TOKEN=...` / `VISIT_ID=...` block.
+Copy the printed `ACCESS_TOKEN=...` / `VISIT_ID=...` / `USER_ID=...` block.
 
 Repeat with a second email for **User B** — Postman folder **B. Auth (User B)**, or k6 with
 `-e LABEL=userB` — only if you're planning to run the bulkhead test (scenario 4, §4).
@@ -54,7 +55,7 @@ make up client-side (`.../orchestration/{id}/start` 404s otherwise).
 This is what most scenario folders below expect to already have run.
 
 **k6**: `chat-stack-concurrency.k6.js` creates its own conversations per scenario internally — no
-separate step needed once you have `ACCESS_TOKEN`/`VISIT_ID`.
+separate step needed once you have `ACCESS_TOKEN`/`VISIT_ID`/`USER_ID`.
 
 ## 4. Run the scenarios — recommended order
 
@@ -82,7 +83,7 @@ them needs its **own fresh conversation** (re-run folder 0 right before it). Con
 | 2 | SSE emitter timeout + replay cache | Postman folder 2 | Manual timing (stopwatch or `curl -N`) — not automated. |
 | 5 | Per-client rate limit (2/5s) | Postman folder 5, or **k6** (step 7) | Needs only User A. **✅ Confirmed on stage 2026-08-30** — 3rd call in-window got `429 PER_CLIENT_RATE_LIMIT`. |
 | 3 | Max concurrent SSE streams (cap=2) | **k6** (step 7), or Postman folder 3 | k6 opens 3 genuinely concurrent streams on 3 distinct conversations; Postman's version is best-effort. **✅ Confirmed on stage 2026-08-30** — 3rd stream got the cap-rejection body, cap held at ≤2 admitted. |
-| 4 | Bulkhead exhaustion (pool=1+queue=2) | **k6** (step 7, needs `ACCESS_TOKEN_2`/`VISIT_ID_2`), or Postman folder 4 | Needs TWO users — a single client's own rate limit masks this test otherwise. Skips itself with a warning if only one user is provided. **✅ Confirmed on stage 2026-08-30** — 4th concurrent call (2 per user) got `503 SERVLET_BOUND_TIMEOUT`, first 3 admitted. |
+| 4 | Bulkhead exhaustion (pool=1+queue=2) | **k6** (step 7, needs `ACCESS_TOKEN_2`/`VISIT_ID_2`/`USER_ID_2`), or Postman folder 4 | Needs TWO users — a single client's own rate limit masks this test otherwise. Skips itself with a warning if only one user is provided. **✅ Confirmed on stage 2026-08-30** — 4th concurrent call (2 per user) got `503 SERVLET_BOUND_TIMEOUT`, first 3 admitted. |
 | 1 | Idle-session timeout (15s) | Postman folder 1 | Needs its own fresh conversation (step 3-4 above) — running it against session A would kill it before 2/5/6 get to use it. **✅ Confirmed on stage 2026-08-30** using `GET /v1/internal/chatting/conversations/{id}/sessions` (see §7): the old session hit `TIMED_OUT` ~19s after `startedAt` (not exactly 15s — the timer only starts once the process reaches its wait-gateway, *after* the agent's first turn finishes processing, adding a few seconds), and a follow-up sent afterward created a genuinely new session (new `processInstanceKey`) while the old one stayed `TIMED_OUT`, untouched. **Wait at least 25-30s, not 16s** — a 16s wait undershoots the real trigger point and just lands on the still-active session (tried this on 2026-08-30 and it did NOT roll over). |
 | 7 | Summarizer LLM timeout (10s) | Postman folder 7 | Needs its own fresh conversation too (step 5-6). Load-dependent, same caveat as #6. Note: per the scenario-1 finding, a plain follow-up after idle timeout also triggers rollover (and the summarizer) — folder 7's explicit `/start` re-call isn't the only way to get there. |
 | 8 | Join-timeout/retry exhaustion + HTTP-connector timeout | N/A — infra action | Not triggerable from either tool. See folder 8's README request for what to do operationally (restart/scale Zeebe or the modulith pod). |
@@ -90,11 +91,11 @@ them needs its **own fresh conversation** (re-run folder 0 right before it). Con
 **Single k6 command for #3+#5+#4 together** (recommended — deterministic, one run):
 ```bash
 k6 run \
-  -e ACCESS_TOKEN=<userA-token> -e VISIT_ID=<userA-visit> \
-  -e ACCESS_TOKEN_2=<userB-token> -e VISIT_ID_2=<userB-visit> \
+  -e ACCESS_TOKEN=<userA-token> -e VISIT_ID=<userA-visit> -e USER_ID=<userA-identity-uuid> \
+  -e ACCESS_TOKEN_2=<userB-token> -e VISIT_ID_2=<userB-visit> -e USER_ID_2=<userB-identity-uuid> \
   docs/k6/chat-stack-concurrency.k6.js
 ```
-Omit `ACCESS_TOKEN_2`/`VISIT_ID_2` to run #3 and #5 only (bulkhead test #4 self-skips with a
+Omit `ACCESS_TOKEN_2`/`VISIT_ID_2`/`USER_ID_2` to run #3 and #5 only (bulkhead test #4 self-skips with a
 warning).
 
 ## 5. What to watch for while running
@@ -197,6 +198,7 @@ student absence + visitor experience enabled.
 
 ### Orchestration start shapes
 
-- VISIT: `chatContext.contextType = "VISIT"`, `contextData.id = <visitId from my-visits>`.
-- STUDENT: `chatContext.contextType = "STUDENT"`, `contextData.id = <profile/me data.id>`
-  (Identity user UUID — never roster PK / Banner).
+- VISITOR: `chatContext.contextType = "VISITOR"`, `userId = <profile/me data.id>`,
+  `contextData.visitId = <visitId from my-visits>`.
+- STUDENT: `chatContext.contextType = "STUDENT"`, `userId = <profile/me data.id>`,
+  `contextData = {}`.

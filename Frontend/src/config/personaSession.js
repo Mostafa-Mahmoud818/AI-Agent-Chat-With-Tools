@@ -1,5 +1,5 @@
 /**
- * @file Active chat persona (VISIT | STUDENT) and orchestration start envelope.
+ * @file Active chat persona (VISITOR | STUDENT) and orchestration start envelope.
  * @module config/personaSession
  */
 
@@ -8,52 +8,70 @@ import {
     buildStudentChatContext,
     buildVisitChatContext,
     CHAT_CONTEXT_TYPE_STUDENT,
-    CHAT_CONTEXT_TYPE_VISIT,
-    getRuntimeStudentId,
+    CHAT_CONTEXT_TYPE_VISITOR,
+    getRuntimeDxpUserId,
     getRuntimeVisitId,
+    getStudentIdRequiredMessage,
+    getUserIdRequiredMessage,
+    getVisitChatContextForStart,
+    getVisitIdRequiredMessage,
+    hasConfiguredDxpUserId,
     hasConfiguredStudentId,
     hasConfiguredVisitId,
     isPlaceholderVisitId,
+    isVisitorContextType,
     normalizeContextId,
     OTHER_CONTEXT_COMPOSER_PLACEHOLDER,
     OTHER_CONTEXT_READONLY_MESSAGE,
     OTHER_VISIT_COMPOSER_PLACEHOLDER,
     OTHER_VISIT_READONLY_MESSAGE,
     resolveVisitId,
-    setRuntimeStudentId,
+    setRuntimeDxpUserId,
     setStudentEligible,
-    getVisitChatContextForStart,
 } from './chatContext.js'
 import {createLogger} from '../utils/logger.js'
 
 const log = createLogger('personaSession')
 
-export const PERSONA_VISIT = CHAT_CONTEXT_TYPE_VISIT
+export const PERSONA_VISITOR = CHAT_CONTEXT_TYPE_VISITOR
+/** @deprecated Prefer {@link PERSONA_VISITOR}; equals VISITOR for one-release localStorage/query. */
+export const PERSONA_VISIT = PERSONA_VISITOR
 export const PERSONA_STUDENT = CHAT_CONTEXT_TYPE_STUDENT
 
 /**
- * @returns {'VISIT'|'STUDENT'|null}
+ * @param {unknown} raw
+ * @returns {'VISITOR'|'STUDENT'|null}
  */
-export function getActivePersona() {
-    try {
-        const raw = localStorage.getItem(ACTIVE_PERSONA_STORAGE_KEY)?.trim()?.toUpperCase()
-        if (raw === PERSONA_VISIT || raw === PERSONA_STUDENT) return raw
-    } catch {
-        // ignore
-    }
+function canonicalizePersona(raw) {
+    if (raw == null) return null
+    const t = String(raw).trim().toUpperCase()
+    if (t === 'VISITOR' || t === 'VISIT') return PERSONA_VISITOR
+    if (t === 'STUDENT') return PERSONA_STUDENT
     return null
 }
 
 /**
- * @param {'VISIT'|'STUDENT'|null|undefined} persona
+ * @returns {'VISITOR'|'STUDENT'|null}
+ */
+export function getActivePersona() {
+    try {
+        return canonicalizePersona(localStorage.getItem(ACTIVE_PERSONA_STORAGE_KEY))
+    } catch {
+        return null
+    }
+}
+
+/**
+ * @param {'VISITOR'|'VISIT'|'STUDENT'|null|undefined} persona
  */
 export function setActivePersona(persona) {
     try {
-        if (persona !== PERSONA_VISIT && persona !== PERSONA_STUDENT) {
+        const canonical = canonicalizePersona(persona)
+        if (!canonical) {
             localStorage.removeItem(ACTIVE_PERSONA_STORAGE_KEY)
             return
         }
-        localStorage.setItem(ACTIVE_PERSONA_STORAGE_KEY, persona)
+        localStorage.setItem(ACTIVE_PERSONA_STORAGE_KEY, canonical)
     } catch {
         // private mode / quota
     }
@@ -62,11 +80,11 @@ export function setActivePersona(persona) {
 /**
  * Personas for which we have a resolved context id.
  *
- * @returns {Array<'VISIT'|'STUDENT'>}
+ * @returns {Array<'VISITOR'|'STUDENT'>}
  */
 export function getAvailablePersonas() {
     const available = []
-    if (hasConfiguredVisitId()) available.push(PERSONA_VISIT)
+    if (hasConfiguredVisitId()) available.push(PERSONA_VISITOR)
     if (hasConfiguredStudentId()) available.push(PERSONA_STUDENT)
     return available
 }
@@ -74,7 +92,7 @@ export function getAvailablePersonas() {
 /**
  * Picks an active persona: restore last choice if still available, else sole available, else null.
  *
- * @returns {'VISIT'|'STUDENT'|null}
+ * @returns {'VISITOR'|'STUDENT'|null}
  */
 export function resolveActivePersona() {
     const available = getAvailablePersonas()
@@ -83,9 +101,9 @@ export function resolveActivePersona() {
     const stored = getActivePersona()
     if (stored && available.includes(stored)) return stored
 
-    // Prefer VISIT when both exist and no prior choice (existing visitor UX).
-    if (available.includes(PERSONA_VISIT) && available.includes(PERSONA_STUDENT)) {
-        return PERSONA_VISIT
+    // Prefer VISITOR when both exist and no prior choice (existing visitor UX).
+    if (available.includes(PERSONA_VISITOR) && available.includes(PERSONA_STUDENT)) {
+        return PERSONA_VISITOR
     }
     return available[0]
 }
@@ -93,7 +111,7 @@ export function resolveActivePersona() {
 /**
  * Ensures active persona is set to a valid choice given current ids.
  *
- * @returns {'VISIT'|'STUDENT'|null}
+ * @returns {'VISITOR'|'STUDENT'|null}
  */
 export function ensureActivePersona() {
     const persona = resolveActivePersona()
@@ -102,34 +120,45 @@ export function ensureActivePersona() {
 }
 
 /**
- * Whether the active persona has a usable context id for orchestration start.
+ * Whether the active persona has a usable context id <b>and</b> envelope userId for start.
  *
  * @param {ImportMetaEnv} [env]
  * @returns {boolean}
  */
 export function hasConfiguredActivePersonaContext(env = import.meta.env) {
+    if (!hasConfiguredDxpUserId(env)) return false
     const persona = resolveActivePersona()
     if (persona === PERSONA_STUDENT) return hasConfiguredStudentId()
-    if (persona === PERSONA_VISIT) return hasConfiguredVisitId(env)
+    if (persona === PERSONA_VISITOR) return hasConfiguredVisitId(env)
     return false
+}
+
+/**
+ * Message to show when {@link hasConfiguredActivePersonaContext} is false: prefer the
+ * userId-missing copy when that is the gap, else the active persona's visit/student copy.
+ *
+ * @param {ImportMetaEnv} [env]
+ * @returns {string} required-context message
+ */
+export function getActivePersonaContextGapMessage(env = import.meta.env) {
+    if (!hasConfiguredDxpUserId(env)) return getUserIdRequiredMessage()
+    const persona = resolveActivePersona()
+    if (persona === PERSONA_STUDENT) return getStudentIdRequiredMessage()
+    return getVisitIdRequiredMessage()
 }
 
 /**
  * Wire payload for orchestration start based on active persona.
  *
  * @param {ImportMetaEnv} [env]
- * @returns {{ schemaVersion: string, contextType: string, contextData: { id: string } }}
+ * @returns {{ schemaVersion: string, contextType: string, userId: string, contextData: object }}
  */
 export function getChatContextForStart(env = import.meta.env) {
     const persona = ensureActivePersona()
     if (persona === PERSONA_STUDENT) {
-        const studentId = getRuntimeStudentId()
-        if (!studentId) {
-            throw new Error('Student id is required for STUDENT chatContext')
-        }
-        return buildStudentChatContext(studentId)
+        const userId = getRuntimeDxpUserId() || undefined
+        return buildStudentChatContext(userId, env)
     }
-    // Default / VISIT
     return getVisitChatContextForStart(env)
 }
 
@@ -141,6 +170,7 @@ export function getChatContextForStart(env = import.meta.env) {
  * @returns {boolean}
  */
 export function isOtherContextConversation(conversation, env = import.meta.env) {
+    // New / not-yet-started conversations have no frozen contextType — always editable.
     if (!conversation || !conversation.contextType) return false
     const type = String(conversation.contextType).trim().toUpperCase()
     const contextId = normalizeContextId(conversation.contextTypeId)
@@ -149,8 +179,8 @@ export function isOtherContextConversation(conversation, env = import.meta.env) 
     const active = resolveActivePersona()
     if (!active) return false
 
-    if (type === PERSONA_VISIT) {
-        if (active !== PERSONA_VISIT) return true
+    if (isVisitorContextType(type)) {
+        if (active !== PERSONA_VISITOR) return true
         const currentVisitId = resolveVisitId(env)
         if (isPlaceholderVisitId(currentVisitId)) return false
         return contextId !== currentVisitId
@@ -158,9 +188,9 @@ export function isOtherContextConversation(conversation, env = import.meta.env) 
 
     if (type === PERSONA_STUDENT) {
         if (active !== PERSONA_STUDENT) return true
-        const currentStudentId = getRuntimeStudentId()
-        if (!currentStudentId) return false
-        return contextId !== currentStudentId
+        const currentUserId = getRuntimeDxpUserId()
+        if (!currentUserId) return false
+        return contextId !== currentUserId
     }
 
     return false
@@ -171,7 +201,7 @@ export function isOtherContextConversation(conversation, env = import.meta.env) 
  * @returns {string}
  */
 export function getOtherContextReadonlyMessage(conversation) {
-    if (conversation?.contextType === PERSONA_VISIT) {
+    if (isVisitorContextType(conversation?.contextType)) {
         return OTHER_VISIT_READONLY_MESSAGE
     }
     return OTHER_CONTEXT_READONLY_MESSAGE
@@ -182,19 +212,18 @@ export function getOtherContextReadonlyMessage(conversation) {
  * @returns {string}
  */
 export function getOtherContextComposerPlaceholder(conversation) {
-    if (conversation?.contextType === PERSONA_VISIT) {
+    if (isVisitorContextType(conversation?.contextType)) {
         return OTHER_VISIT_COMPOSER_PLACEHOLDER
     }
     return OTHER_CONTEXT_COMPOSER_PLACEHOLDER
 }
 
 /**
- * Apply optional QA query overrides: {@code ?persona=STUDENT|VISIT}, {@code ?studentId=}.
+ * Apply optional QA query overrides: {@code ?persona=STUDENT|VISITOR|VISIT}, {@code ?studentId=}.
  *
  * {@code ?studentId=<uuid>} only marks STUDENT eligibility (same as OTP
- * {@code STUDENT}/{@code STUDENT_EXISTS}). Chat id always comes from
- * {@code GET .../identity/profile/me} — a query UUID cannot pass start ownership
- * unless it equals the signed-in Identity user id.
+ * {@code STUDENT}/{@code STUDENT_EXISTS}). Envelope {@code userId} always comes from
+ * {@code GET .../identity/profile/me}.
  */
 export function applyPersonaQueryOverrides() {
     if (typeof window === 'undefined') return
@@ -203,12 +232,13 @@ export function applyPersonaQueryOverrides() {
         const studentOverride = normalizeContextId(params.get('studentId') || params.get('student_id'))
         if (studentOverride) {
             setStudentEligible(true)
-            log.info('Applied ?studentId= eligibility override; chat id comes from profile/me')
+            log.info('Applied ?studentId= eligibility override; chat userId comes from profile/me')
         }
         const personaRaw = params.get('persona')?.trim()?.toUpperCase()
-        if (personaRaw === PERSONA_VISIT || personaRaw === PERSONA_STUDENT) {
-            setActivePersona(personaRaw)
-            log.info('Applied ?persona= override', {persona: personaRaw})
+        const canonical = canonicalizePersona(personaRaw)
+        if (canonical) {
+            setActivePersona(canonical)
+            log.info('Applied ?persona= override', {persona: canonical})
         }
     } catch {
         // ignore
@@ -221,8 +251,14 @@ export function applyPersonaQueryOverrides() {
 export function clearPersonaSession() {
     setActivePersona(null)
     setStudentEligible(false)
-    setRuntimeStudentId(null)
+    setRuntimeDxpUserId(null)
     // visit id cleared by clearSecureAuthSession via setRuntimeVisitId(null)
 }
 
-export {buildVisitChatContext, buildStudentChatContext, getRuntimeVisitId, getRuntimeStudentId}
+export {
+    buildVisitChatContext,
+    buildStudentChatContext,
+    getRuntimeVisitId,
+    getRuntimeDxpUserId,
+    getRuntimeStudentId,
+} from './chatContext.js'
