@@ -184,16 +184,25 @@ student absence + visitor experience enabled.
 5. `date_request` for `dateFrom`, then `dateTo`. For `dateTo` + `afterDate`, picker `min` is the
    **next** calendar day. If the reason needs a file, the agent **announces** that in prose on the
    metadata/date turns — attach control stays hidden until after both dates.
-6. If a document is required: `attachment_request` **after** `dateTo`. Cue names the date range.
-   Upload returns `chatFollowUpMessage` sent **verbatim** (do not rebuild `[attachment]`).
-   Bad MIME/size → **400** once; client also rejects >10 MB. Banner-unlinked at this stage is a
-   fallback **422** (should be rare; the agent should have stopped at step 3).
-7. Details → confirm (plain `subtype:"none"`). The confirmation question may shorten long echoes
-   in `textString`; Create still uses full values — the UI just renders the bubble.
-8. Ticket card title **Absence request submitted** for `ABS-*`.
-9. Reload mid-`date_request` or mid-`attachment_request`: the matching control restores from the
-   last AI turn without a new SSE.
-10. Dual-persona: switch persona; other-context conversations are read-only; **New Chat** uses the
+6. After both dates the specialist silently checks approved overlap (internal chat-tools; the SPA
+   does **not** call it). `hasConflict: false` is invisible. `hasConflict: true` is another
+   `date_request` for `dateFrom` (no `afterDate` / no `min`) whose `textString` names the conflicting
+   `ABS-*` range — keep the start-date picker, **do not** open attach that turn. After a later pair
+   clears, resume the gate that was in progress (attachment/details/confirm).
+7. If a document is required: `attachment_request` **after** dates are overlap-cleared. Cue names
+   the date range. Upload returns `chatFollowUpMessage` sent **verbatim** (do not rebuild
+   `[attachment]`). Bad MIME/size → **400** once; client also rejects >10 MB. Banner-unlinked at
+   this stage is a fallback **422** (should be rare; the agent should have stopped at step 3).
+8. Details → confirm (plain `subtype:"none"`). The confirmation question may shorten long echoes
+   in `textString`; Create still uses full values — the UI just renders the bubble. A mid-gate date
+   change re-runs overlap and can drop back to the step-6 `dateFrom` re-ask, then resume this gate.
+9. Ticket card title **Absence request submitted** for `ABS-*`. Create still **409**s independently
+   if overlap was missed (tool error fails open); that surfaces as another agent `date_request`, not
+   a SPA HTTP error.
+10. Reload mid-`date_request` or mid-`attachment_request`: the matching control restores from the
+    last AI turn without a new SSE. An overlap re-ask after an attach turn must restore the
+    **start-date** picker, not the attach control.
+11. Dual-persona: switch persona; other-context conversations are read-only; **New Chat** uses the
     active envelope. Env switch clears visitId, studentId, and activePersona.
 
 ### Orchestration start shapes

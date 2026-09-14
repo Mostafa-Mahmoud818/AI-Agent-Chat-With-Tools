@@ -96,6 +96,7 @@ function isSessionGone(err) {
  *   mode: 'default'|'attachment_request'|'date_request',
  *   dateConstraint: object|null,
  *   attachmentHandledBy: string|null,
+ *   allowedFileTypes: Array<{code?: string, mimeType?: string, extension?: string, maxSizeBytes?: number}>|null,
  * }}
  */
 function nearestAiHandledBy(messages, fromIndexInclusive) {
@@ -106,23 +107,33 @@ function nearestAiHandledBy(messages, fromIndexInclusive) {
     return null
 }
 
+const DEFAULT_COMPOSER = {
+    mode: 'default',
+    dateConstraint: null,
+    attachmentHandledBy: null,
+    allowedFileTypes: null,
+}
+
 export function deriveComposerModeFromMessages(messages) {
     if (!Array.isArray(messages) || messages.length === 0) {
-        return {mode: 'default', dateConstraint: null, attachmentHandledBy: null}
+        return {...DEFAULT_COMPOSER}
     }
     for (let i = messages.length - 1; i >= 0; i--) {
         const m = messages[i]
         if (m?.role !== 'ai') continue
         if (m.system === true) continue
         if (!m.payload?.subtype) {
-            return {mode: 'default', dateConstraint: null, attachmentHandledBy: null}
+            return {...DEFAULT_COMPOSER}
         }
         const subtype = m.payload.subtype
         if (subtype === 'attachment_request') {
+            const raw = m.payload.allowedFileTypes
             return {
                 mode: 'attachment_request',
                 dateConstraint: null,
                 attachmentHandledBy: m.handledBy ?? nearestAiHandledBy(messages, i - 1),
+                // Preserve [] (unrestricted) vs missing/null (hardcoded fallback downstream).
+                allowedFileTypes: Array.isArray(raw) ? raw : null,
             }
         }
         if (subtype === 'date_request') {
@@ -130,11 +141,12 @@ export function deriveComposerModeFromMessages(messages) {
                 mode: 'date_request',
                 dateConstraint: m.payload.dateConstraint ?? null,
                 attachmentHandledBy: null,
+                allowedFileTypes: null,
             }
         }
-        return {mode: 'default', dateConstraint: null, attachmentHandledBy: null}
+        return {...DEFAULT_COMPOSER}
     }
-    return {mode: 'default', dateConstraint: null, attachmentHandledBy: null}
+    return {...DEFAULT_COMPOSER}
 }
 
 export default function ChatWindow({
@@ -747,6 +759,7 @@ export default function ChatWindow({
                         composerMode={composerDerived.mode}
                         dateConstraint={composerDerived.dateConstraint}
                         attachmentHandledBy={composerDerived.attachmentHandledBy}
+                        allowedFileTypes={composerDerived.allowedFileTypes}
                         placeholder={
                             !contextConfigured && (!conversationId || firstOutgoingNeedsStart)
                                 ? contextComposerPlaceholder

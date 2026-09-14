@@ -3,7 +3,7 @@
  * @module components/chat/ChatInput
  */
 
-import { useState, useRef, useCallback, forwardRef, useImperativeHandle, useEffect } from 'react'
+import { useState, useRef, useCallback, forwardRef, useImperativeHandle, useEffect, useMemo } from 'react'
 import PropTypes from 'prop-types'
 import {
     ABSENCE_ATTACHMENT_ALLOWED_TYPES,
@@ -16,6 +16,11 @@ import { isBannerErrorHandledBy, isStudentAbsenceHandledBy } from '../../utils/m
 import './ChatInput.css'
 
 const PREFERRED_MIME = 'audio/webm'
+
+const FALLBACK_ACCEPT =
+    '.pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,application/pdf,image/jpeg,image/png,image/webp,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+
+const FALLBACK_HINT = 'PDF, image, or DOC/DOCX · max 10 MB — or type if you cannot attach.'
 
 /**
  * Inclusive HTML min for dateTo = calendar day after afterDate (exclusive server rule).
@@ -44,6 +49,130 @@ function formatBytes(n) {
 }
 
 /**
+ * Keep catalog items that have non-blank mimeType + extension (backend contract).
+ * @param {unknown} raw
+ * @returns {Array<{code: string|null, mimeType: string, extension: string, maxSizeBytes: number|null}>|null}
+ *   `null` = missing/malformed (use hardcoded fallback); `[]` = unrestricted; non-empty = catalog.
+ */
+export function filterKeptAllowedFileTypes(raw) {
+    if (raw == null) return null
+    if (!Array.isArray(raw)) return null
+    if (raw.length === 0) return []
+    const kept = []
+    for (const item of raw) {
+        if (!item || typeof item !== 'object') continue
+        const mimeType = item.mimeType != null ? String(item.mimeType).trim().toLowerCase() : ''
+        const extension = item.extension != null ? String(item.extension).trim().replace(/^\./, '').toLowerCase() : ''
+        if (!mimeType || !extension) continue
+        const maxRaw = item.maxSizeBytes
+        const maxSizeBytes = typeof maxRaw === 'number' && Number.isFinite(maxRaw) && maxRaw > 0
+            ? maxRaw
+            : null
+        const code = item.code != null && String(item.code).trim() !== ''
+            ? String(item.code).trim()
+            : null
+        kept.push({ code, mimeType, extension, maxSizeBytes })
+    }
+    // Every item lacked mimeType/extension → treat as malformed → hardcoded fallback.
+    if (kept.length === 0) return null
+    return kept
+}
+
+/**
+ * @param {ReturnType<typeof filterKeptAllowedFileTypes>} kept
+ * @returns {{ mode: 'catalog'|'unrestricted'|'fallback', accept: string|undefined, hint: string, mimeTypes: string[]|null, sizeCap: number|null, byMime: Map<string, number|null>|null }}
+ */
+export function resolveAttachmentPickerLimits(kept) {
+    if (kept === null) {
+        return {
+            mode: 'fallback',
+            accept: FALLBACK_ACCEPT,
+            hint: FALLBACK_HINT,
+            mimeTypes: ABSENCE_ATTACHMENT_ALLOWED_TYPES,
+            sizeCap: ABSENCE_ATTACHMENT_MAX_BYTES,
+            byMime: null,
+        }
+    }
+    if (kept.length === 0) {
+        return {
+            mode: 'unrestricted',
+            accept: undefined,
+            hint: 'Any file type · server will validate — or type if you cannot attach.',
+            mimeTypes: null,
+            sizeCap: null,
+            byMime: null,
+        }
+    }
+    const acceptParts = []
+    const labels = []
+    const mimeTypes = []
+    const byMime = new Map()
+    const sizeCaps = []
+    for (const item of kept) {
+        acceptParts.push(item.mimeType)
+        acceptParts.push(`.${item.extension}`)
+        if (item.extension === 'jpg') acceptParts.push('.jpeg')
+        mimeTypes.push(item.mimeType)
+        byMime.set(item.mimeType, item.maxSizeBytes)
+        if (item.maxSizeBytes != null) sizeCaps.push(item.maxSizeBytes)
+        labels.push(item.code || item.extension.toUpperCase() || item.mimeType)
+    }
+    const maxCap = sizeCaps.length > 0 ? Math.max(...sizeCaps) : null
+    const uniqueLabels = [...new Set(labels)]
+    const hint = maxCap != null
+        ? `${uniqueLabels.join(', ')} · max ${formatBytes(maxCap)} — or type if you cannot attach.`
+        : `${uniqueLabels.join(', ')} — or type if you cannot attach.`
+    return {
+        mode: 'catalog',
+        accept: [...new Set(acceptParts)].join(','),
+        hint,
+        mimeTypes,
+        sizeCap: maxCap,
+        byMime,
+    }
+}
+
+/**
+ * Client-side MIME/size gate before upload.
+ * @param {File} file
+ * @param {ReturnType<typeof resolveAttachmentPickerLimits>} limits
+ * @returns {string|null} error message or null if ok
+ */
+export function validateAttachmentFile(file, limits) {
+    if (limits.mode === 'unrestricted') return null
+
+    const mime = (file.type || '').toLowerCase()
+
+    if (limits.mode === 'fallback') {
+        if (file.size > ABSENCE_ATTACHMENT_MAX_BYTES) {
+            return 'Supporting document must not exceed 10 MB.'
+        }
+        if (mime && !ABSENCE_ATTACHMENT_ALLOWED_TYPES.includes(mime)) {
+            return 'Unsupported file type. Allowed: PDF, JPEG, PNG, WEBP, DOC, DOCX.'
+        }
+        return null
+    }
+
+    // catalog
+    if (mime && limits.mimeTypes && !limits.mimeTypes.includes(mime)) {
+        const labels = limits.mimeTypes.map((m) => m.split('/').pop()?.toUpperCase() || m).join(', ')
+        return `Unsupported file type. Allowed: ${labels}.`
+    }
+
+    let cap = null
+    if (mime && limits.byMime?.has(mime)) {
+        cap = limits.byMime.get(mime)
+    }
+    if (cap == null) {
+        cap = limits.sizeCap
+    }
+    if (cap != null && file.size > cap) {
+        return `Supporting document must not exceed ${formatBytes(cap)}.`
+    }
+    return null
+}
+
+/**
  * @param {{
  *   onSend: (text: string, opts?: { displayText?: string|null }) => void|boolean|Promise<void|boolean>,
  *   placeholder?: string,
@@ -51,6 +180,7 @@ function formatBytes(n) {
  *   composerMode?: 'default'|'attachment_request'|'date_request'|null,
  *   dateConstraint?: { field?: string|null, afterDate?: string|null }|null,
  *   attachmentHandledBy?: string|null,
+ *   allowedFileTypes?: Array<{code?: string, mimeType?: string, extension?: string, maxSizeBytes?: number}>|null,
  * }} props
  */
 const ChatInput = forwardRef(function ChatInput({
@@ -60,6 +190,7 @@ const ChatInput = forwardRef(function ChatInput({
     composerMode = 'default',
     dateConstraint = null,
     attachmentHandledBy = null,
+    allowedFileTypes = null,
 }, ref) {
     const [text, setText] = useState('')
     const [recording, setRecording] = useState(false)
@@ -85,6 +216,11 @@ const ChatInput = forwardRef(function ChatInput({
         ? exclusiveDateMin(dateConstraint.afterDate)
         : undefined
 
+    const attachLimits = useMemo(
+        () => resolveAttachmentPickerLimits(filterKeptAllowedFileTypes(allowedFileTypes)),
+        [allowedFileTypes],
+    )
+
     useEffect(() => {
         recordingRef.current = recording
     }, [recording])
@@ -94,12 +230,12 @@ const ChatInput = forwardRef(function ChatInput({
     }, [languageHint])
 
     useEffect(() => {
-        // Clear attach/date local state when composer mode changes.
+        // Clear attach/date local state when composer mode or catalog changes.
         setAttachError(null)
         setAttachPreview(null)
         setPickedDate('')
         if (fileInputRef.current) fileInputRef.current.value = ''
-    }, [composerMode])
+    }, [composerMode, allowedFileTypes])
 
     useImperativeHandle(ref, () => ({
         focus() {
@@ -184,14 +320,9 @@ const ChatInput = forwardRef(function ChatInput({
         setAttachError(null)
         setAttachPreview(null)
 
-        if (file.size > ABSENCE_ATTACHMENT_MAX_BYTES) {
-            setAttachError('Supporting document must not exceed 10 MB.')
-            e.target.value = ''
-            return
-        }
-        const mime = (file.type || '').toLowerCase()
-        if (mime && !ABSENCE_ATTACHMENT_ALLOWED_TYPES.includes(mime)) {
-            setAttachError('Unsupported file type. Allowed: PDF, JPEG, PNG, WEBP, DOC, DOCX.')
+        const validationError = validateAttachmentFile(file, attachLimits)
+        if (validationError) {
+            setAttachError(validationError)
             e.target.value = ''
             return
         }
@@ -230,7 +361,7 @@ const ChatInput = forwardRef(function ChatInput({
             setUploading(false)
             if (fileInputRef.current) fileInputRef.current.value = ''
         }
-    }, [onSend, attachmentHandledBy])
+    }, [onSend, attachmentHandledBy, attachLimits])
 
     const handleMicClick = useCallback(async () => {
         if (busy) return
@@ -334,7 +465,7 @@ const ChatInput = forwardRef(function ChatInput({
                         ref={fileInputRef}
                         type="file"
                         className="sr-only"
-                        accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,application/pdf,image/jpeg,image/png,image/webp,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        {...(attachLimits.accept != null ? { accept: attachLimits.accept } : {})}
                         disabled={busy}
                         onChange={handleFileChange}
                         aria-label="Attach supporting document"
@@ -346,9 +477,7 @@ const ChatInput = forwardRef(function ChatInput({
                         {uploading ? 'Uploading…' : 'Choose file'}
                     </label>
                     <span className="chat-input-attach-hint">
-                        {uploading
-                            ? 'Uploading…'
-                            : 'PDF, image, or DOC/DOCX · max 10 MB — or type if you cannot attach.'}
+                        {uploading ? 'Uploading…' : attachLimits.hint}
                     </span>
                     {attachPreview && (
                         <span className="chat-input-attach-preview">
@@ -454,6 +583,12 @@ ChatInput.propTypes = {
         afterDate: PropTypes.string,
     }),
     attachmentHandledBy: PropTypes.string,
+    allowedFileTypes: PropTypes.arrayOf(PropTypes.shape({
+        code: PropTypes.string,
+        mimeType: PropTypes.string,
+        extension: PropTypes.string,
+        maxSizeBytes: PropTypes.number,
+    })),
 }
 
 export default ChatInput

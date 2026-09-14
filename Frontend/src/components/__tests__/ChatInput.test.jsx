@@ -216,6 +216,85 @@ describe('ChatInput', () => {
         expect(screen.getByText(/must not exceed 10 MB/i)).toBeInTheDocument()
     })
 
+    it('sets accept from allowedFileTypes catalog and shows catalog hint', () => {
+        const catalog = [
+            { code: 'JPEG', mimeType: 'image/jpeg', extension: 'jpg', maxSizeBytes: 10485760 },
+            { code: 'PNG', mimeType: 'image/png', extension: 'png', maxSizeBytes: 10485760 },
+        ]
+        render(
+            <ChatInput
+                onSend={vi.fn()}
+                placeholder="Type..."
+                composerMode="attachment_request"
+                attachmentHandledBy="Error Banner Agent"
+                allowedFileTypes={catalog}
+            />,
+        )
+        const fileInput = screen.getByLabelText('Attach supporting document')
+        expect(fileInput).toHaveAttribute('accept')
+        const accept = fileInput.getAttribute('accept')
+        expect(accept).toContain('image/jpeg')
+        expect(accept).toContain('.jpg')
+        expect(accept).toContain('.jpeg')
+        expect(accept).toContain('image/png')
+        expect(screen.getByText(/JPEG, PNG · max 10.0 MB/i)).toBeInTheDocument()
+    })
+
+    it('rejects MIME not in the catalog when allowedFileTypes is non-empty', async () => {
+        const onSend = vi.fn()
+        const catalog = [
+            { code: 'PNG', mimeType: 'image/png', extension: 'png', maxSizeBytes: 10485760 },
+        ]
+        render(
+            <ChatInput
+                onSend={onSend}
+                placeholder="Type..."
+                composerMode="attachment_request"
+                attachmentHandledBy="STUDENT_ABSENCE"
+                allowedFileTypes={catalog}
+            />,
+        )
+        const fileInput = screen.getByLabelText('Attach supporting document')
+        const pdf = new File(['x'], 'note.pdf', { type: 'application/pdf' })
+        await act(async () => {
+            fireEvent.change(fileInput, { target: { files: [pdf] } })
+        })
+        expect(uploadAbsenceChatAttachment).not.toHaveBeenCalled()
+        expect(onSend).not.toHaveBeenCalled()
+        expect(screen.getByText(/unsupported file type/i)).toBeInTheDocument()
+    })
+
+    it('does not reject oversized or non-catalog files when allowedFileTypes is empty (unrestricted)', async () => {
+        vi.mocked(uploadAbsenceChatAttachment).mockResolvedValueOnce({
+            chatFollowUpMessage: '[attachment] path=a/big.bin filename=big.bin type=application/octet-stream',
+            originalFileName: 'big.bin',
+            sizeBytes: 11 * 1024 * 1024,
+        })
+        const onSend = vi.fn(async () => true)
+        render(
+            <ChatInput
+                onSend={onSend}
+                placeholder="Type..."
+                composerMode="attachment_request"
+                attachmentHandledBy="STUDENT_ABSENCE"
+                allowedFileTypes={[]}
+            />,
+        )
+        const fileInput = screen.getByLabelText('Attach supporting document')
+        expect(fileInput).not.toHaveAttribute('accept')
+        expect(screen.getByText(/any file type · server will validate/i)).toBeInTheDocument()
+
+        const big = new File(['x'], 'big.bin', { type: 'application/octet-stream' })
+        Object.defineProperty(big, 'size', { value: 11 * 1024 * 1024 })
+        await act(async () => {
+            fireEvent.change(fileInput, { target: { files: [big] } })
+        })
+        await waitFor(() => {
+            expect(uploadAbsenceChatAttachment).toHaveBeenCalledTimes(1)
+            expect(onSend).toHaveBeenCalled()
+        })
+    })
+
     it('does not upload when attachmentHandledBy is missing (no absence default)', async () => {
         const onSend = vi.fn()
         render(<ChatInput onSend={onSend} placeholder="Type..." composerMode="attachment_request" />)
@@ -253,5 +332,19 @@ describe('ChatInput', () => {
         )
         expect(screen.getByLabelText('End date')).toBeInTheDocument()
         expect(screen.getByLabelText('End date')).toHaveAttribute('min', '2026-09-02')
+    })
+
+    it('shows start-date picker with no min on overlap conflict dateFrom re-ask', () => {
+        render(
+            <ChatInput
+                onSend={vi.fn()}
+                placeholder="Type..."
+                composerMode="date_request"
+                dateConstraint={{ field: 'dateFrom' }}
+            />,
+        )
+        const picker = screen.getByLabelText('Start date')
+        expect(picker).toBeInTheDocument()
+        expect(picker).not.toHaveAttribute('min')
     })
 })

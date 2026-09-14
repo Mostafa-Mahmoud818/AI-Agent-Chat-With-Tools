@@ -24,7 +24,28 @@ describe('deriveComposerModeFromMessages', () => {
             mode: 'attachment_request',
             dateConstraint: null,
             attachmentHandledBy: 'STUDENT_ABSENCE',
+            allowedFileTypes: null,
         })
+    })
+
+    it('forwards allowedFileTypes from attachment_request payload', () => {
+        const catalog = [
+            { code: 'PDF', mimeType: 'application/pdf', extension: 'pdf', maxSizeBytes: 10485760 },
+        ]
+        expect(deriveComposerModeFromMessages([
+            { role: 'ai', payload: { subtype: 'attachment_request', allowedFileTypes: catalog }, handledBy: 'STUDENT_ABSENCE' },
+        ])).toEqual({
+            mode: 'attachment_request',
+            dateConstraint: null,
+            attachmentHandledBy: 'STUDENT_ABSENCE',
+            allowedFileTypes: catalog,
+        })
+    })
+
+    it('preserves empty allowedFileTypes array (unrestricted signal)', () => {
+        expect(deriveComposerModeFromMessages([
+            { role: 'ai', payload: { subtype: 'attachment_request', allowedFileTypes: [] } },
+        ]).allowedFileTypes).toEqual([])
     })
 
     it('restores date_request with dateConstraint', () => {
@@ -34,6 +55,7 @@ describe('deriveComposerModeFromMessages', () => {
             mode: 'date_request',
             dateConstraint: { field: 'dateTo', afterDate: '2026-09-01' },
             attachmentHandledBy: null,
+            allowedFileTypes: null,
         })
     })
 
@@ -53,6 +75,27 @@ describe('deriveComposerModeFromMessages', () => {
             mode: 'attachment_request',
             dateConstraint: null,
             attachmentHandledBy: 'Error Banner Agent',
+            allowedFileTypes: null,
+        })
+    })
+
+    it('restores date_request after attachment when the latest AI is an overlap conflict re-ask', () => {
+        expect(deriveComposerModeFromMessages([
+            { role: 'ai', payload: { subtype: 'attachment_request', allowedFileTypes: [] }, handledBy: 'STUDENT_ABSENCE' },
+            { role: 'user', text: 'change dates to 2026-09-01' },
+            {
+                role: 'ai',
+                payload: {
+                    subtype: 'date_request',
+                    dateConstraint: { field: 'dateFrom' },
+                },
+                handledBy: 'STUDENT_ABSENCE',
+            },
+        ])).toEqual({
+            mode: 'date_request',
+            dateConstraint: { field: 'dateFrom' },
+            attachmentHandledBy: null,
+            allowedFileTypes: null,
         })
     })
 
@@ -67,7 +110,7 @@ describe('deriveComposerModeFromMessages', () => {
             { role: 'ai', payload: { subtype: 'date_request', dateConstraint: { field: 'dateTo', afterDate: '2026-09-01' } } },
             { role: 'user', text: '2026-09-05' },
             { role: 'ai', text: 'Please describe the details.', payload: null },
-        ])).toEqual({ mode: 'default', dateConstraint: null, attachmentHandledBy: null })
+        ])).toEqual({ mode: 'default', dateConstraint: null, attachmentHandledBy: null, allowedFileTypes: null })
     })
 
     it('does not clear date_request when a system AI turn arrives without payload', () => {
@@ -78,6 +121,7 @@ describe('deriveComposerModeFromMessages', () => {
             mode: 'date_request',
             dateConstraint: { field: 'dateTo', afterDate: '2026-09-01' },
             attachmentHandledBy: null,
+            allowedFileTypes: null,
         })
     })
 
@@ -90,6 +134,7 @@ describe('deriveComposerModeFromMessages', () => {
             mode: 'attachment_request',
             dateConstraint: null,
             attachmentHandledBy: 'Error Banner Agent',
+            allowedFileTypes: null,
         })
     })
 })
@@ -99,9 +144,18 @@ describe('agentMessage absence subtypes', () => {
         const attach = parseAgentMessage(JSON.stringify({
             replyType: 'json',
             textString: 'Please attach a document.',
-            payload: { subtype: 'attachment_request', menuitems: [] },
+            payload: {
+                subtype: 'attachment_request',
+                menuitems: [],
+                allowedFileTypes: [
+                    { code: 'PDF', mimeType: 'application/pdf', extension: 'pdf', maxSizeBytes: 10485760 },
+                ],
+            },
         }))
         expect(attach.payload.subtype).toBe('attachment_request')
+        expect(attach.payload.allowedFileTypes).toEqual([
+            { code: 'PDF', mimeType: 'application/pdf', extension: 'pdf', maxSizeBytes: 10485760 },
+        ])
 
         const date = parseAgentMessage(JSON.stringify({
             replyType: 'json',

@@ -70,7 +70,7 @@ Bearer-token precedence: the OTP dialog writes to `localStorage: ankabut.chat.ac
 - Multi-turn conversational AI with message history
 - Multi-agent routing (Visitor Experience / Front Door, Catering, IT Support, Facilities & Maintenance, Student Absence, Error Banner)
 - Persona picker when both Visitor and Student contexts are available
-- Student absence composer modes from the last AI subtype: exclusive end-date (`date_request`) then attach (`attachment_request`) when required, including resume from last turn
+- Student absence composer modes from the last AI subtype: exclusive end-date (`date_request`) then attach (`attachment_request`) when required, including resume from last turn. An approved-overlap conflict reuses `date_request` for `dateFrom` (picker + markdown `textString`); no new subtype.
 - Markdown rendering of agent responses
 - Structured menus (catering; single-level absence reasons; Error Banner categories)
 - In-browser environment switcher (DEV / TEST / STAGE / LOCAL)
