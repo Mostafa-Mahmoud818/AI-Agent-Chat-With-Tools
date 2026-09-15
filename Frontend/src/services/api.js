@@ -105,6 +105,7 @@ async function handleResponse(res) {
         if (res.status === 403) errorCode = 'forbidden'
         if (res.status === 429) errorCode = 'rate_limited'
         if (res.status === 503) errorCode = 'service_unavailable'
+        if (res.status === 400) errorCode = 'bad_request'
         if (res.status === 422) errorCode = 'unprocessable'
     } catch {
         if (raw?.trim()) {

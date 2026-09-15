@@ -547,7 +547,12 @@ export default function ChatWindow({
                 return false
             }
             releaseSendLock()
-            if (err instanceof ApiError && (err.status === 400 || err.status === 422)) {
+            if (err instanceof ApiError && (
+                err.status === 400
+                || err.status === 422
+                || err.errorCode === 'bad_request'
+                || err.errorCode === 'unprocessable'
+            )) {
                 setError(err.message)
                 setPhase(conversationId ? 'ready' : 'idle')
                 return false

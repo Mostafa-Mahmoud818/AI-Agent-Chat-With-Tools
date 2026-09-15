@@ -199,6 +199,26 @@ describe('uploadAbsenceChatAttachment', () => {
         expect(options.headers['Content-Type']).toBeUndefined()
         expect(options.body).toBeInstanceOf(FormData)
     })
+
+    it('surfaces a 400 missing-part ApiResponse.message as bad_request', async () => {
+        fetch.mockResolvedValueOnce({
+            ok: false,
+            status: 400,
+            text: async () => JSON.stringify({
+                success: false,
+                message: "Required part 'file' is not present",
+            }),
+        })
+
+        const { uploadAbsenceChatAttachment } = await import('../api.js')
+        const file = new File(['pdf'], 'note.pdf', { type: 'application/pdf' })
+
+        await expect(uploadAbsenceChatAttachment(file)).rejects.toMatchObject({
+            status: 400,
+            errorCode: 'bad_request',
+            message: "Required part 'file' is not present",
+        })
+    })
 })
 
 describe('uploadErrorBannerChatAttachment', () => {
