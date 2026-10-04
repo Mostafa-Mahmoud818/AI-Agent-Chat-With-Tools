@@ -1,4 +1,4 @@
-import {useCallback, useMemo, useState} from 'react'
+import {useCallback, useEffect, useMemo, useState} from 'react'
 import SparkIcon from '../ui/SparkIcon.jsx'
 import './ConversationSidebar.css'
 
@@ -36,6 +36,11 @@ export default function ConversationSidebar({
                                                 className = '',
                                             }) {
     const [query, setQuery] = useState('')
+
+    useEffect(() => {
+        setQuery('')
+    }, [showArchived])
+
     const handleNew = useCallback((e) => {
         e.preventDefault()
         e.stopPropagation()

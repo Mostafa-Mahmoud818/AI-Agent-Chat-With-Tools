@@ -72,14 +72,48 @@ describe('secureAuthSession', () => {
         globalThis.__secureAuthMocks = { visitResult: VISIT, studentResult: STUDENT }
         const result = await completeSecureAuth({}, 'dual-jwt')
         expect(result.availablePersonas).toEqual([PERSONA_VISIT, PERSONA_STUDENT])
-        // Prefer VISIT when both exist and no prior choice.
+        // Prefer VISIT when both exist and no JWT persona_code / prior choice.
         expect(getActivePersona()).toBe(PERSONA_VISIT)
     })
 
-    it('completeSecureAuth fails when neither visit nor student resolves', async () => {
+    it('completeSecureAuth prefers JWT persona_code when both personas resolve', async () => {
+        globalThis.__secureAuthMocks = { visitResult: VISIT, studentResult: STUDENT }
+        const encode = (obj) =>
+            btoa(JSON.stringify(obj)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+        const token = `${encode({ alg: 'none' })}.${encode({ persona_code: 'STUDENT' })}.sig`
+        await completeSecureAuth({}, token)
+        expect(getActivePersona()).toBe(PERSONA_STUDENT)
+    })
+
+    it('completeSecureAuth still fails when a chat-supported persona has nothing resolved (sync delay)', async () => {
         globalThis.__secureAuthMocks = { visitResult: null, studentResult: null }
-        await expect(completeSecureAuth({}, 'empty-jwt')).rejects.toThrow(/No visit or student/)
-        expect(getAccessToken()).toBe('empty-jwt') // tokens already stored before resolution
+        const encode = (obj) =>
+            btoa(JSON.stringify(obj)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+        const token = `${encode({ alg: 'none' })}.${encode({ persona_code: 'STUDENT' })}.sig`
+        await expect(completeSecureAuth({}, token)).rejects.toThrow(/couldn't find your visit or student/)
+        expect(getAccessToken()).toBe(token) // tokens already stored before resolution
+    })
+
+    it('completeSecureAuth succeeds gracefully (chatUnavailable) when the token has no persona at all', async () => {
+        globalThis.__secureAuthMocks = { visitResult: null, studentResult: null }
+        const encode = (obj) =>
+            btoa(JSON.stringify(obj)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+        const token = `${encode({ alg: 'none' })}.${encode({ sub: 'user@example.com' })}.sig`
+        const result = await completeSecureAuth({}, token)
+        expect(result.chatUnavailable).toBe(true)
+        expect(result.availablePersonas).toEqual([])
+        expect(result.personaCode).toBeNull()
+        expect(getAccessToken()).toBe(token) // sign-in succeeded; token is still stored
+    })
+
+    it('completeSecureAuth succeeds gracefully (chatUnavailable) for EMPLOYEE with nothing resolved', async () => {
+        globalThis.__secureAuthMocks = { visitResult: null, studentResult: null }
+        const encode = (obj) =>
+            btoa(JSON.stringify(obj)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+        const token = `${encode({ alg: 'none' })}.${encode({ persona_code: 'EMPLOYEE' })}.sig`
+        const result = await completeSecureAuth({}, token)
+        expect(result.chatUnavailable).toBe(true)
+        expect(result.personaCode).toBe('EMPLOYEE')
     })
 
     it('clearSecureAuthSession removes token, visit id, and student id', () => {

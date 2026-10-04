@@ -321,7 +321,7 @@ describe('ChatInput', () => {
         expect(textarea).toHaveValue('Keep me')
     })
 
-    it('shows date picker with exclusive min for dateTo constraint', () => {
+    it('shows date picker with the constraint day as inclusive min for dateTo', () => {
         render(
             <ChatInput
                 onSend={vi.fn()}
@@ -331,7 +331,7 @@ describe('ChatInput', () => {
             />,
         )
         expect(screen.getByLabelText('End date')).toBeInTheDocument()
-        expect(screen.getByLabelText('End date')).toHaveAttribute('min', '2026-09-02')
+        expect(screen.getByLabelText('End date')).toHaveAttribute('min', '2026-09-01')
     })
 
     it('shows start-date picker with no min on overlap conflict dateFrom re-ask', () => {
@@ -346,5 +346,28 @@ describe('ChatInput', () => {
         const picker = screen.getByLabelText('Start date')
         expect(picker).toBeInTheDocument()
         expect(picker).not.toHaveAttribute('min')
+    })
+
+    it('initializes textarea with initialText prop', () => {
+        render(
+            <ChatInput
+                onSend={vi.fn()}
+                placeholder="Type..."
+                initialText="Restore this text"
+            />,
+        )
+        expect(screen.getByPlaceholderText('Type...')).toHaveValue('Restore this text')
+    })
+
+    it('uses afterDate itself as the dateTo picker min (same-day allowed)', () => {
+        render(
+            <ChatInput
+                onSend={vi.fn()}
+                placeholder="Type..."
+                composerMode="date_request"
+                dateConstraint={{ field: 'dateTo', afterDate: '2026-09-05' }}
+            />,
+        )
+        expect(screen.getByLabelText('End date')).toHaveAttribute('min', '2026-09-05')
     })
 })

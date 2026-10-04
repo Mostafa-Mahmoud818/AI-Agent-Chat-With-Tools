@@ -100,9 +100,14 @@ describe('otpAccessTokenFlow', () => {
             }),
         }))
 
-        await prepareOtpChallenge({ VITE_API_BACKEND: 'remote-dev' }, 'student@example.com')
+        const prepared = await prepareOtpChallenge({ VITE_API_BACKEND: 'remote-dev' }, 'student@example.com')
 
         expect(getStudentEligible()).toBe(true)
+        expect(prepared).toEqual({
+            eligible: true,
+            personas: ['STUDENT'],
+            reasons: ['STUDENT_EXISTS'],
+        })
     })
 
     it('prepareOtpChallenge does not mark STUDENT when only USER_EXISTS', async () => {
@@ -137,6 +142,47 @@ describe('otpAccessTokenFlow', () => {
             accessToken: 'jwt-from-otp',
             visitId: VISIT,
         })
+    })
+
+    it('exchangeOtpForToken includes personaCode when provided', async () => {
+        await exchangeOtpForToken(
+            { VITE_API_BACKEND: 'remote-dev' },
+            'user@example.com',
+            '123456',
+            'STUDENT',
+        )
+
+        expect(global.fetch).toHaveBeenCalledWith(
+            'https://dev-modulith.naitive.ai/api/v1/public/identity/auth/otp/email/token',
+            expect.objectContaining({
+                body: JSON.stringify({
+                    email: 'user@example.com',
+                    code: '123456',
+                    personaCode: 'STUDENT',
+                }),
+            }),
+        )
+    })
+
+    it('exchangeOtpForToken surfaces OAuth2 persona_selection_required', async () => {
+        const { OtpAuthError, PERSONA_SELECTION_REQUIRED } = await import('../otpAccessTokenFlow.js')
+        global.fetch = vi.fn(async () => ({
+            ok: false,
+            status: 400,
+            json: async () => ({
+                error: 'persona_selection_required',
+                error_description: 'Multiple personas matched — personaCode is required',
+            }),
+        }))
+
+        await expect(
+            exchangeOtpForToken({ VITE_API_BACKEND: 'remote-dev' }, 'user@example.com', '123456'),
+        ).rejects.toMatchObject({
+            name: 'OtpAuthError',
+            error: PERSONA_SELECTION_REQUIRED,
+            message: 'Multiple personas matched — personaCode is required',
+        })
+        expect(OtpAuthError).toBeDefined()
     })
 
     it('exchangeOtpForToken throws when access_token missing', async () => {

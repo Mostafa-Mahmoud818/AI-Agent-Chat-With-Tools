@@ -17,6 +17,8 @@ import {check} from 'k6';
  * Phase 2 (with OTP_CODE from that inbox) — exchanges it and resolves visit_id:
  * ```
  * k6 run -e AUTH_EMAIL=you@example.com -e OTP_CODE=123456 docs/k6/chat-stack-auth.k6.js
+ * # Dual-persona accounts also need -e PERSONA_CODE=STUDENT (or VISITOR):
+ * k6 run -e AUTH_EMAIL=you@example.com -e OTP_CODE=123456 -e PERSONA_CODE=STUDENT docs/k6/chat-stack-auth.k6.js
  * ```
  *
  * Phase 2 prints a copy-pasteable `ACCESS_TOKEN=...` / `VISIT_ID=...` / `USER_ID=...` block for
@@ -38,6 +40,8 @@ const BASE_URL = __ENV.BASE_URL || 'https://stg-modulith.naitive.ai';
 const AUTH_EMAIL = __ENV.AUTH_EMAIL;
 /** OTP code from the inbox. Empty in phase 1, set in phase 2. */
 const OTP_CODE = __ENV.OTP_CODE || '';
+/** Identity persona_code for OTP verify. Required when check-eligibility returned 2+ personas. */
+const PERSONA_CODE = __ENV.PERSONA_CODE || '';
 /** Distinguishes concurrent runs (e.g. `primary` vs `userB`) in console output and printed var names. */
 const LABEL = __ENV.LABEL || 'primary';
 
@@ -98,7 +102,13 @@ function checkEligibilityAndSendOtp() {
     if (data && data.eligible === false) {
         throw new Error(`${AUTH_EMAIL} is NOT eligible for OTP (no account/visit history on this backend)`);
     }
-    console.log(`[${LABEL}] OTP sent to ${AUTH_EMAIL} — reasons=${JSON.stringify(data && data.reasons)}`);
+    console.log(`[${LABEL}] OTP sent to ${AUTH_EMAIL} — reasons=${JSON.stringify(data && data.reasons)} personas=${JSON.stringify(data && data.personas)}`);
+    const personas = (data && data.personas) || [];
+    if (Array.isArray(personas) && personas.length >= 2) {
+        console.log(
+            `[${LABEL}] This account matches ${personas.join(', ')} — phase 2 must pass -e PERSONA_CODE=<one of those>`
+        );
+    }
 }
 
 /**
@@ -111,9 +121,11 @@ function checkEligibilityAndSendOtp() {
  *   (code stale/already used — re-run phase 1 for a fresh one).
  */
 function exchangeOtpForToken() {
+    const payload = {email: AUTH_EMAIL, code: OTP_CODE};
+    if (PERSONA_CODE) payload.personaCode = PERSONA_CODE;
     const res = http.post(
         `${BASE_URL}/api/v1/public/identity/auth/otp/email/token`,
-        JSON.stringify({email: AUTH_EMAIL, code: OTP_CODE}),
+        JSON.stringify(payload),
         {headers: JSON_HEADERS}
     );
     check(res, {'otp exchange accepted': (r) => r.status === 200});
@@ -193,7 +205,7 @@ export default function () {
         checkEligibilityAndSendOtp();
         console.log(`\n[${LABEL}] Check the ${AUTH_EMAIL} inbox for the OTP code, then re-run:`);
         console.log(
-            `  k6 run -e BASE_URL=${BASE_URL} -e AUTH_EMAIL=${AUTH_EMAIL} -e OTP_CODE=<code-from-email> -e LABEL=${LABEL} docs/k6/chat-stack-auth.k6.js`
+            `  k6 run -e BASE_URL=${BASE_URL} -e AUTH_EMAIL=${AUTH_EMAIL} -e OTP_CODE=<code-from-email>${PERSONA_CODE ? ` -e PERSONA_CODE=${PERSONA_CODE}` : ' [-e PERSONA_CODE=STUDENT]'} -e LABEL=${LABEL} docs/k6/chat-stack-auth.k6.js`
         );
         return;
     }

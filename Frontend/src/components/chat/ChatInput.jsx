@@ -23,16 +23,14 @@ const FALLBACK_ACCEPT =
 const FALLBACK_HINT = 'PDF, image, or DOC/DOCX · max 10 MB — or type if you cannot attach.'
 
 /**
- * Inclusive HTML min for dateTo = calendar day after afterDate (exclusive server rule).
- * @param {string|null|undefined} afterDate YYYY-MM-DD
+ * Inclusive HTML min for dateTo: the day named by {@code afterDate} itself (a same-day absence is valid;
+ * the backend accepts {@code dateTo >= dateFrom}).
+ * @param {string|null|undefined} afterDate YYYY-MM-DD — the first selectable day
  * @returns {string|undefined}
  */
-export function exclusiveDateMin(afterDate) {
+export function inclusiveDateMin(afterDate) {
     if (!afterDate || !/^\d{4}-\d{2}-\d{2}$/.test(String(afterDate).trim())) return undefined
-    const d = new Date(`${String(afterDate).trim()}T00:00:00Z`)
-    if (Number.isNaN(d.getTime())) return undefined
-    d.setUTCDate(d.getUTCDate() + 1)
-    return d.toISOString().slice(0, 10)
+    return String(afterDate).trim()
 }
 
 function resizeTextarea(textarea) {
@@ -177,6 +175,7 @@ export function validateAttachmentFile(file, limits) {
  *   onSend: (text: string, opts?: { displayText?: string|null }) => void|boolean|Promise<void|boolean>,
  *   placeholder?: string,
  *   disabled?: boolean,
+ *   initialText?: string,
  *   composerMode?: 'default'|'attachment_request'|'date_request'|null,
  *   dateConstraint?: { field?: string|null, afterDate?: string|null }|null,
  *   attachmentHandledBy?: string|null,
@@ -187,12 +186,13 @@ const ChatInput = forwardRef(function ChatInput({
     onSend,
     placeholder,
     disabled,
+    initialText = '',
     composerMode = 'default',
     dateConstraint = null,
     attachmentHandledBy = null,
     allowedFileTypes = null,
 }, ref) {
-    const [text, setText] = useState('')
+    const [text, setText] = useState(initialText || '')
     const [recording, setRecording] = useState(false)
     const [transcribing, setTranscribing] = useState(false)
     const [sttError, setSttError] = useState(null)
@@ -213,7 +213,7 @@ const ChatInput = forwardRef(function ChatInput({
     const showAttach = composerMode === 'attachment_request'
     const showDate = composerMode === 'date_request'
     const dateMin = showDate && dateConstraint?.field === 'dateTo'
-        ? exclusiveDateMin(dateConstraint.afterDate)
+        ? inclusiveDateMin(dateConstraint.afterDate)
         : undefined
 
     const attachLimits = useMemo(
@@ -521,14 +521,15 @@ const ChatInput = forwardRef(function ChatInput({
                     maxLength={CHAT_INPUT_MAX}
                     disabled={busy}
                     autoFocus
+                    dir="auto"
                 />
                 <select
                     className="stt-lang-select"
                     value={languageHint}
                     onChange={(e) => setLanguageHint(e.target.value)}
                     disabled={micDisabled || recording}
-                    aria-label="Speech language"
-                    title="Speech recognition language"
+                    aria-label="Voice input language"
+                    title="Voice input language"
                 >
                     <option value="">Auto</option>
                     <option value="en">EN</option>
@@ -577,6 +578,7 @@ ChatInput.propTypes = {
     onSend: PropTypes.func.isRequired,
     placeholder: PropTypes.string,
     disabled: PropTypes.bool,
+    initialText: PropTypes.string,
     composerMode: PropTypes.oneOf(['default', 'attachment_request', 'date_request']),
     dateConstraint: PropTypes.shape({
         field: PropTypes.string,

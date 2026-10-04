@@ -4,7 +4,7 @@
  */
 
 import { createLogger } from './utils/logger.js'
-import { applyPersonaQueryOverrides, ensureActivePersona } from './config/personaSession.js'
+import { applyPersonaFromAccessToken, applyPersonaQueryOverrides, ensureActivePersona } from './config/personaSession.js'
 import { getAccessToken, initTokenStore } from './auth/tokenStore.js'
 import { tryResolveDxpUserIdForCurrentUser } from './auth/studentResolution.js'
 import { wipeLegacyRosterStudentId } from './config/chatContext.js'
@@ -21,6 +21,7 @@ export async function applySecureChatEnv() {
 
     initTokenStore(import.meta.env)
     wipeLegacyRosterStudentId()
+    applyPersonaFromAccessToken(getAccessToken())
     applyPersonaQueryOverrides()
 
     const token = getAccessToken()

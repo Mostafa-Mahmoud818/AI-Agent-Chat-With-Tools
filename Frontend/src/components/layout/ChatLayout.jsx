@@ -3,7 +3,7 @@
  * @module components/layout/ChatLayout
  */
 
-import {useCallback, useEffect, useState} from 'react'
+import {useCallback, useEffect, useRef, useState} from 'react'
 import {
     ApiError,
     archiveConversation,
@@ -14,7 +14,7 @@ import {
 import PersonaPicker from './PersonaPicker.jsx'
 import {bumpConversationLastActivity, sortConversationsForSidebar} from '../../utils/conversationSidebarOrder.js'
 import {createLogger} from '../../utils/logger.js'
-import {getAccessToken} from '../../auth/tokenStore.js'
+import {getAccessToken, onTokensCleared} from '../../auth/tokenStore.js'
 import {tryResolveVisitIdForCurrentUser} from '../../auth/visitResolution.js'
 import {tryResolveDxpUserIdForCurrentUser} from '../../auth/studentResolution.js'
 import {
@@ -39,6 +39,10 @@ export default function ChatLayout() {
     const [showArchived, setShowArchived] = useState(false)
     const [personaKey, setPersonaKey] = useState(0)
     const [chatBusy, setChatBusy] = useState(false)
+    // Source of truth for which view a (possibly late) reload should fetch. Updated synchronously in
+    // handleToggleArchived, before the toggle's own reload effect runs, so loadConversations never
+    // reads a stale closure value (M7).
+    const showArchivedRef = useRef(false)
 
     const chatApiReady = authenticated
 
@@ -53,11 +57,15 @@ export default function ChatLayout() {
             setConvosLoading(true)
             setConvosError(null)
         }
+        const requestedView = showArchivedRef.current
         try {
-            const rows = await loadAllConversations({size: 100, archived: showArchived})
+            const rows = await loadAllConversations({size: 100, archived: requestedView})
+            // Ignore response if view has changed since the request
+            if (showArchivedRef.current !== requestedView) return
             setConversations(sortConversationsForSidebar(rows))
             if (!silent) setConvosError(null)
         } catch (e) {
+            if (showArchivedRef.current !== requestedView) return
             const msg = e instanceof ApiError ? e.message : 'Failed to load conversations'
             log.warn('loadConversations failed', e)
             if (!silent) {
@@ -65,17 +73,27 @@ export default function ChatLayout() {
                 setConversations([])
             }
         } finally {
-            if (!silent) setConvosLoading(false)
+            // A superseded request must not end the spinner of the current view's own load.
+            if (!silent && showArchivedRef.current === requestedView) setConvosLoading(false)
         }
-    }, [chatApiReady, showArchived])
+    }, [chatApiReady])
 
     useEffect(() => {
         loadConversations()
-    }, [loadConversations])
+    }, [loadConversations, showArchived])
 
     useEffect(() => {
         setAuthenticated(Boolean(getAccessToken()))
         ensureActivePersona()
+    }, [])
+
+    useEffect(() => {
+        const unsubscribe = onTokensCleared(() => {
+            setAuthenticated(false)
+            setSelectedConversationId(null)
+            setConversations([])
+        })
+        return unsubscribe
     }, [])
 
     const requiresAuth = import.meta.env.MODE !== 'test' && !authenticated
@@ -142,8 +160,11 @@ export default function ChatLayout() {
     )
 
     const handleToggleArchived = useCallback(() => {
-        setShowArchived((v) => !v)
+        const next = !showArchivedRef.current
+        showArchivedRef.current = next
+        setShowArchived(next)
         setSelectedConversationId(null)
+        setConversations([])
     }, [])
 
     const applyConversationMutation = useCallback(

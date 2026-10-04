@@ -227,6 +227,7 @@ function normalizePayload(payload, replyType) {
 
 /**
  * Normalizes {@code payload.dateConstraint} for date_request replies.
+ * {@code afterDate} is the first selectable day (inclusive).
  * @param {*} raw
  * @returns {{ field: string|null, afterDate: string|null }|null}
  */

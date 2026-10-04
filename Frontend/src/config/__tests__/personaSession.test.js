@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
+    applyPersonaFromAccessToken,
     applyPersonaQueryOverrides,
     getChatContextForStart,
     hasConfiguredActivePersonaContext,
     isOtherContextConversation,
+    normalizeEligiblePersonas,
     PERSONA_STUDENT,
     PERSONA_VISITOR,
     PERSONA_VISIT,
@@ -132,5 +134,22 @@ describe('personaSession', () => {
         })
         applyPersonaQueryOverrides()
         expect(getActivePersona()).toBe('VISITOR')
+    })
+
+    it('normalizeEligiblePersonas canonicalizes VISIT and dedupes', () => {
+        expect(normalizeEligiblePersonas(['VISIT', 'student', 'VISITOR', 'EMPLOYEE'])).toEqual([
+            'VISITOR',
+            'STUDENT',
+            'EMPLOYEE',
+        ])
+        expect(normalizeEligiblePersonas(null)).toEqual([])
+    })
+
+    it('applyPersonaFromAccessToken sets STUDENT from JWT claim', () => {
+        const encode = (obj) =>
+            btoa(JSON.stringify(obj)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+        const token = `${encode({ alg: 'none' })}.${encode({ persona_code: 'STUDENT' })}.sig`
+        expect(applyPersonaFromAccessToken(token)).toBe('STUDENT')
+        expect(getActivePersona()).toBe('STUDENT')
     })
 })

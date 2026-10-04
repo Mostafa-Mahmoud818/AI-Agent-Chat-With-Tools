@@ -171,7 +171,7 @@ function OrderConfirmationCard({ payload }) {
                     {status && (
                         <span className="order-meta-item">
                             <span className="order-meta-label">Status</span>
-                            <span className="order-meta-value order-status">{String(status)}</span>
+                            <span className="order-meta-value order-status">{formatStatusLabel(status)}</span>
                         </span>
                     )}
                     {totalPrice != null && (
@@ -251,7 +251,7 @@ function TicketCard({ payload }) {
             {hasMeta && (
                 <div className="ticket-card-meta">
                     {ticketRef && <span className="ticket-meta-item"><span className="ticket-meta-label">Reference</span><span className="ticket-meta-value">{String(ticketRef)}</span></span>}
-                    {ticketStatus && <span className="ticket-meta-item"><span className="ticket-meta-label">Status</span><span className="ticket-meta-value ticket-status">{String(ticketStatus)}</span></span>}
+                    {ticketStatus && <span className="ticket-meta-item"><span className="ticket-meta-label">Status</span><span className="ticket-meta-value ticket-status">{formatStatusLabel(ticketStatus)}</span></span>}
                     {createdAt && <span className="ticket-meta-item"><span className="ticket-meta-label">Created</span><span className="ticket-meta-value ticket-date">{createdAt}</span></span>}
                 </div>
             )}
@@ -310,8 +310,11 @@ function formatScopeLabel(scope) {
     return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
-function formatStatusLabel(status) {
+export function formatStatusLabel(status) {
     if (!status) return null
+    // Backend IN_PROCESS reads as "In Progress" to users; every other value keeps its casing
+    // (the status badges upper-case via CSS) with underscores turned into spaces.
+    if (String(status).trim().toUpperCase() === 'IN_PROCESS') return 'In Progress'
     return String(status).replace(/_/g, ' ')
 }
 
@@ -394,12 +397,15 @@ function formatHandledBy(value) {
     if (normalized === 'CATERING') return 'Catering'
     if (normalized === 'FACILITIES_MAINTENANCE') return 'Facilities & Maintenance'
     if (normalized === 'VISITOR_EXPERIENCE') return 'Assistant'
+    if (normalized === 'STUDENT_EXPERIENCE') return 'Student Experience'
     if (normalized === 'FRONT_DOOR') return 'Assistant'
     if (normalized === 'STUDENT_ABSENCE') return 'Absence'
+    if (normalized === 'STUDENT_IT_SUPPORT') return 'IT Support'
     if (normalized === 'BANNER_ERROR') return 'Error Banner'
     if (normalized === 'ERROR') return 'Error'
     // SSE labels from backend (AgentVariableSupport)
     if (normalized === 'VISITOR EXPERIENCE AGENT') return 'Assistant'
+    if (normalized === 'STUDENT EXPERIENCE AGENT') return 'Student Experience'
     if (normalized === 'FRONT DOOR AGENT') return 'Assistant'
     if (normalized === 'IT SUPPORT AGENT') return 'IT Support'
     if (normalized === 'CATERING AGENT') return 'Catering'
@@ -415,7 +421,7 @@ function formatHandledBy(value) {
 // unrecoverable navigation-shape error also uses `subtype:"error"` with no menuitems), so it can
 // never distinguish "this was a menu failure" from any other error. The route can.
 const MENU_CAPABLE_HANDLERS = new Set([
-    'IT_SUPPORT', 'CATERING', 'FACILITIES_MAINTENANCE', 'STUDENT_ABSENCE', 'BANNER_ERROR',
+    'IT_SUPPORT', 'CATERING', 'FACILITIES_MAINTENANCE', 'STUDENT_ABSENCE', 'STUDENT_IT_SUPPORT', 'BANNER_ERROR',
     'IT SUPPORT AGENT', 'CATERING AGENT', 'FACILITIES & MAINTENANCE AGENT', 'FACILITIES MAINTENANCE AGENT',
     'ABSENCE REQUEST AGENT', 'ERROR BANNER AGENT',
 ])
@@ -449,7 +455,7 @@ function MessageBubble({ message, onMenuItemClick, menuDisabled = false }) {
         return (
             <div className="message-row system" role="status" aria-live="polite">
                 <div className="message-bubble system-bubble">
-                    <div className="message-text">{message.text}</div>
+                    <div className="message-text" dir="auto">{message.text}</div>
                 </div>
             </div>
         )
@@ -483,14 +489,14 @@ function MessageBubble({ message, onMenuItemClick, menuDisabled = false }) {
                         isErrorPayload ? (
                             <div className="menu-error" role="alert">{errorCopy}</div>
                         ) : (
-                            <div className="message-text markdown-body">
+                            <div className="message-text markdown-body" dir="auto">
                                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                                     {displayText}
                                 </ReactMarkdown>
                             </div>
                         )
                     ) : (
-                        <div className="message-text">{displayText}</div>
+                        <div className="message-text" dir="auto">{displayText}</div>
                     )}
                     {hasMenu && (
                         <MenuItems

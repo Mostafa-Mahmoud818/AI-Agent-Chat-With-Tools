@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
     initTokenStore,
     getAccessToken,
@@ -7,6 +7,7 @@ import {
     setAccessToken,
     setTokens,
     clearTokens,
+    onTokensCleared,
 } from '../tokenStore.js'
 
 describe('tokenStore', () => {
@@ -75,5 +76,67 @@ describe('tokenStore', () => {
         expect(getAccessToken()).toBe('ci-token')
         expect(getRefreshToken()).toBe('')
         expect(getAccessTokenExpiresAt()).toBe(0)
+    })
+
+    it('onTokensCleared calls listeners when clearTokens is invoked', () => {
+        setTokens({ accessToken: 'access-1', refreshToken: 'refresh-1', expiresIn: 3600 })
+        const callback = vi.fn()
+        onTokensCleared(callback)
+
+        clearTokens()
+
+        expect(callback).toHaveBeenCalled()
+    })
+
+    it('onTokensCleared does not call listeners when setTokens is called with a token', () => {
+        setTokens({ accessToken: 'access-1' })
+        const callback = vi.fn()
+        onTokensCleared(callback)
+
+        setTokens({ accessToken: 'access-2' })
+
+        expect(callback).not.toHaveBeenCalled()
+    })
+
+    it('onTokensCleared fires once when setTokens drops the access token', () => {
+        setTokens({ accessToken: 'access-1', refreshToken: 'refresh-1', expiresIn: 3600 })
+        const callback = vi.fn()
+        const unsubscribe = onTokensCleared(callback)
+
+        setTokens({ accessToken: '', refreshToken: '', expiresIn: null })
+        expect(callback).toHaveBeenCalledTimes(1)
+
+        setTokens({ accessToken: 'access-2' })
+        clearTokens()
+        expect(callback).toHaveBeenCalledTimes(2)
+        unsubscribe()
+    })
+
+    it('onTokensCleared keeps notifying other listeners when one unsubscribes or throws', () => {
+        setTokens({ accessToken: 'access-1' })
+        const second = vi.fn()
+        let unsubscribeFirst = () => {}
+        unsubscribeFirst = onTokensCleared(() => {
+            unsubscribeFirst()
+            throw new Error('boom')
+        })
+        const unsubscribeSecond = onTokensCleared(second)
+
+        clearTokens()
+
+        expect(second).toHaveBeenCalledTimes(1)
+        unsubscribeSecond()
+    })
+
+    it('onTokensCleared returns an unsubscribe function that stops calling the listener', () => {
+        const callback = vi.fn()
+        const unsubscribe = onTokensCleared(callback)
+
+        clearTokens()
+        expect(callback).toHaveBeenCalledTimes(1)
+
+        unsubscribe()
+        clearTokens()
+        expect(callback).toHaveBeenCalledTimes(1)
     })
 })

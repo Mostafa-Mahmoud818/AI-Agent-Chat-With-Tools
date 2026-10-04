@@ -17,13 +17,13 @@ npm run dev
 
 Opens http://localhost:5173.
 
-On first load you'll see an **environment picker dialog** (DEV / TEST / STAGE / LOCAL). After picking, sign in with **email + OTP**. After sign-in the app resolves **visit** and/or **student** context in parallel:
+On first load you'll see an **environment picker dialog** (DEV / TEST / STAGE / LOCAL). After picking, sign in with **email + OTP**. If check-eligibility returns **two or more personas** (e.g. Student + Visitor), the OTP step asks you to **pick one** — that selection is sent as `personaCode` on verify and stamped on the JWT as `persona_code`. After sign-in the app resolves **visit** and/or **student** context in parallel:
 
 - Visit → `GET /api/v1/secure/visitor-management/my-visits*` (`visitId`)
 - Student persona → OTP `check-eligibility` (`personas` contains `STUDENT` or `reasons` contains `STUDENT_EXISTS`)
 - Student chat id → `GET /api/v1/secure/identity/profile/me` (`data.id` = Identity user UUID)
 
-If both succeed, a **Visitor / Student persona picker** appears (last choice is persisted). If only one succeeds, that persona is selected automatically. Everything is persisted to `localStorage`, so subsequent reloads skip the dialog. A **"Change"** link in the badge row re-opens the picker any time.
+If both succeed, a **Visitor / Student persona picker** appears in the chat header (last choice is persisted; a JWT `persona_code` of STUDENT or VISITOR is used as the initial choice). If only one succeeds, that persona is selected automatically. Everything is persisted to `localStorage`, so subsequent reloads skip the dialog. A **"Change"** link in the badge row re-opens the picker any time.
 
 > Testers no longer need to edit `.env` — pick env + sign in via email OTP in the UI.
 

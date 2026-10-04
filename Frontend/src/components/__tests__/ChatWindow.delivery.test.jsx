@@ -134,9 +134,111 @@ describe('ChatWindow round order and send guard', () => {
 
         await waitFor(() => expect(api.startOrchestration).toHaveBeenCalled())
         expect(api.createResponseStream).not.toHaveBeenCalled()
+        // The optimistic bubble is removed; the typed text goes back into the composer (M5), so
+        // scope the check to the message list rather than the whole document.
         await waitFor(() => {
-            expect(screen.queryByText('Hello')).not.toBeInTheDocument()
+            expect(screen.getByRole('list', { name: /chat messages/i })).not.toHaveTextContent('Hello')
         })
+        expect(screen.getByPlaceholderText(/type your message/i)).toHaveValue('Hello')
+    })
+
+    it('restores the typed text and blames the connection when the first send cannot reach the server', async () => {
+        vi.mocked(api.createConversation).mockResolvedValue({ conversationId: 'c1' })
+        vi.mocked(api.startOrchestration).mockRejectedValue(new TypeError('Failed to fetch'))
+
+        render(<ChatWindow />)
+        const input = screen.getByPlaceholderText(/type your message/i)
+        await act(async () => {
+            fireEvent.change(input, { target: { value: 'I will be out sick tomorrow' } })
+            fireEvent.submit(input.closest('form'))
+        })
+
+        await waitFor(() => expect(screen.getByText(/couldn't reach the server/i)).toBeInTheDocument())
+        expect(screen.queryByText(/session may have expired/i)).not.toBeInTheDocument()
+        expect(screen.getByPlaceholderText(/type your message/i)).toHaveValue('I will be out sick tomorrow')
+        expect(screen.getByRole('list', { name: /chat messages/i }))
+            .not.toHaveTextContent('I will be out sick tomorrow')
+    })
+
+    it('restores the typed text when a follow-up send hits a network error', async () => {
+        vi.mocked(api.fetchAllConversationTurns).mockResolvedValue([{
+            id: 't1',
+            userInput: 'Hi',
+            agentResponse: JSON.stringify({ replyType: 'text', textString: 'Welcome' }),
+            turnKind: 'EXCHANGE',
+            createdAt: '2026-01-01T00:00:00Z',
+            routeCategory: 'FRONT_DOOR',
+        }])
+        vi.mocked(api.sendReply).mockRejectedValue(
+            new api.ApiError(0, 'network_error', 'Network error. Is the backend reachable?'),
+        )
+
+        render(<ChatWindow sidebarConversationId="c-net" />)
+        await waitFor(() => expect(screen.getByText('Welcome')).toBeInTheDocument())
+
+        const input = screen.getByPlaceholderText(/follow-up/i)
+        await act(async () => {
+            fireEvent.change(input, { target: { value: 'What classes do I have?' } })
+            fireEvent.submit(input.closest('form'))
+        })
+
+        await waitFor(() => expect(screen.getByText(/couldn't reach the server/i)).toBeInTheDocument())
+        expect(screen.getByPlaceholderText(/follow-up/i)).toHaveValue('What classes do I have?')
+        expect(screen.queryByText(/session may have expired/i)).not.toBeInTheDocument()
+    })
+
+    it('asks the user to sign in again on 401 and keeps the draft', async () => {
+        vi.mocked(api.fetchAllConversationTurns).mockResolvedValue([{
+            id: 't1',
+            userInput: 'Hi',
+            agentResponse: JSON.stringify({ replyType: 'text', textString: 'Welcome' }),
+            turnKind: 'EXCHANGE',
+            createdAt: '2026-01-01T00:00:00Z',
+            routeCategory: 'FRONT_DOOR',
+        }])
+        vi.mocked(api.sendReply).mockRejectedValue(new api.ApiError(401, 'unauthorized', 'Unauthorized'))
+
+        render(<ChatWindow sidebarConversationId="c-401" />)
+        await waitFor(() => expect(screen.getByText('Welcome')).toBeInTheDocument())
+
+        const input = screen.getByPlaceholderText(/follow-up/i)
+        await act(async () => {
+            fireEvent.change(input, { target: { value: 'Still there?' } })
+            fireEvent.submit(input.closest('form'))
+        })
+
+        await waitFor(() => expect(screen.getByText(/session expired — please sign in again/i)).toBeInTheDocument())
+        expect(screen.getByPlaceholderText(/follow-up/i)).toHaveValue('Still there?')
+    })
+
+    it('does not put a failed menu pick into the composer', async () => {
+        vi.mocked(api.fetchAllConversationTurns).mockResolvedValue([{
+            id: 't1',
+            userInput: 'Show IT services',
+            agentResponse: JSON.stringify({
+                replyType: 'json',
+                textString: 'Pick a service',
+                payload: {
+                    subtype: 'menu',
+                    menuitems: [{ id: 'm1', name: 'Printer Issue', selectionSignal: 'SELECT:m1' }],
+                    order: null,
+                },
+            }),
+            turnKind: 'EXCHANGE',
+            createdAt: '2026-01-01T00:00:00Z',
+            routeCategory: 'IT_SUPPORT',
+        }])
+        vi.mocked(api.sendReply).mockRejectedValue(new TypeError('Failed to fetch'))
+
+        render(<ChatWindow sidebarConversationId="c-menu" />)
+        const item = await screen.findByRole('button', { name: /printer issue/i })
+        await act(async () => {
+            fireEvent.click(item)
+        })
+
+        await waitFor(() => expect(api.sendReply).toHaveBeenCalled())
+        await waitFor(() => expect(screen.getByText(/couldn't reach the server/i)).toBeInTheDocument())
+        expect(screen.getByPlaceholderText(/follow-up/i)).toHaveValue('')
     })
 
     it('ignores duplicate terminal ready frames (exactly one AI bubble)', async () => {

@@ -4,10 +4,13 @@
  */
 
 import {clearTokens, setTokens} from './tokenStore.js'
+import {readJwtPersonaCode} from './jwtClaims.js'
 import {setRuntimeVisitId, wipeLegacyRosterStudentId} from '../config/chatContext.js'
 import {tryResolveVisitIdForCurrentUser} from './visitResolution.js'
 import {tryResolveStudentIdForCurrentUser} from './studentResolution.js'
 import {
+    applyPersonaFromAccessToken,
+    canonicalizePersona,
     clearPersonaSession,
     ensureActivePersona,
     PERSONA_STUDENT,
@@ -33,10 +36,18 @@ export function clearSecureAuthSession() {
  *
  * Visit resolution uses few retries (not the 10×15s loop) so student-only accounts are not stalled.
  *
+ * When the signed-in identity persona has no chat-context equivalent (e.g. {@code EMPLOYEE}, or
+ * no persona at all) and neither a visit nor a student record resolves, this does **not** throw —
+ * the OTP exchange already succeeded and the token is stored. It returns
+ * {@code chatUnavailable: true} instead, so the caller can show an accurate "signed in, but no
+ * chat for this account" message rather than treating a successful sign-in as a failure. A
+ * chat-supported persona (VISITOR/STUDENT) with nothing resolved yet still throws — that case
+ * is a genuine sync-delay the manual-visit-id fallback can recover from.
+ *
  * @param {ImportMetaEnv} env
  * @param {string} accessToken
  * @param {{ refreshToken?: string|null, expiresIn?: number|string|null }} [tokenExtras]
- * @returns {Promise<{ accessToken: string, visitId: string|null, studentId: string|null, availablePersonas: Array<'VISITOR'|'STUDENT'> }>}
+ * @returns {Promise<{ accessToken: string, visitId: string|null, studentId: string|null, availablePersonas: Array<'VISITOR'|'STUDENT'>, chatUnavailable?: boolean, personaCode?: string|null }>}
  */
 export async function completeSecureAuth(env, accessToken, tokenExtras = {}) {
     const normalized = String(accessToken ?? '').trim()
@@ -45,6 +56,9 @@ export async function completeSecureAuth(env, accessToken, tokenExtras = {}) {
     }
     setTokens({accessToken: normalized, ...tokenExtras})
     wipeLegacyRosterStudentId()
+    setActivePersona(null)
+    // JWT claim wins over the previous "prefer Visitor when both exist" default.
+    applyPersonaFromAccessToken(normalized)
 
     // Visit with 1 attempt (fast fail for student-only). tryResolveStudentId always loads
     // profile/me → dxpUserId (envelope userId); returns the id only when STUDENT-eligible.
@@ -58,8 +72,20 @@ export async function completeSecureAuth(env, accessToken, tokenExtras = {}) {
     if (studentId) availablePersonas.push(PERSONA_STUDENT)
 
     if (availablePersonas.length === 0) {
+        const personaCode = readJwtPersonaCode(normalized)
+        if (!canonicalizePersona(personaCode)) {
+            log.info('Signed in, but persona has no chat context', {personaCode})
+            return {
+                accessToken: normalized,
+                visitId: null,
+                studentId: null,
+                availablePersonas: [],
+                chatUnavailable: true,
+                personaCode,
+            }
+        }
         throw new Error(
-            'No visit or student record found for your account. Confirm eligibility and try again.',
+            "We couldn't find your visit or student details yet. If you just registered, please try again in a few minutes.",
         )
     }
 

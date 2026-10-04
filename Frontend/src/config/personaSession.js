@@ -29,6 +29,7 @@ import {
     setRuntimeDxpUserId,
     setStudentEligible,
 } from './chatContext.js'
+import {readJwtPersonaCode} from '../auth/jwtClaims.js'
 import {createLogger} from '../utils/logger.js'
 
 const log = createLogger('personaSession')
@@ -39,15 +40,75 @@ export const PERSONA_VISIT = PERSONA_VISITOR
 export const PERSONA_STUDENT = CHAT_CONTEXT_TYPE_STUDENT
 
 /**
+ * Identity {@code persona_code} from check-eligibility / JWT. Maps legacy {@code VISIT} → {@code VISITOR};
+ * other codes (STUDENT, EMPLOYEE, …) are uppercased as-is.
+ *
+ * @param {unknown} raw
+ * @returns {string|null}
+ */
+export function normalizeIdentityPersonaCode(raw) {
+    if (raw == null) return null
+    const t = String(raw).trim().toUpperCase()
+    if (!t) return null
+    if (t === 'VISIT' || t === 'VISITOR') return PERSONA_VISITOR
+    return t
+}
+
+/**
+ * Chat-supported personas only ({@code VISITOR} | {@code STUDENT}).
+ *
  * @param {unknown} raw
  * @returns {'VISITOR'|'STUDENT'|null}
  */
-function canonicalizePersona(raw) {
-    if (raw == null) return null
-    const t = String(raw).trim().toUpperCase()
-    if (t === 'VISITOR' || t === 'VISIT') return PERSONA_VISITOR
-    if (t === 'STUDENT') return PERSONA_STUDENT
+export function canonicalizePersona(raw) {
+    const code = normalizeIdentityPersonaCode(raw)
+    if (code === PERSONA_VISITOR || code === PERSONA_STUDENT) return code
     return null
+}
+
+/**
+ * Deduped, canonical identity persona codes from a check-eligibility {@code personas} array.
+ *
+ * @param {unknown} raw
+ * @returns {string[]}
+ */
+export function normalizeEligiblePersonas(raw) {
+    if (!Array.isArray(raw)) return []
+    const seen = new Set()
+    const out = []
+    for (const item of raw) {
+        const code = normalizeIdentityPersonaCode(item)
+        if (!code || seen.has(code)) continue
+        seen.add(code)
+        out.push(code)
+    }
+    return out
+}
+
+/**
+ * @param {unknown} raw
+ * @returns {string}
+ */
+export function personaDisplayName(raw) {
+    const code = normalizeIdentityPersonaCode(raw)
+    if (code === PERSONA_VISITOR) return 'Visitor'
+    if (code === PERSONA_STUDENT) return 'Student'
+    if (!code) return ''
+    return code.charAt(0) + code.slice(1).toLowerCase()
+}
+
+/**
+ * Applies the access-token {@code persona_code} claim as the active chat persona when it is a
+ * chat-supported code. Called after OTP verify and on session restore so the JWT selection wins
+ * over the previous "prefer Visitor when both exist" default.
+ *
+ * @param {unknown} accessToken
+ * @returns {'VISITOR'|'STUDENT'|null}
+ */
+export function applyPersonaFromAccessToken(accessToken) {
+    const canonical = canonicalizePersona(readJwtPersonaCode(accessToken))
+    if (canonical) setActivePersona(canonical)
+    return canonical
 }
 
 /**

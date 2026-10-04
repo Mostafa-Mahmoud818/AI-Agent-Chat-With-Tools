@@ -4,6 +4,9 @@ import SparkIcon from '../ui/SparkIcon.jsx'
 import { createLogger } from '../../utils/logger.js'
 import {
     exchangeOtpForToken,
+    OtpAuthError,
+    PERSONA_NOT_ELIGIBLE,
+    PERSONA_SELECTION_REQUIRED,
     prepareOtpChallenge,
 } from '../../auth/otpAccessTokenFlow.js'
 import { clearSecureAuthSession } from '../../auth/secureAuthSession.js'
@@ -23,6 +26,7 @@ import {
     ensureActivePersona,
     PERSONA_STUDENT,
     PERSONA_VISIT,
+    personaDisplayName,
     setActivePersona,
 } from '../../config/personaSession.js'
 import './LocalAuthDialog.css'
@@ -56,6 +60,10 @@ export default function LocalAuthDialog({ onAuthenticated }) {
     const [otpStep, setOtpStep] = useState('email')
     const [email, setEmail] = useState(env.VITE_LOCAL_AUTH_EMAIL ?? env.VITE_AUTH_EMAIL ?? '')
     const [code, setCode] = useState('')
+    /** Identity persona_code values from check-eligibility (empty = identity-only). */
+    const [matchedPersonas, setMatchedPersonas] = useState([])
+    /** Required when {@code matchedPersonas.length >= 2}. */
+    const [selectedPersona, setSelectedPersona] = useState('')
     const [resolvedVisitId, setResolvedVisitId] = useState(() => getRuntimeVisitId())
     const [resolvedStudentId, setResolvedStudentId] = useState(() => getRuntimeStudentId())
     const [manualVisitId, setManualVisitId] = useState('')
@@ -66,6 +74,8 @@ export default function LocalAuthDialog({ onAuthenticated }) {
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState(null)
     const [hint, setHint] = useState(null)
+    /** Set when sign-in succeeded but the persona has no chat experience (e.g. EMPLOYEE). */
+    const [chatUnavailablePersona, setChatUnavailablePersona] = useState('')
 
     const handlePickEnv = (label) => {
         const previous = getRuntimeBackendEnv()
@@ -97,9 +107,18 @@ export default function LocalAuthDialog({ onAuthenticated }) {
         setError(null)
         setHint(null)
         try {
-            await prepareOtpChallenge(env, email)
+            const prepared = await prepareOtpChallenge(env, email)
+            const personas = prepared?.personas ?? []
+            setMatchedPersonas(personas)
+            setSelectedPersona(personas.length === 1 ? personas[0] : '')
             setOtpStep('otp')
-            setHint(otpSentHint(envLabel))
+            if (personas.length >= 2) {
+                setHint(`${otpSentHint(envLabel)} This account matches more than one persona — pick one to sign in.`)
+            } else if (personas.length === 1) {
+                setHint(`${otpSentHint(envLabel)} Signing in as ${personaDisplayName(personas[0])}.`)
+            } else {
+                setHint(otpSentHint(envLabel))
+            }
         } catch (err) {
             log.warn('Failed to prepare OTP challenge', err)
             const message = err instanceof Error ? err.message : 'Failed to prepare OTP challenge.'
@@ -138,12 +157,24 @@ export default function LocalAuthDialog({ onAuthenticated }) {
 
     const submitOtp = async (e) => {
         e.preventDefault()
+        const personaForVerify =
+            selectedPersona || (matchedPersonas.length === 1 ? matchedPersonas[0] : '')
+        if (matchedPersonas.length >= 2 && !personaForVerify) {
+            setError('Select which persona to sign in as.')
+            return
+        }
         setLoading(true)
         setError(null)
         setHint('Loading your visit and student context from the server…')
         setStudentOnlySuccess(false)
         try {
-            const result = await exchangeOtpForToken(env, email, code)
+            const result = await exchangeOtpForToken(env, email, code, personaForVerify || undefined)
+            if (result.chatUnavailable) {
+                setChatUnavailablePersona(result.personaCode || personaForVerify || '')
+                setHint(null)
+                setError(null)
+                return
+            }
             const { visitId, studentId, availablePersonas } = result
             setResolvedVisitId(visitId || '')
             setResolvedStudentId(studentId || '')
@@ -168,15 +199,48 @@ export default function LocalAuthDialog({ onAuthenticated }) {
             })
         } catch (err) {
             log.warn('Failed to exchange OTP token', err)
-            setError(err instanceof Error ? err.message : 'Failed to authenticate.')
-            // Manual visit only when we did not already land a student-only success.
-            const hasStudent = Boolean(getRuntimeStudentId())
-            setShowManualVisit(!hasStudent)
-            setStudentOnlySuccess(hasStudent && !getRuntimeVisitId())
+            const personaGate =
+                err instanceof OtpAuthError &&
+                (err.error === PERSONA_SELECTION_REQUIRED || err.error === PERSONA_NOT_ELIGIBLE)
+            if (err instanceof OtpAuthError && err.error === PERSONA_SELECTION_REQUIRED) {
+                setError('This account has more than one sign-in option. Choose one below, then verify — your code is still valid.')
+            } else if (err instanceof OtpAuthError && err.error === PERSONA_NOT_ELIGIBLE) {
+                setError(
+                    "That option isn't available for this account. Choose a different one below, or request a new code if needed.",
+                )
+            } else {
+                setError(err instanceof Error ? err.message : 'Failed to authenticate.')
+            }
+            // Persona-resolution failures leave the OTP challenge unused — retry with the same code.
+            // Manual visit only for other failures when we did not already land a student-only success.
+            if (!personaGate) {
+                const hasStudent = Boolean(getRuntimeStudentId())
+                setShowManualVisit(!hasStudent)
+                setStudentOnlySuccess(hasStudent && !getRuntimeVisitId())
+            }
             setHint(null)
         } finally {
             setLoading(false)
         }
+    }
+
+    const goBackToEmail = () => {
+        setOtpStep('email')
+        setCode('')
+        setMatchedPersonas([])
+        setSelectedPersona('')
+        setError(null)
+        setHint(null)
+        setChatUnavailablePersona('')
+    }
+
+    /** From the "signed in, no chat for this persona" terminal state: sign out and start over. */
+    const handleUseAnotherAccount = () => {
+        clearSecureAuthSession()
+        setChatUnavailablePersona('')
+        setEmail('')
+        setCode('')
+        setOtpStep('email')
     }
 
     if (step === 'env') {
@@ -213,6 +277,28 @@ export default function LocalAuthDialog({ onAuthenticated }) {
                     <p className="local-auth-hint">
                         All environments sign in with email + OTP. Visit and student context load automatically when available.
                     </p>
+                </div>
+            </div>
+        )
+    }
+
+    if (chatUnavailablePersona) {
+        return (
+            <div className="local-auth-overlay" role="dialog" aria-modal="true" aria-labelledby="local-auth-title">
+                <div className="local-auth-card glass">
+                    <div className="local-auth-brand local-auth-brand--compact">
+                        <SparkIcon size={28} withCircle />
+                    </div>
+                    <h2 id="local-auth-title">Signed in</h2>
+                    <p className="local-auth-subtitle">
+                        You&apos;re signed in as {personaDisplayName(chatUnavailablePersona) || 'this account'}, but
+                        this chat assistant doesn&apos;t have anything set up for that account type yet.
+                    </p>
+                    <div className="local-auth-actions">
+                        <button type="button" className="secondary" onClick={handleUseAnotherAccount}>
+                            Use a different account
+                        </button>
+                    </div>
                 </div>
             </div>
         )
@@ -273,11 +359,36 @@ export default function LocalAuthDialog({ onAuthenticated }) {
                             required
                             disabled={loading}
                         />
+                        {matchedPersonas.length >= 2 && (
+                            <fieldset className="local-auth-persona" disabled={loading}>
+                                <legend>Sign in as</legend>
+                                <div className="local-auth-persona-grid" role="radiogroup" aria-label="Sign in as">
+                                    {matchedPersonas.map((persona) => (
+                                        <button
+                                            key={persona}
+                                            type="button"
+                                            role="radio"
+                                            aria-checked={selectedPersona === persona}
+                                            className={`local-auth-persona-btn${selectedPersona === persona ? ' local-auth-persona-btn--active' : ''}`}
+                                            onClick={() => {
+                                                setSelectedPersona(persona)
+                                                setError(null)
+                                            }}
+                                        >
+                                            {personaDisplayName(persona)}
+                                        </button>
+                                    ))}
+                                </div>
+                            </fieldset>
+                        )}
                         <div className="local-auth-actions">
-                            <button type="button" className="secondary" onClick={() => setOtpStep('email')} disabled={loading}>
+                            <button type="button" className="secondary" onClick={goBackToEmail} disabled={loading}>
                                 Change email
                             </button>
-                            <button type="submit" disabled={loading}>
+                            <button
+                                type="submit"
+                                disabled={loading || (matchedPersonas.length >= 2 && !selectedPersona)}
+                            >
                                 {loading ? 'Signing in…' : 'Verify & Sign In'}
                             </button>
                         </div>

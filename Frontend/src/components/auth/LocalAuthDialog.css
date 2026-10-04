@@ -299,3 +299,50 @@
     padding: 10px 12px;
     font-size: 13px;
 }
+
+.local-auth-persona {
+    margin: 4px 0 0;
+    padding: 0;
+    border: none;
+    min-width: 0;
+}
+
+.local-auth-persona legend {
+    color: var(--text-secondary);
+    font-size: 13px;
+    padding: 0;
+    margin-bottom: 6px;
+}
+
+.local-auth-persona-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.local-auth-persona-btn {
+    appearance: none;
+    flex: 1 1 auto;
+    min-width: 7.5rem;
+    border: 1px solid var(--border-subtle) !important;
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.04) !important;
+    color: var(--text-secondary) !important;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 10px 12px;
+    cursor: pointer;
+}
+
+.local-auth-persona-btn:hover:not(:disabled) {
+    color: var(--text-primary) !important;
+    background: rgba(165, 110, 255, 0.08) !important;
+    border-color: var(--border-accent) !important;
+}
+
+.local-auth-persona-btn--active {
+    background: rgba(165, 110, 255, 0.16) !important;
+    border-color: var(--border-accent) !important;
+    color: var(--text-primary) !important;
+    box-shadow: 0 0 0 1px rgba(184, 146, 255, 0.12);
+}

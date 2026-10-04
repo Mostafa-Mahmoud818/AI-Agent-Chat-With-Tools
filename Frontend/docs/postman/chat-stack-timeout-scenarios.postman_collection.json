@@ -27,9 +27,11 @@
     { "key": "conversation_id_b", "value": "", "type": "string" },
     { "key": "auth_email", "value": "", "type": "string" },
     { "key": "otp_code", "value": "", "type": "string" },
+    { "key": "persona_code", "value": "", "type": "string" },
     { "key": "refresh_token", "value": "", "type": "string" },
     { "key": "auth_email_2", "value": "", "type": "string" },
     { "key": "otp_code_2", "value": "", "type": "string" },
+    { "key": "persona_code_2", "value": "", "type": "string" },
     { "key": "refresh_token_2", "value": "", "type": "string" }
   ],
   "item": [
@@ -73,7 +75,7 @@
               "mode": "raw",
               "raw": "{\n  \"email\": \"{{auth_email}}\"\n}"
             },
-            "description": "Set `auth_email` first. This is a public endpoint (`auth: noauth` overrides the collection's bearer auth, which would otherwise send a stale/empty token here). Sends the OTP email as a side effect and reports whether this email is eligible (`data.eligible`, `data.reasons`, `data.personas`) — mirrors `otpAccessTokenFlow.js#prepareOtpChallenge` from this frontend (DEV/TEST/STAGE all use this same public flow; only LOCAL has an extra provisioning call first).\n\nAfter this succeeds, check the `auth_email` inbox for the OTP code, paste it into the `otp_code` collection variable, then run **A2**."
+            "description": "Set `auth_email` first. This is a public endpoint (`auth: noauth` overrides the collection's bearer auth, which would otherwise send a stale/empty token here). Sends the OTP email as a side effect and reports whether this email is eligible (`data.eligible`, `data.reasons`, `data.personas`) — mirrors `otpAccessTokenFlow.js#prepareOtpChallenge` from this frontend (DEV/TEST/STAGE all use this same public flow; only LOCAL has an extra provisioning call first).\n\nAfter this succeeds, check the `auth_email` inbox for the OTP code, paste it into the `otp_code` collection variable, then run **A2**. If A1 printed 2+ `personas`, also set `persona_code` to one of them (`STUDENT` or `VISITOR`) — OTP verify now requires it."
           }
         },
         {
@@ -113,7 +115,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{auth_email}}\",\n  \"code\": \"{{otp_code}}\"\n}"
+              "raw": "{\n  \"email\": \"{{auth_email}}\",\n  \"code\": \"{{otp_code}}\",\n  \"personaCode\": \"{{persona_code}}\"\n}"
             },
             "description": "Run **A1** first and set `otp_code` from the email you received. Exchanges the OTP for a real bearer token and saves it as the `access_token` collection variable (and `refresh_token`, if the response includes one) — mirrors `otpAccessTokenFlow.js#exchangeOtpForToken`. The code is short-lived and single-use; if this fails, re-run **A1** for a fresh one."
           }
@@ -271,7 +273,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{auth_email_2}}\",\n  \"code\": \"{{otp_code_2}}\"\n}"
+              "raw": "{\n  \"email\": \"{{auth_email_2}}\",\n  \"code\": \"{{otp_code_2}}\",\n  \"personaCode\": \"{{persona_code_2}}\"\n}"
             },
             "description": "Run **B1** first and set `otp_code_2` from the email User B received. Saves the token as `access_token_2`."
           }

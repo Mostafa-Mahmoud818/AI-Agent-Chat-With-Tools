@@ -1,17 +1,17 @@
 import { describe, it, expect } from 'vitest'
-import { exclusiveDateMin } from '../../components/chat/ChatInput.jsx'
+import { inclusiveDateMin } from '../../components/chat/ChatInput.jsx'
 import { deriveComposerModeFromMessages } from '../../components/chat/ChatWindow.jsx'
 import { parseAgentMessage, turnsToMessages } from '../agentMessage.js'
 
-describe('exclusiveDateMin', () => {
-    it('returns the calendar day after afterDate', () => {
-        expect(exclusiveDateMin('2026-09-01')).toBe('2026-09-02')
-        expect(exclusiveDateMin('2026-01-31')).toBe('2026-02-01')
+describe('inclusiveDateMin', () => {
+    it('returns afterDate itself so a same-day end date is selectable', () => {
+        expect(inclusiveDateMin('2026-09-01')).toBe('2026-09-01')
+        expect(inclusiveDateMin('2026-01-31')).toBe('2026-01-31')
     })
 
     it('returns undefined for invalid input', () => {
-        expect(exclusiveDateMin(null)).toBeUndefined()
-        expect(exclusiveDateMin('not-a-date')).toBeUndefined()
+        expect(inclusiveDateMin(null)).toBeUndefined()
+        expect(inclusiveDateMin('not-a-date')).toBeUndefined()
     })
 })
 

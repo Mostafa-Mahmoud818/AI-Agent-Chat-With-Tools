@@ -66,6 +66,15 @@ const VISIT_PROMPT_GROUPS = [
 const STUDENT_PROMPT_GROUPS = [
     {label: 'Start', prompts: ['What can you do?']},
     {
+        label: 'My studies',
+        prompts: [
+            'What classes do I have today?',
+            'Who is my advisor?',
+            'How many credits have I completed?',
+            'How many community service hours do I have?',
+        ],
+    },
+    {
         label: 'Absence',
         prompts: [
             'I need to submit an absence',
@@ -166,6 +175,7 @@ export default function ChatWindow({
     const [sending, setSending] = useState(false)
     const [conversationLoading, setConversationLoading] = useState(false)
     const [firstOutgoingNeedsStart, setFirstOutgoingNeedsStart] = useState(false)
+    const [failedDraft, setFailedDraft] = useState('')
     const messagesEndRef = useRef(null)
     const chatInputRef = useRef(null)
     const esRef = useRef(null)
@@ -493,6 +503,7 @@ export default function ChatWindow({
         }
 
         setError(null)
+        setFailedDraft('')
         setSending(true)
         const optimisticId = crypto.randomUUID()
         addMessage('user', text, {displayText: opts.displayText ?? null, id: optimisticId})
@@ -547,6 +558,21 @@ export default function ChatWindow({
                 return false
             }
             releaseSendLock()
+            // ChatInput unmounts while phase is 'thinking', so its own "keep text on failure" is
+            // lost; hand the typed text back via initialText when it remounts (M5). Only for text the
+            // user typed (composer / quick prompt) — never menu picks or attachment follow-ups, whose
+            // agent input is not what the user typed. A 409 reconciles from the server transcript,
+            // which may already contain the message, so no draft is restored there.
+            const composerOriginated = !opts.fromMenu && opts.displayText == null
+            const reconciles = err instanceof ApiError && err.status === 409 && conversationId
+            if (composerOriginated && !reconciles) {
+                setFailedDraft(text)
+            }
+            if (err instanceof ApiError && err.status === 401) {
+                setError('Your session expired — please sign in again.')
+                setPhase(conversationId ? 'ready' : 'idle')
+                return false
+            }
             if (err instanceof ApiError && (
                 err.status === 400
                 || err.status === 422
@@ -581,6 +607,13 @@ export default function ChatWindow({
                 setPhase(conversationId ? 'ready' : 'idle')
                 return false
             }
+            // The api client wraps fetch failures as ApiError(0, 'network_error' | 'timeout'); anything
+            // that is not an ApiError at all is treated the same way.
+            if (!(err instanceof ApiError) || err.errorCode === 'network_error' || err.errorCode === 'timeout') {
+                setError('Couldn\'t reach the server. Check your connection and try again.')
+                setPhase(conversationId ? 'ready' : 'idle')
+                return false
+            }
             setError(conversationId ? 'Failed to send message. The session may have expired.' : 'Failed to start conversation. Is the backend running?')
             setPhase(conversationId ? 'ready' : 'idle')
             return false
@@ -606,11 +639,11 @@ export default function ChatWindow({
         if (item?.selectionSignal && typeof item.selectionSignal === 'string') {
             const signal = item.selectionSignal.trim()
             const displayLabel = item.label ?? item.name ?? null
-            handleSendMessage(signal, {displayText: displayLabel})
+            handleSendMessage(signal, {displayText: displayLabel, fromMenu: true})
             return
         }
         const {agentInput, displayText} = formatMenuSelectionMessage(item, menuHandledBy)
-        handleSendMessage(agentInput, {displayText})
+        handleSendMessage(agentInput, {displayText, fromMenu: true})
     }, [handleSendMessage, menuInteractionBusy])
 
     const handleNewChat = useCallback(() => {
@@ -621,6 +654,7 @@ export default function ChatWindow({
         setConversationId(null)
         setPhase('idle')
         setError(null)
+        setFailedDraft('')
         setSending(false)
         setConversationLoading(false)
         setFirstOutgoingNeedsStart(false)
@@ -638,7 +672,7 @@ export default function ChatWindow({
                 ? 'expired'
                 : 'ready'
     const emptyBody = activePersona === PERSONA_STUDENT
-        ? 'Ask about capabilities, submit a new absence request, or report a Banner registration error. Status questions for existing ABS- and EB- codes are handled by the front-door assistant in this same chat.'
+        ? 'Ask about your schedule, courses, advisor, degree progress, and community service. Submit a new absence request, or report a Banner registration error. Status questions for existing ABS- and EB- codes are handled by the front-door assistant in this same chat.'
         : 'Start with our Visitor Experience assistant for greetings and capabilities, then explore the catering catalog, submit IT-support tickets, or report facilities & maintenance issues.'
 
     const composerDisabled = sending
@@ -761,6 +795,7 @@ export default function ChatWindow({
                         ref={chatInputRef}
                         onSend={handleSendMessage}
                         disabled={composerDisabled}
+                        initialText={failedDraft}
                         composerMode={composerDerived.mode}
                         dateConstraint={composerDerived.dateConstraint}
                         attachmentHandledBy={composerDerived.attachmentHandledBy}

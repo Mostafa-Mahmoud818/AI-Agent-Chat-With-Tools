@@ -220,7 +220,7 @@
 .markdown-body th, .markdown-body td {
     border: 1px solid var(--border-subtle);
     padding: 6px 10px;
-    text-align: left;
+    text-align: start;
 }
 
 .markdown-body th {
@@ -278,7 +278,7 @@
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
     cursor: pointer;
-    text-align: left;
+    text-align: start;
     color: var(--text-primary);
     font-family: inherit;
     font-size: 13px;

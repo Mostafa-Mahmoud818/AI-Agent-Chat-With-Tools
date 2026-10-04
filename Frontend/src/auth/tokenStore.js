@@ -19,6 +19,7 @@ let runtimeToken = ''
 let runtimeRefreshToken = ''
 /** Epoch ms the access token expires at; {@code 0} means unknown/not applicable. */
 let runtimeExpiresAt = 0
+const tokenClearListeners = []
 
 function readStorage(key) {
     try {
@@ -121,9 +122,24 @@ export function getAccessTokenExpiresAt() {
  * @returns {void}
  */
 export function setAccessToken(token) {
+    const hadToken = Boolean(runtimeToken)
     const normalized = typeof token === 'string' ? token.trim() : ''
     runtimeToken = normalized
     writeStorage(STORAGE_KEY, normalized)
+    // Any path that drops the access token (clearTokens, setTokens with an empty token) signs the
+    // user out — tell subscribers (ChatLayout) so the sign-in dialog comes back.
+    if (hadToken && !normalized) notifyTokensCleared()
+}
+
+function notifyTokensCleared() {
+    // Copy first: a listener may unsubscribe while we iterate.
+    for (const cb of [...tokenClearListeners]) {
+        try {
+            cb()
+        } catch {
+            // A failing listener must not block the others.
+        }
+    }
 }
 
 /**
@@ -153,5 +169,28 @@ export function setTokens({ accessToken, refreshToken = '', expiresIn = null } =
  * @returns {void}
  */
 export function clearTokens() {
+    const hadToken = Boolean(runtimeToken)
     setTokens({ accessToken: '', refreshToken: '', expiresIn: null })
+    // setAccessToken already notified when a token was present; an explicit sign-out with no
+    // token still notifies exactly once.
+    if (!hadToken) notifyTokensCleared()
+}
+
+/**
+ * Registers a callback to be invoked when the access token is cleared (explicit sign-out or any
+ * write of an empty access token).
+ * Returns an unsubscribe function.
+ *
+ * @param {() => void} callback
+ * @returns {() => void} unsubscribe function
+ */
+export function onTokensCleared(callback) {
+    if (typeof callback !== 'function') {
+        return () => {}
+    }
+    tokenClearListeners.push(callback)
+    return () => {
+        const idx = tokenClearListeners.indexOf(callback)
+        if (idx >= 0) tokenClearListeners.splice(idx, 1)
+    }
 }

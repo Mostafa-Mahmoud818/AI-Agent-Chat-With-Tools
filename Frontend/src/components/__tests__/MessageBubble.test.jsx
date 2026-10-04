@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import MessageBubble from '../chat/MessageBubble'
+import MessageBubble, { formatStatusLabel } from '../chat/MessageBubble'
 
 function makeItems(count, { product = false } = {}) {
     return Array.from({ length: count }, (_, i) => ({
@@ -638,5 +638,84 @@ describe('MessageBubble user message displayText', () => {
         }
         render(<MessageBubble message={message} />)
         expect(screen.getByText('Show me the menu')).toBeInTheDocument()
+    })
+})
+
+describe('formatStatusLabel', () => {
+    it('maps IN_PROCESS to In Progress', () => {
+        expect(formatStatusLabel('IN_PROCESS')).toBe('In Progress')
+    })
+
+    it('keeps other values as-is apart from underscores', () => {
+        expect(formatStatusLabel('PENDING')).toBe('PENDING')
+        expect(formatStatusLabel('UNDER_REVIEW')).toBe('UNDER REVIEW')
+    })
+
+    it('humanises IN_PROCESS on the ticket card status', () => {
+        const msg = {
+            id: 'abs-inproc',
+            role: 'ai',
+            text: 'Your absence request ABS-2026-00007 has been submitted.',
+            timestamp: new Date(),
+            handledBy: 'STUDENT_ABSENCE',
+            payload: {
+                subtype: 'ticket',
+                menuitems: [],
+                order: null,
+                ticket: { id: 'x', referenceCode: 'ABS-2026-00007', status: 'IN_PROCESS', createdAt: null },
+            },
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText('Absence request submitted')).toBeInTheDocument()
+        expect(screen.getByText('In Progress')).toBeInTheDocument()
+        expect(screen.queryByText('IN_PROCESS')).not.toBeInTheDocument()
+    })
+
+    it('handles case-insensitive matching for IN_PROCESS', () => {
+        expect(formatStatusLabel('in_process')).toBe('In Progress')
+        expect(formatStatusLabel('In_Process')).toBe('In Progress')
+    })
+
+    it('returns null for null/empty input', () => {
+        expect(formatStatusLabel(null)).toBeNull()
+        expect(formatStatusLabel('')).toBeNull()
+    })
+})
+
+describe('MessageBubble RTL support', () => {
+    it('renders Arabic user message with dir=auto attribute', () => {
+        const msg = {
+            id: 'ar-user',
+            role: 'user',
+            text: 'مرحبا بك',
+            timestamp: new Date(),
+        }
+        render(<MessageBubble message={msg} />)
+        const textElement = screen.getByText('مرحبا بك')
+        expect(textElement).toHaveAttribute('dir', 'auto')
+    })
+
+    it('renders AI message with dir=auto on markdown body', () => {
+        const msg = {
+            id: 'ar-ai',
+            role: 'ai',
+            text: '**مرحبا**',
+            timestamp: new Date(),
+        }
+        render(<MessageBubble message={msg} />)
+        const markdownBody = screen.getByText('مرحبا').closest('.markdown-body')
+        expect(markdownBody).toHaveAttribute('dir', 'auto')
+    })
+
+    it('renders system message with dir=auto', () => {
+        const msg = {
+            id: 'sys-ar',
+            role: 'system',
+            text: 'رسالة نظام',
+            timestamp: new Date(),
+        }
+        render(<MessageBubble message={msg} />)
+        const textElement = screen.getByText('رسالة نظام')
+        expect(textElement).toHaveAttribute('dir', 'auto')
     })
 })
