@@ -15,6 +15,12 @@ describe('isMenuSelectionUserInput', () => {
         expect(isMenuSelectionUserInput('[student_absence-menu] Selected Reason (name: Personal) (id: 1)')).toBe(true)
     })
 
+    it('detects the student IT Support and Facilities & Maintenance picker prefixes', () => {
+        expect(isMenuSelectionUserInput('[student_it_support-menu] Selected Room (name: D03) (id: r-1)')).toBe(true)
+        expect(isMenuSelectionUserInput(
+            '[student_facilities_maintenance-menu] Selected Building (name: Head Quarter) (id: b-1)')).toBe(true)
+    })
+
     it('returns false for free-typed text, attachment markers, and nullish input', () => {
         expect(isMenuSelectionUserInput('Hello')).toBe(false)
         expect(isMenuSelectionUserInput('[attachment] path=a filename=b type=c')).toBe(false)
@@ -118,6 +124,18 @@ describe('formatMenuSelectionMessage', () => {
         expect(resolveMenuPrefixFromHandledBy('Error Banner Agent')).toBe(MENU_PREFIX.banner_error)
         expect(resolveMenuPrefixFromHandledBy('ERROR')).toBeNull()
         expect(resolveMenuPrefixFromHandledBy('error')).toBeNull()
+    })
+
+    it('resolveMenuPrefixFromHandledBy maps the student picker routes by enum / wire name, not the Visitor prefix', () => {
+        expect(resolveMenuPrefixFromHandledBy('STUDENT_IT_SUPPORT')).toBe(MENU_PREFIX.student_it_support)
+        expect(resolveMenuPrefixFromHandledBy('student_it_support')).toBe(MENU_PREFIX.student_it_support)
+        expect(resolveMenuPrefixFromHandledBy('STUDENT_FACILITIES_MAINTENANCE'))
+            .toBe(MENU_PREFIX.student_facilities_maintenance)
+        expect(resolveMenuPrefixFromHandledBy('student_facilities_maintenance'))
+            .toBe(MENU_PREFIX.student_facilities_maintenance)
+        // The Visitor routes keep their own tokens.
+        expect(resolveMenuPrefixFromHandledBy('IT_SUPPORT')).toBe(MENU_PREFIX.it_support)
+        expect(resolveMenuPrefixFromHandledBy('FACILITIES_MAINTENANCE')).toBe(MENU_PREFIX.facilities_maintenance)
     })
 
     it('banner_error fallback emits Selected Category (not Reason)', () => {

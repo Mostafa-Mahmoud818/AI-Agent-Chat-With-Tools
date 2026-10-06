@@ -73,4 +73,15 @@ describe('ChatWindow empty state by persona', () => {
         expect(screen.getByRole('button', { name: /I got a Banner registration error/i })).toBeInTheDocument()
         expect(screen.getByText('Student persona')).toBeInTheDocument()
     })
+
+    it('shows student IT Support and Facilities prompts and mentions them in the empty copy', () => {
+        personaMocks.resolveActivePersona.mockReturnValue(PERSONA_STUDENT)
+        render(<ChatWindow />)
+        expect(screen.getByText(/Report an IT problem or a building issue/i)).toBeInTheDocument()
+        expect(screen.getByText(/ABS-, EB-, IT- and FM- codes/i)).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: /My Wi-Fi is not working/i })).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: /AC in my classroom/i })).toBeInTheDocument()
+        expect(screen.getByText('IT Support')).toBeInTheDocument()
+        expect(screen.getByText('Facilities')).toBeInTheDocument()
+    })
 })

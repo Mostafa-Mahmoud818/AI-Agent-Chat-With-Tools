@@ -224,6 +224,17 @@ function isAbsenceTicket(referenceCode) {
     return typeof referenceCode === 'string' && /^ABS-/i.test(referenceCode.trim())
 }
 
+function isFacilitiesTicket(referenceCode) {
+    return typeof referenceCode === 'string' && /^FM-/i.test(referenceCode.trim())
+}
+
+/** Card heading by reference-code prefix; IT and unknown codes keep the generic ticket wording. */
+function ticketHeading(referenceCode) {
+    if (isAbsenceTicket(referenceCode)) return 'Absence request submitted'
+    if (isFacilitiesTicket(referenceCode)) return 'Facilities request submitted'
+    return 'Support Ticket Created'
+}
+
 function TicketCard({ payload }) {
     // Schema: payload.ticket holds the nested ticket object {id, referenceCode, status, createdAt},
     // mirroring payload.order. parseAgentMessage folds pre-2026-07-27 turns (flat ticketId /
@@ -246,7 +257,7 @@ function TicketCard({ payload }) {
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 13a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" />
                 </svg>
-                <span>{isAbsenceTicket(ticketRef) ? 'Absence request submitted' : 'Support Ticket Created'}</span>
+                <span>{ticketHeading(ticketRef)}</span>
             </div>
             {hasMeta && (
                 <div className="ticket-card-meta">
@@ -401,6 +412,7 @@ function formatHandledBy(value) {
     if (normalized === 'FRONT_DOOR') return 'Assistant'
     if (normalized === 'STUDENT_ABSENCE') return 'Absence'
     if (normalized === 'STUDENT_IT_SUPPORT') return 'IT Support'
+    if (normalized === 'STUDENT_FACILITIES_MAINTENANCE') return 'Facilities & Maintenance'
     if (normalized === 'BANNER_ERROR') return 'Error Banner'
     if (normalized === 'ERROR') return 'Error'
     // SSE labels from backend (AgentVariableSupport)
@@ -421,7 +433,8 @@ function formatHandledBy(value) {
 // unrecoverable navigation-shape error also uses `subtype:"error"` with no menuitems), so it can
 // never distinguish "this was a menu failure" from any other error. The route can.
 const MENU_CAPABLE_HANDLERS = new Set([
-    'IT_SUPPORT', 'CATERING', 'FACILITIES_MAINTENANCE', 'STUDENT_ABSENCE', 'STUDENT_IT_SUPPORT', 'BANNER_ERROR',
+    'IT_SUPPORT', 'CATERING', 'FACILITIES_MAINTENANCE', 'STUDENT_ABSENCE', 'STUDENT_IT_SUPPORT',
+    'STUDENT_FACILITIES_MAINTENANCE', 'BANNER_ERROR',
     'IT SUPPORT AGENT', 'CATERING AGENT', 'FACILITIES & MAINTENANCE AGENT', 'FACILITIES MAINTENANCE AGENT',
     'ABSENCE REQUEST AGENT', 'ERROR BANNER AGENT',
 ])

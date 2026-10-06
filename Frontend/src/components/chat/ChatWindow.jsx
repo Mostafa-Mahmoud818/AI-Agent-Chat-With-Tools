@@ -88,6 +88,20 @@ const STUDENT_PROMPT_GROUPS = [
             "I can't register - Banner error",
         ],
     },
+    {
+        label: 'IT Support',
+        prompts: [
+            'My Wi-Fi is not working',
+            'My laptop charger is broken',
+        ],
+    },
+    {
+        label: 'Facilities',
+        prompts: [
+            'The AC in my classroom is not working',
+            'The lights in my room are flickering',
+        ],
+    },
 ]
 
 function isSessionGone(err) {
@@ -672,7 +686,7 @@ export default function ChatWindow({
                 ? 'expired'
                 : 'ready'
     const emptyBody = activePersona === PERSONA_STUDENT
-        ? 'Ask about your schedule, courses, advisor, degree progress, and community service. Submit a new absence request, or report a Banner registration error. Status questions for existing ABS- and EB- codes are handled by the front-door assistant in this same chat.'
+        ? 'Ask about your schedule, courses, advisor, degree progress, and community service. Report an IT problem or a building issue such as AC, lights, or cleaning, submit a new absence request, or report a Banner registration error. Status questions for existing ABS-, EB-, IT- and FM- codes are handled by the front-door assistant in this same chat.'
         : 'Start with our Visitor Experience assistant for greetings and capabilities, then explore the catering catalog, submit IT-support tickets, or report facilities & maintenance issues.'
 
     const composerDisabled = sending

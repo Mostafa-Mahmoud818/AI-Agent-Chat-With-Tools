@@ -9,6 +9,7 @@
  * - `[facilities-menu] `
  * - `[student_absence-menu] `
  * - `[banner_error-menu] `
+ * - `[student_it_support-menu] ` / `[student_facilities_maintenance-menu] ` (student Building → Floor → Room pickers)
  *
  * @file
  * @module utils/menuSelection
@@ -21,6 +22,8 @@ export const MENU_PREFIX = {
     facilities_maintenance: '[facilities-menu] ',
     student_absence: '[student_absence-menu] ',
     banner_error: '[banner_error-menu] ',
+    student_it_support: '[student_it_support-menu] ',
+    student_facilities_maintenance: '[student_facilities_maintenance-menu] ',
 }
 
 /**
@@ -88,6 +91,12 @@ export function resolveMenuPrefixFromHandledBy(handledBy) {
     // Banner before any broad ERROR match — never use includes('ERROR') alone.
     if (isBannerErrorHandledBy(handledBy)) return MENU_PREFIX.banner_error
     if (u.includes('ABSENCE') || u.includes('STUDENT_ABSENCE')) return MENU_PREFIX.student_absence
+    // The student picker routes share display names with the Visitor routes ("IT Support Agent"), so only their
+    // enum / wire names identify them. Checked before the generic FACILITIES / IT_SUPPORT matches below.
+    // (The fallback formatter cannot rebuild their Building / Floor / Room levels; the backend's `selectionSignal`
+    // is the source of truth for those clicks.)
+    if (u.includes('STUDENT_FACILITIES_MAINTENANCE')) return MENU_PREFIX.student_facilities_maintenance
+    if (u.includes('STUDENT_IT_SUPPORT')) return MENU_PREFIX.student_it_support
     if (u.includes('FACILITIES')) return MENU_PREFIX.facilities_maintenance
     if (u.includes('IT_SUPPORT') || u === 'IT SUPPORT' || u.includes('IT SUPPORT')) return MENU_PREFIX.it_support
     if (u.includes('CATERING')) return MENU_PREFIX.catering

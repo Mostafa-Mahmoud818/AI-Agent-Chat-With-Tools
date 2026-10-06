@@ -312,6 +312,35 @@ describe('MessageBubble', () => {
         expect(screen.queryByText('Support Ticket Created')).not.toBeInTheDocument()
     })
 
+    it('ticket card uses the Facilities title for FM- reference codes', () => {
+        const msg = {
+            ...ticketMessage('t-fm', {
+                id: '9f4c2d8e-1234-4abc-9def-1234567890ab',
+                referenceCode: 'FM-2026-00029',
+                status: 'PENDING',
+                createdAt: null,
+            }),
+            handledBy: 'Facilities & Maintenance Agent',
+            text: 'Your request FM-2026-00029 has been submitted.',
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText('Facilities request submitted')).toBeInTheDocument()
+        expect(screen.getByText('FM-2026-00029')).toBeInTheDocument()
+        expect(screen.queryByText('Support Ticket Created')).not.toBeInTheDocument()
+    })
+
+    it('ticket card keeps the generic title for IT- reference codes', () => {
+        const msg = ticketMessage('t-it', {
+            id: '9f4c2d8e-1234-4abc-9def-1234567890ab',
+            referenceCode: 'IT-2026-00056',
+            status: 'PENDING',
+            createdAt: null,
+        })
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText('Support Ticket Created')).toBeInTheDocument()
+        expect(screen.queryByText('Facilities request submitted')).not.toBeInTheDocument()
+    })
+
     it('ticket card never renders the internal ticket id UUID', () => {
         const msg = ticketMessage('t-sec', {
             id: '9f4c2d8e-1234-4abc-9def-1234567890ab',
@@ -437,6 +466,33 @@ describe('MessageBubble', () => {
         render(<MessageBubble message={msg} />)
         expect(screen.getByText('Catalog lookup failed for this visit.')).toBeInTheDocument()
         expect(screen.queryByText(/while loading the menu/i)).not.toBeInTheDocument()
+    })
+
+    it('labels restored student F&M turns with the display name, not the raw route token', () => {
+        const msg = {
+            id: 'm-sfm',
+            role: 'ai',
+            text: 'Which building are you in?',
+            timestamp: new Date(),
+            handledBy: 'STUDENT_FACILITIES_MAINTENANCE',
+            payload: null,
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText('Answered by Facilities & Maintenance')).toBeInTheDocument()
+        expect(screen.queryByText(/student facilities maintenance/i)).not.toBeInTheDocument()
+    })
+
+    it('uses menu error copy for the student F&M route when the error has no text', () => {
+        const msg = {
+            id: 'm-sfm-err',
+            role: 'ai',
+            text: '   ',
+            timestamp: new Date(),
+            handledBy: 'STUDENT_FACILITIES_MAINTENANCE',
+            payload: { subtype: 'error', menuitems: [], order: null },
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText('Something went wrong while loading the menu. Please try again or contact support if the issue persists.')).toBeInTheDocument()
     })
 
     it('uses menu error copy when error has no text and the route has a real menu', () => {

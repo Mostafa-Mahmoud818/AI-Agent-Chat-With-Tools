@@ -693,6 +693,29 @@ describe('turnsToMessages', () => {
         expect(userMsg.displayText).toBe('VPN')
     })
 
+    it('keeps displayText for the student picker taps so restored chats do not show the raw signal or its id', () => {
+        const turns = [
+            {
+                id: 'd4',
+                userInput: '[student_facilities_maintenance-menu] Selected Room (name: D03) (id: 9f7a8b6c-5d4e-3f2a-1b0c-9d8e7f6a5b4c)',
+                displayText: 'D03',
+                agentResponse: 'Got it.',
+                routeCategory: 'STUDENT_FACILITIES_MAINTENANCE',
+                createdAt: '2025-01-01T12:00:00Z',
+            },
+            {
+                id: 'd5',
+                userInput: '[student_it_support-menu] Selected Floor (name: Floor 4) (id: f-4)',
+                displayText: 'Floor 4',
+                agentResponse: 'Got it.',
+                routeCategory: 'STUDENT_IT_SUPPORT',
+                createdAt: '2025-01-01T12:01:00Z',
+            },
+        ]
+        const userMsgs = turnsToMessages(turns).filter((m) => m.role === 'user')
+        expect(userMsgs.map((m) => m.displayText)).toEqual(['D03', 'Floor 4'])
+    })
+
     it('maps SYSTEM turn to a single agent message without a user bubble', () => {
         const agentResponse = JSON.stringify({
             replyType: 'text',

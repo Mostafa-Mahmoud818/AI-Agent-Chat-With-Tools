@@ -529,7 +529,7 @@ const ChatInput = forwardRef(function ChatInput({
                     onChange={(e) => setLanguageHint(e.target.value)}
                     disabled={micDisabled || recording}
                     aria-label="Voice input language"
-                    title="Voice input language"
+                    title="Voice input language — replies follow the language you type"
                 >
                     <option value="">Auto</option>
                     <option value="en">EN</option>
