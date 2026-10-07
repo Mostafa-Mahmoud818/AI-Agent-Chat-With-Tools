@@ -21,6 +21,10 @@ describe('isMenuSelectionUserInput', () => {
             '[student_facilities_maintenance-menu] Selected Building (name: Head Quarter) (id: b-1)')).toBe(true)
     })
 
+    it('detects the student catering prefix', () => {
+        expect(isMenuSelectionUserInput('[student_catering-menu] Selected Category (id: cat-1)')).toBe(true)
+    })
+
     it('returns false for free-typed text, attachment markers, and nullish input', () => {
         expect(isMenuSelectionUserInput('Hello')).toBe(false)
         expect(isMenuSelectionUserInput('[attachment] path=a filename=b type=c')).toBe(false)
@@ -133,9 +137,12 @@ describe('formatMenuSelectionMessage', () => {
             .toBe(MENU_PREFIX.student_facilities_maintenance)
         expect(resolveMenuPrefixFromHandledBy('student_facilities_maintenance'))
             .toBe(MENU_PREFIX.student_facilities_maintenance)
+        expect(resolveMenuPrefixFromHandledBy('STUDENT_CATERING')).toBe(MENU_PREFIX.student_catering)
+        expect(resolveMenuPrefixFromHandledBy('student_catering')).toBe(MENU_PREFIX.student_catering)
         // The Visitor routes keep their own tokens.
         expect(resolveMenuPrefixFromHandledBy('IT_SUPPORT')).toBe(MENU_PREFIX.it_support)
         expect(resolveMenuPrefixFromHandledBy('FACILITIES_MAINTENANCE')).toBe(MENU_PREFIX.facilities_maintenance)
+        expect(resolveMenuPrefixFromHandledBy('CATERING')).toBe(MENU_PREFIX.catering)
     })
 
     it('banner_error fallback emits Selected Category (not Reason)', () => {

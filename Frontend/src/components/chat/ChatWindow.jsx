@@ -102,6 +102,13 @@ const STUDENT_PROMPT_GROUPS = [
             'The lights in my room are flickering',
         ],
     },
+    {
+        label: 'Catering',
+        prompts: [
+            'I want to order coffee',
+            'Show me the catering menu',
+        ],
+    },
 ]
 
 function isSessionGone(err) {
@@ -686,7 +693,7 @@ export default function ChatWindow({
                 ? 'expired'
                 : 'ready'
     const emptyBody = activePersona === PERSONA_STUDENT
-        ? 'Ask about your schedule, courses, advisor, degree progress, and community service. Report an IT problem or a building issue such as AC, lights, or cleaning, submit a new absence request, or report a Banner registration error. Status questions for existing ABS-, EB-, IT- and FM- codes are handled by the front-door assistant in this same chat.'
+        ? 'Ask about your schedule, courses, advisor, degree progress, and community service. Report an IT problem or a building issue such as AC, lights, or cleaning, order catering, submit a new absence request, or report a Banner registration error. Status questions for existing ABS-, EB-, IT-, FM-, and CT- codes are handled by the front-door assistant in this same chat.'
         : 'Start with our Visitor Experience assistant for greetings and capabilities, then explore the catering catalog, submit IT-support tickets, or report facilities & maintenance issues.'
 
     const composerDisabled = sending

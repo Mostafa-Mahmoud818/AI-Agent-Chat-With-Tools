@@ -711,9 +711,17 @@ describe('turnsToMessages', () => {
                 routeCategory: 'STUDENT_IT_SUPPORT',
                 createdAt: '2025-01-01T12:01:00Z',
             },
+            {
+                id: 'd6',
+                userInput: '[student_catering-menu] Selected Category (name: Drinks) (id: cat-1)',
+                displayText: 'Drinks',
+                agentResponse: 'Great choice!',
+                routeCategory: 'STUDENT_CATERING',
+                createdAt: '2025-01-01T12:02:00Z',
+            },
         ]
         const userMsgs = turnsToMessages(turns).filter((m) => m.role === 'user')
-        expect(userMsgs.map((m) => m.displayText)).toEqual(['D03', 'Floor 4'])
+        expect(userMsgs.map((m) => m.displayText)).toEqual(['D03', 'Floor 4', 'Drinks'])
     })
 
     it('maps SYSTEM turn to a single agent message without a user bubble', () => {

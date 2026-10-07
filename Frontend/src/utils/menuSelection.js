@@ -8,6 +8,7 @@
  * - `[it_support-menu] `
  * - `[facilities-menu] `
  * - `[student_absence-menu] `
+ * - `[student_catering-menu] `
  * - `[banner_error-menu] `
  * - `[student_it_support-menu] ` / `[student_facilities_maintenance-menu] ` (student Building → Floor → Room pickers)
  *
@@ -21,6 +22,7 @@ export const MENU_PREFIX = {
     it_support: '[it_support-menu] ',
     facilities_maintenance: '[facilities-menu] ',
     student_absence: '[student_absence-menu] ',
+    student_catering: '[student_catering-menu] ',
     banner_error: '[banner_error-menu] ',
     student_it_support: '[student_it_support-menu] ',
     student_facilities_maintenance: '[student_facilities_maintenance-menu] ',
@@ -97,6 +99,7 @@ export function resolveMenuPrefixFromHandledBy(handledBy) {
     // is the source of truth for those clicks.)
     if (u.includes('STUDENT_FACILITIES_MAINTENANCE')) return MENU_PREFIX.student_facilities_maintenance
     if (u.includes('STUDENT_IT_SUPPORT')) return MENU_PREFIX.student_it_support
+    if (u.includes('STUDENT_CATERING')) return MENU_PREFIX.student_catering
     if (u.includes('FACILITIES')) return MENU_PREFIX.facilities_maintenance
     if (u.includes('IT_SUPPORT') || u === 'IT SUPPORT' || u.includes('IT SUPPORT')) return MENU_PREFIX.it_support
     if (u.includes('CATERING')) return MENU_PREFIX.catering

@@ -412,6 +412,7 @@ function formatHandledBy(value) {
     if (normalized === 'FRONT_DOOR') return 'Assistant'
     if (normalized === 'STUDENT_ABSENCE') return 'Absence'
     if (normalized === 'STUDENT_IT_SUPPORT') return 'IT Support'
+    if (normalized === 'STUDENT_CATERING') return 'Catering'
     if (normalized === 'STUDENT_FACILITIES_MAINTENANCE') return 'Facilities & Maintenance'
     if (normalized === 'BANNER_ERROR') return 'Error Banner'
     if (normalized === 'ERROR') return 'Error'
@@ -434,7 +435,7 @@ function formatHandledBy(value) {
 // never distinguish "this was a menu failure" from any other error. The route can.
 const MENU_CAPABLE_HANDLERS = new Set([
     'IT_SUPPORT', 'CATERING', 'FACILITIES_MAINTENANCE', 'STUDENT_ABSENCE', 'STUDENT_IT_SUPPORT',
-    'STUDENT_FACILITIES_MAINTENANCE', 'BANNER_ERROR',
+    'STUDENT_CATERING', 'STUDENT_FACILITIES_MAINTENANCE', 'BANNER_ERROR',
     'IT SUPPORT AGENT', 'CATERING AGENT', 'FACILITIES & MAINTENANCE AGENT', 'FACILITIES MAINTENANCE AGENT',
     'ABSENCE REQUEST AGENT', 'ERROR BANNER AGENT',
 ])

@@ -495,6 +495,33 @@ describe('MessageBubble', () => {
         expect(screen.getByText('Something went wrong while loading the menu. Please try again or contact support if the issue persists.')).toBeInTheDocument()
     })
 
+    it('labels restored student catering turns with the display name, not the raw route token', () => {
+        const msg = {
+            id: 'm-sc',
+            role: 'ai',
+            text: 'What would you like to order?',
+            timestamp: new Date(),
+            handledBy: 'STUDENT_CATERING',
+            payload: null,
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText('Answered by Catering')).toBeInTheDocument()
+        expect(screen.queryByText(/student catering/i)).not.toBeInTheDocument()
+    })
+
+    it('uses menu error copy for the student catering route when the error has no text', () => {
+        const msg = {
+            id: 'm-sc-err',
+            role: 'ai',
+            text: '   ',
+            timestamp: new Date(),
+            handledBy: 'STUDENT_CATERING',
+            payload: { subtype: 'error', menuitems: [], order: null },
+        }
+        render(<MessageBubble message={msg} />)
+        expect(screen.getByText('Something went wrong while loading the menu. Please try again or contact support if the issue persists.')).toBeInTheDocument()
+    })
+
     it('uses menu error copy when error has no text and the route has a real menu', () => {
         const msg = {
             id: 'm5b',
