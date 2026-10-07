@@ -69,7 +69,7 @@ Bearer-token precedence: the OTP dialog writes to `localStorage: ankabut.chat.ac
 - Real-time SSE streaming for agent responses (`AssistantTurnReplyDto`)
 - Multi-turn conversational AI with message history
 - Multi-agent routing (Visitor Experience / Front Door, Catering, IT Support, Facilities & Maintenance, Student Absence, Error Banner, Student Experience, Student IT Support / Facilities & Maintenance / Catering)
-- Server-driven "start a request" cards on the empty chat screen (`GET .../orchestration/request-types`): label, template prompt and icon all come from the backend, in English or Arabic
+- Empty chat screen shows only the server-driven "What are you looking for?" request cards (`GET .../orchestration/request-types`): label, template prompt and icon all come from the backend, in English or Arabic. No static welcome text or quick prompts.
 - Persona picker when both Visitor and Student contexts are available
 - Student absence composer modes from the last AI subtype: exclusive end-date (`date_request`) then attach (`attachment_request`) when required, including resume from last turn. An approved-overlap conflict reuses `date_request` for `dateFrom` (picker + markdown `textString`); no new subtype.
 - Markdown rendering of agent responses
@@ -250,7 +250,7 @@ Every secure request (including SSE via `fetch`) sends `Authorization: Bearer <t
 ## Known Limitations
 
 - Sidebar requests 100 conversations per page; turn history defaults to 100 (max 500).
-- Question-style quick prompts ("What can you do?", "My studies") are static; "start a request" shortcuts come only from the backend request-type cards. Routing is always decided by the backend classifier.
+- The empty chat screen has no static prompts; its only shortcuts are the backend request-type cards. If no cards load, the screen is blank apart from the sign-in hint and the composer still works. Routing is always decided by the backend classifier.
 - Request-type cards need an OTP login (only OTP tokens carry `persona_code`) and an active persona that matches it.
 - No message editing/deletion (append-only).
 - Session rollover is owned by the modulith; clients do not send `previousSessionId`.

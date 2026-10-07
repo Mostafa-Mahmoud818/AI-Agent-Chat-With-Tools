@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import ChatWindow from '../chat/ChatWindow.jsx'
 import { PERSONA_VISIT } from '../../config/personaSession.js'
 import * as api from '../../services/api.js'
+import { getAccessToken } from '../../auth/tokenStore.js'
 
 vi.mock('../../services/api.js', () => ({
     ApiError: class ApiError extends Error {
@@ -18,6 +19,7 @@ vi.mock('../../services/api.js', () => ({
     sendReply: vi.fn(),
     SSE_CONCURRENT_STREAMS_ERROR: 'SSE_CONCURRENT',
     startOrchestration: vi.fn(),
+    getRequestTypes: vi.fn(async () => []),
 }))
 
 vi.mock('../../auth/tokenStore.js', () => ({
@@ -55,6 +57,21 @@ vi.mock('../../config/personaSession.js', async (importOriginal) => {
     }
 })
 
+/** Unsigned JWT carrying the given persona_code claim. */
+function tokenFor(personaCode) {
+    const payload = btoa(JSON.stringify({ sub: 'u', persona_code: personaCode }))
+        .replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_')
+    return `e30.${payload}.sig`
+}
+
+/** Renders one VISITOR request-type card so a tap can start a round from the empty screen. */
+function withVisitorRequestCard() {
+    vi.mocked(getAccessToken).mockReturnValue(tokenFor('VISITOR'))
+    vi.mocked(api.getRequestTypes).mockResolvedValue([
+        { key: 'it_support', label: 'IT Support', templatePrompt: 'I need IT support', icon: null },
+    ])
+}
+
 function mockStreamController() {
     const handlers = {
         onmessage: null,
@@ -79,6 +96,9 @@ describe('ChatWindow round order and send guard', () => {
         vi.mocked(api.sendReply).mockReset()
         vi.mocked(api.startOrchestration).mockReset()
         vi.mocked(api.fetchAllConversationTurns).mockResolvedValue([])
+        vi.mocked(api.getRequestTypes).mockReset()
+        vi.mocked(api.getRequestTypes).mockResolvedValue([])
+        vi.mocked(getAccessToken).mockReturnValue('tok')
     })
 
     it('awaits POST before opening the stream (POST-then-stream)', async () => {
@@ -281,8 +301,9 @@ describe('ChatWindow round order and send guard', () => {
         })
         vi.mocked(api.createResponseStream).mockReturnValue(stream)
 
+        withVisitorRequestCard()
         render(<ChatWindow />)
-        const prompt = screen.getByRole('button', { name: /what can you do/i })
+        const prompt = await screen.findByRole('button', { name: /IT Support/i })
         await act(async () => {
             fireEvent.click(prompt)
             fireEvent.click(prompt)
@@ -309,8 +330,9 @@ describe('ChatWindow round order and send guard', () => {
         })
         vi.mocked(api.createResponseStream).mockReturnValue(stream)
 
+        withVisitorRequestCard()
         render(<ChatWindow />)
-        const prompt = screen.getByRole('button', { name: /what can you do/i })
+        const prompt = await screen.findByRole('button', { name: /IT Support/i })
         await act(async () => {
             fireEvent.click(prompt)
         })

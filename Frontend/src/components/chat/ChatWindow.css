@@ -150,32 +150,6 @@
     animation: fadeInUp 0.5s ease;
 }
 
-.empty-icon {
-    margin-bottom: 18px;
-    animation: bounceIn 0.7s ease;
-}
-
-.empty-icon svg {
-    width: 72px;
-    height: 72px;
-}
-
-.empty-state h2 {
-    font-size: 24px;
-    font-weight: 650;
-    color: var(--text-primary);
-    margin-bottom: 8px;
-    letter-spacing: -0.03em;
-}
-
-.empty-state p {
-    font-size: 14px;
-    color: var(--text-secondary);
-    max-width: 480px;
-    line-height: 1.6;
-    margin-bottom: 22px;
-}
-
 .visit-id-hint {
     max-width: 520px;
     margin: 0 auto 16px;
@@ -187,74 +161,6 @@
     background: rgba(251, 191, 36, 0.08);
     border: 1px solid rgba(251, 191, 36, 0.32);
     border-radius: var(--radius-md);
-}
-
-.quick-prompts {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 16px;
-    width: min(640px, 100%);
-    margin-inline: auto;
-    text-align: left;
-}
-
-.quick-prompt-group-label {
-    display: block;
-    font-size: 11px;
-    font-weight: 650;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--text-muted);
-    margin-bottom: 8px;
-}
-
-.quick-prompt-group-items {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-}
-
-.quick-prompt {
-    padding: 10px 14px;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-    background: rgba(255, 255, 255, 0.03);
-    color: var(--text-primary);
-    font-size: 13px;
-    font-weight: 500;
-    line-height: 1.35;
-    cursor: pointer;
-    transition: all var(--transition-fast);
-    max-width: 100%;
-    text-align: left;
-    white-space: normal;
-    overflow: visible;
-}
-
-.quick-prompt:hover:not(:disabled) {
-    background: var(--accent-soft);
-    border-color: var(--border-accent);
-    color: var(--text-primary);
-    transform: translateY(-1px);
-    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
-}
-
-.quick-prompt:active:not(:disabled) {
-    transform: translateY(0);
-}
-
-.quick-prompt:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-    transform: none;
-    box-shadow: none;
-}
-
-@media (min-width: 640px) {
-    .quick-prompts {
-        grid-template-columns: 1fr 1fr;
-        gap: 18px 16px;
-    }
 }
 
 .error-banner {

@@ -44,25 +44,6 @@ import './ChatWindow.css'
 
 const log = createLogger('ChatWindow')
 
-// Question-style starters only. "Start a request" shortcuts come from the backend
-// (GET .../orchestration/request-types) and render as RequestTypeCards.
-const VISIT_PROMPT_GROUPS = [
-    {label: 'Start', prompts: ['What can you do?']},
-]
-
-const STUDENT_PROMPT_GROUPS = [
-    {label: 'Start', prompts: ['What can you do?']},
-    {
-        label: 'My studies',
-        prompts: [
-            'What classes do I have today?',
-            'Who is my advisor?',
-            'How many credits have I completed?',
-            'How many community service hours do I have?',
-        ],
-    },
-]
-
 function isSessionGone(err) {
     return err instanceof ApiError &&
         (err.errorCode === 'session_expired' || err.status === 410)
@@ -636,7 +617,6 @@ export default function ChatWindow({
 
     const showEmptyState = messages.length === 0 && phase === 'idle' && !conversationLoading
     const showNewChatBtn = messages.length > 0 || conversationId != null
-    const promptGroups = activePersona === PERSONA_STUDENT ? STUDENT_PROMPT_GROUPS : VISIT_PROMPT_GROUPS
     const statusTone = conversationLoading
         ? 'loading'
         : phase === 'thinking'
@@ -644,9 +624,6 @@ export default function ChatWindow({
             : phase === 'expired'
                 ? 'expired'
                 : 'ready'
-    const emptyBody = activePersona === PERSONA_STUDENT
-        ? 'Ask about your schedule, courses, advisor, degree progress, and community service. Report an IT problem or a building issue such as AC, lights, or cleaning, order catering, submit a new absence request, or report a Banner registration error. Status questions for existing ABS-, EB-, IT-, FM-, and CT- codes are handled by the front-door assistant in this same chat.'
-        : 'Start with our Visitor Experience assistant for greetings and capabilities, then explore the catering catalog, submit IT-support tickets, or report facilities & maintenance issues.'
 
     const composerDisabled = sending
         || (contextConfigured ? false : (!conversationId || firstOutgoingNeedsStart))
@@ -697,9 +674,6 @@ export default function ChatWindow({
                     <div className="conversation-loading-banner" aria-live="polite">Loading conversation…</div>}
                 {showEmptyState && (
                     <div className="empty-state">
-                        <div className="empty-icon"><SparkIcon size={48} withCircle/></div>
-                        <h2>How can I help you today?</h2>
-                        <p>{emptyBody}</p>
                         {!contextConfigured && (
                             <div className="visit-id-hint" role="status">
                                 {contextRequiredMessage}
@@ -710,25 +684,6 @@ export default function ChatWindow({
                             disabled={!contextConfigured || sending || conversationReadOnly}
                             onSelect={(type) => handleSendMessage(type.templatePrompt)}
                         />
-                        <div className="quick-prompts">
-                            {promptGroups.map((group) => (
-                                <div key={group.label} className="quick-prompt-group">
-                                    <span className="quick-prompt-group-label">{group.label}</span>
-                                    <div className="quick-prompt-group-items">
-                                        {group.prompts.map((prompt) => (
-                                            <button
-                                                key={prompt}
-                                                className="quick-prompt"
-                                                disabled={!contextConfigured || sending || conversationReadOnly}
-                                                onClick={() => handleSendMessage(prompt)}
-                                            >
-                                                {prompt}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
                     </div>
                 )}
                 {messages.map((msg) => (

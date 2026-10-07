@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import ChatWindow from '../chat/ChatWindow.jsx'
 import { PERSONA_STUDENT, PERSONA_VISIT } from '../../config/personaSession.js'
+import * as api from '../../services/api.js'
+import { getAccessToken } from '../../auth/tokenStore.js'
 
 vi.mock('../../services/api.js', () => ({
     ApiError: class ApiError extends Error {},
@@ -49,40 +51,65 @@ vi.mock('../../config/personaSession.js', async (importOriginal) => {
     }
 })
 
-describe('ChatWindow empty state by persona', () => {
+/** Unsigned JWT carrying the given persona_code claim. */
+function tokenFor(personaCode) {
+    const payload = btoa(JSON.stringify({ sub: 'u', persona_code: personaCode }))
+        .replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_')
+    return `e30.${payload}.sig`
+}
+
+const STUDENT_TYPES = [
+    { key: 'student_absence', label: 'Absence Request', templatePrompt: 'I need to report an absence', icon: null },
+    { key: 'banner_error', label: 'Report Error', templatePrompt: 'I want to report an error', icon: null },
+]
+
+describe('ChatWindow empty state', () => {
     beforeEach(() => {
         Element.prototype.scrollIntoView = vi.fn()
         personaMocks.resolveActivePersona.mockReset()
         personaMocks.hasConfiguredActivePersonaContext.mockReturnValue(true)
         personaMocks.isOtherContextConversation.mockReturnValue(false)
+        vi.mocked(api.getRequestTypes).mockReset()
+        vi.mocked(api.getRequestTypes).mockResolvedValue([])
+        vi.mocked(getAccessToken).mockReturnValue('tok')
     })
 
-    it('shows visitor empty copy and only the generic starter prompt', () => {
-        personaMocks.resolveActivePersona.mockReturnValue(PERSONA_VISIT)
-        render(<ChatWindow />)
-        expect(screen.getByText(/Visitor Experience assistant/i)).toBeInTheDocument()
-        expect(screen.getByRole('button', { name: /What can you do\?/i })).toBeInTheDocument()
-        expect(screen.queryByRole('button', { name: /VPN connection/i })).not.toBeInTheDocument()
-        expect(screen.getByText('Visitor persona')).toBeInTheDocument()
-    })
-
-    it('shows student empty copy covering every student request route', () => {
+    it('shows only the request-type cards section for the token persona', async () => {
         personaMocks.resolveActivePersona.mockReturnValue(PERSONA_STUDENT)
+        vi.mocked(getAccessToken).mockReturnValue(tokenFor('STUDENT'))
+        vi.mocked(api.getRequestTypes).mockResolvedValue(STUDENT_TYPES)
+
         render(<ChatWindow />)
-        expect(screen.getByText(/submit a new absence request/i)).toBeInTheDocument()
-        expect(screen.getByText(/report a Banner registration error/i)).toBeInTheDocument()
-        expect(screen.getByText(/Report an IT problem or a building issue/i)).toBeInTheDocument()
-        expect(screen.getByText(/order catering/i)).toBeInTheDocument()
-        expect(screen.getByText(/ABS-, EB-, IT-, FM-, and CT- codes/i)).toBeInTheDocument()
+
+        expect(await screen.findByText('What are you looking for?')).toBeInTheDocument()
+        expect(screen.getByText('Ask a question or start a request.')).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: /Absence Request/i })).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: /Report Error/i })).toBeInTheDocument()
         expect(screen.getByText('Student persona')).toBeInTheDocument()
     })
 
-    it('keeps the student My studies question prompts and drops hard-coded request prompts', () => {
-        personaMocks.resolveActivePersona.mockReturnValue(PERSONA_STUDENT)
+    it.each([
+        ['visitor', PERSONA_VISIT],
+        ['student', PERSONA_STUDENT],
+    ])('no longer shows the welcome headline, description or quick prompts (%s)', async (_, persona) => {
+        personaMocks.resolveActivePersona.mockReturnValue(persona)
+
         render(<ChatWindow />)
-        expect(screen.getByText('My studies')).toBeInTheDocument()
-        expect(screen.getByRole('button', { name: /Who is my advisor\?/i })).toBeInTheDocument()
-        expect(screen.queryByRole('button', { name: /submit an absence/i })).not.toBeInTheDocument()
-        expect(screen.queryByRole('button', { name: /I want to order coffee/i })).not.toBeInTheDocument()
+
+        await waitFor(() => expect(screen.getByRole('list', { name: /Chat messages/i })).toBeInTheDocument())
+        expect(screen.queryByText(/How can I help you today\?/i)).not.toBeInTheDocument()
+        expect(screen.queryByText(/Visitor Experience assistant/i)).not.toBeInTheDocument()
+        expect(screen.queryByText(/submit a new absence request/i)).not.toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: /What can you do\?/i })).not.toBeInTheDocument()
+        expect(screen.queryByText('My studies')).not.toBeInTheDocument()
+    })
+
+    it('still shows the sign-in context hint when the persona context is missing', () => {
+        personaMocks.resolveActivePersona.mockReturnValue(PERSONA_STUDENT)
+        personaMocks.hasConfiguredActivePersonaContext.mockReturnValue(false)
+
+        render(<ChatWindow />)
+
+        expect(screen.getAllByRole('status').some((el) => el.classList.contains('visit-id-hint'))).toBe(true)
     })
 })
