@@ -38,29 +38,16 @@ import {createLogger} from '../../utils/logger.js'
 import MessageBubble from './MessageBubble.jsx'
 import ChatInput from './ChatInput.jsx'
 import ThinkingIndicator from './ThinkingIndicator.jsx'
+import RequestTypeCards from './RequestTypeCards.jsx'
 import SparkIcon from '../ui/SparkIcon.jsx'
 import './ChatWindow.css'
 
 const log = createLogger('ChatWindow')
 
+// Question-style starters only. "Start a request" shortcuts come from the backend
+// (GET .../orchestration/request-types) and render as RequestTypeCards.
 const VISIT_PROMPT_GROUPS = [
     {label: 'Start', prompts: ['What can you do?']},
-    {label: 'Catering', prompts: ['Show me the catering products menu']},
-    {
-        label: 'IT Support',
-        prompts: [
-            'Create a support ticket for my laptop issue',
-            'I need help with my VPN connection',
-        ],
-    },
-    {
-        label: 'Facilities',
-        prompts: [
-            'Submit a facilities & maintenance request',
-            'The AC in meeting room 3 is not working',
-            'I need cleaning scheduled for my office',
-        ],
-    },
 ]
 
 const STUDENT_PROMPT_GROUPS = [
@@ -72,41 +59,6 @@ const STUDENT_PROMPT_GROUPS = [
             'Who is my advisor?',
             'How many credits have I completed?',
             'How many community service hours do I have?',
-        ],
-    },
-    {
-        label: 'Absence',
-        prompts: [
-            'I need to submit an absence',
-            'Help me request an excused absence',
-        ],
-    },
-    {
-        label: 'Error Banner',
-        prompts: [
-            'I got a Banner registration error',
-            "I can't register - Banner error",
-        ],
-    },
-    {
-        label: 'IT Support',
-        prompts: [
-            'My Wi-Fi is not working',
-            'My laptop charger is broken',
-        ],
-    },
-    {
-        label: 'Facilities',
-        prompts: [
-            'The AC in my classroom is not working',
-            'The lights in my room are flickering',
-        ],
-    },
-    {
-        label: 'Catering',
-        prompts: [
-            'I want to order coffee',
-            'Show me the catering menu',
         ],
     },
 ]
@@ -753,6 +705,11 @@ export default function ChatWindow({
                                 {contextRequiredMessage}
                             </div>
                         )}
+                        <RequestTypeCards
+                            persona={activePersona}
+                            disabled={!contextConfigured || sending || conversationReadOnly}
+                            onSelect={(type) => handleSendMessage(type.templatePrompt)}
+                        />
                         <div className="quick-prompts">
                             {promptGroups.map((group) => (
                                 <div key={group.label} className="quick-prompt-group">

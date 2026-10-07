@@ -68,7 +68,8 @@ Bearer-token precedence: the OTP dialog writes to `localStorage: ankabut.chat.ac
 
 - Real-time SSE streaming for agent responses (`AssistantTurnReplyDto`)
 - Multi-turn conversational AI with message history
-- Multi-agent routing (Visitor Experience / Front Door, Catering, IT Support, Facilities & Maintenance, Student Absence, Error Banner)
+- Multi-agent routing (Visitor Experience / Front Door, Catering, IT Support, Facilities & Maintenance, Student Absence, Error Banner, Student Experience, Student IT Support / Facilities & Maintenance / Catering)
+- Server-driven "start a request" cards on the empty chat screen (`GET .../orchestration/request-types`): label, template prompt and icon all come from the backend, in English or Arabic
 - Persona picker when both Visitor and Student contexts are available
 - Student absence composer modes from the last AI subtype: exclusive end-date (`date_request`) then attach (`attachment_request`) when required, including resume from last turn. An approved-overlap conflict reuses `date_request` for `dateFrom` (picker + markdown `textString`); no new subtype.
 - Markdown rendering of agent responses
@@ -102,7 +103,7 @@ src/
 │   ├── auth/LocalAuthDialog.*    # Env picker + email OTP / optional visit UUID
 │   ├── layout/ChatLayout.*       # Sidebar + main pane, persona picker, auth gating
 │   ├── layout/PersonaPicker.*    # Visitor / Student switcher
-│   ├── chat/                     # ChatWindow, ChatInput, MessageBubble, ThinkingIndicator
+│   ├── chat/                     # ChatWindow, ChatInput, MessageBubble, ThinkingIndicator, RequestTypeCards
 │   ├── sidebar/                  # ConversationSidebar (Visit/Student badges)
 │   └── __tests__/                # Vitest specs
 ├── config/
@@ -147,6 +148,7 @@ All env vars are optional — the UI can supply backend env, token, and visit id
 |------|------|
 | Conversations / turns | `/api/v1/secure/chatting/...` |
 | Start / follow-up / SSE | `/api/v1/secure/chatting/orchestration/...` |
+| Request-type cards | `GET /api/v1/secure/chatting/orchestration/request-types?lang=en\|ar` |
 | Speech | `/api/v1/secure/speech/transcriptions` |
 | Absence attachment stage | `/api/v1/secure/students/absence-requests/attachments` (201; MIME/size **400**; Banner missing **422**) |
 | Identity profile | `/api/v1/secure/identity/profile/me` |
@@ -178,6 +180,19 @@ All env vars are optional — the UI can supply backend env, token, and visit id
   }
 }
 ```
+
+**Request-type cards:** `RequestTypeCards` calls `getRequestTypes({ lang })` when the empty chat screen shows. The
+backend answers for the JWT `persona_code` claim and returns `[{ key, label, templatePrompt, icon }]`, already
+filtered to the routes that persona is granted. Rules on the client:
+
+- Cards render only when the picker's active persona equals the JWT `persona_code`; otherwise the endpoint is not
+  called (its answer would belong to the other persona).
+- `lang` is `ar` when `navigator.language` starts with `ar`, else `en`.
+- `icon` is a `data:image/svg+xml;base64,...` URI rendered with `<img src>` — never as markup. Anything that is not a
+  base64 SVG/PNG/WebP data URI falls back to a built-in chat icon.
+- Tapping a card sends `templatePrompt` like a typed message (`/start` or `/user-messages`); the classifier routes it.
+- Errors or an empty list render nothing; the composer still works. Backend guide:
+  `GITLAB-REPLICA-BACKEND/docs/chat-request-types-api.md`.
 
 Follow-ups: `{ followUpInput, displayText?, clientMessageId? }`. Open SSE **after** a successful POST start/user-messages (POST-then-stream). Opening the stream before POST can replay a stale previous-round READY. SSE JSON is `AssistantTurnReplyDto` (`status`: `ready` \| `processing` \| `error` \| `expired`, `message`, `handledBy`).
 
@@ -222,6 +237,7 @@ GET    /api/v1/secure/chatting/conversations/{conversationId}/turns
 POST   /api/v1/secure/chatting/orchestration/conversations/{conversationId}/start
 POST   /api/v1/secure/chatting/orchestration/conversations/{conversationId}/user-messages
 GET    /api/v1/secure/chatting/orchestration/conversations/{conversationId}/assistant-round/stream
+GET    /api/v1/secure/chatting/orchestration/request-types?lang=en|ar
 GET    /api/v1/secure/identity/profile/me
 POST   /api/v1/secure/students/absence-requests/attachments
 POST   /api/v1/secure/errorbanner/attachments
@@ -234,7 +250,8 @@ Every secure request (including SSE via `fetch`) sends `Authorization: Bearer <t
 ## Known Limitations
 
 - Sidebar requests 100 conversations per page; turn history defaults to 100 (max 500).
-- Quick prompts are static demos — routing is determined by the backend classifier.
+- Question-style quick prompts ("What can you do?", "My studies") are static; "start a request" shortcuts come only from the backend request-type cards. Routing is always decided by the backend classifier.
+- Request-type cards need an OTP login (only OTP tokens carry `persona_code`) and an active persona that matches it.
 - No message editing/deletion (append-only).
 - Session rollover is owned by the modulith; clients do not send `previousSessionId`.
 - Multi-visit picker and EMPLOYEE chat are out of scope.
@@ -250,6 +267,7 @@ Every secure request (including SSE via `fetch`) sends `Authorization: Bearer <t
 7. **Other-context conversation read-only** — conversation was started under the other persona; switch persona or New Chat.
 8. **Missing Banner** — linked students see a reason menu; unlinked students get a stop message in chat (no menu / no attach). Attachment **422** is only a fallback if staging is reached without a Banner id — show the server message once.
 9. **Attachment 400** — MIME/size validation (client also rejects >10 MB / bad types).
+10. **No request cards on the empty screen** — the token has no `persona_code` (non-OTP login), the persona picker is on a different persona than the token, the persona has no cards or route grants, or `GET .../request-types` failed (see the console `RequestTypeCards` warning).
 
 ## Manual smoke (personas)
 

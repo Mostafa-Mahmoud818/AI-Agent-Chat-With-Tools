@@ -462,6 +462,23 @@ export async function startOrchestration(conversationId, inputText, chatContext,
 }
 
 /**
+ * Request types the caller's persona can start, for the landing-screen cards. The backend reads the
+ * persona from the JWT {@code persona_code} claim and filters to the persona's granted routes; a token
+ * without the claim yields an empty list.
+ *
+ * @param {{ lang?: 'en'|'ar'|string|null }} [opts] unsupported languages fall back to English server-side
+ * @returns {Promise<Array<{ key: string, label: string, templatePrompt: string }>>}
+ */
+export async function getRequestTypes({lang = null} = {}) {
+    const qp = new URLSearchParams()
+    if (lang) qp.set('lang', lang)
+    const query = qp.toString()
+    const res = await get(`${getOrchestrationBase()}/request-types${query ? `?${query}` : ''}`)
+    const data = await unwrapResponse(res)
+    return Array.isArray(data) ? data : []
+}
+
+/**
  * Transcribes audio via the modulith speech module.
  *
  * @param {Blob} audioBlob

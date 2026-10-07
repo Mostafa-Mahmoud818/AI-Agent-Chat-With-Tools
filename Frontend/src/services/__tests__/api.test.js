@@ -282,3 +282,46 @@ describe('sendReply', () => {
         setTimeoutSpy.mockRestore()
     })
 })
+
+describe('getRequestTypes', () => {
+    beforeEach(async () => {
+        vi.resetModules()
+        vi.stubGlobal('fetch', vi.fn())
+        localStorage.clear()
+        const { setAccessToken } = await import('../../auth/tokenStore.js')
+        setAccessToken('test-token')
+    })
+
+    it('GETs orchestration request-types with lang and unwraps the list', async () => {
+        const types = [{ key: 'student_absence', label: 'Absence Request', templatePrompt: 'I need to report an absence' }]
+        fetch.mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({ success: true, data: types }),
+        })
+
+        const { getRequestTypes } = await import('../api.js')
+        const result = await getRequestTypes({ lang: 'ar' })
+
+        expect(result).toEqual(types)
+        const [url, options] = fetch.mock.calls[0]
+        expect(url).toContain('/api/v1/secure/chatting/orchestration/request-types?lang=ar')
+        expect(options.method).toBe('GET')
+        expect(options.headers.Authorization).toBe('Bearer test-token')
+    })
+
+    it('omits lang when not given and returns [] for a non-array payload', async () => {
+        fetch.mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({ success: true, data: null }),
+        })
+
+        const { getRequestTypes } = await import('../api.js')
+        const result = await getRequestTypes()
+
+        expect(result).toEqual([])
+        const [url] = fetch.mock.calls[0]
+        expect(url).toMatch(/\/orchestration\/request-types$/)
+    })
+})

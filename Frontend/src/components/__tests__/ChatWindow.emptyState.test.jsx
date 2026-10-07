@@ -11,6 +11,7 @@ vi.mock('../../services/api.js', () => ({
     sendReply: vi.fn(),
     SSE_CONCURRENT_STREAMS_ERROR: 'SSE_CONCURRENT',
     startOrchestration: vi.fn(),
+    getRequestTypes: vi.fn(async () => []),
 }))
 
 vi.mock('../../auth/tokenStore.js', () => ({
@@ -56,42 +57,32 @@ describe('ChatWindow empty state by persona', () => {
         personaMocks.isOtherContextConversation.mockReturnValue(false)
     })
 
-    it('shows visitor empty copy and catering-style prompts', () => {
+    it('shows visitor empty copy and only the generic starter prompt', () => {
         personaMocks.resolveActivePersona.mockReturnValue(PERSONA_VISIT)
         render(<ChatWindow />)
         expect(screen.getByText(/Visitor Experience assistant/i)).toBeInTheDocument()
-        expect(screen.getByRole('button', { name: /VPN connection/i })).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: /What can you do\?/i })).toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: /VPN connection/i })).not.toBeInTheDocument()
         expect(screen.getByText('Visitor persona')).toBeInTheDocument()
     })
 
-    it('shows student empty copy and absence plus Error Banner prompts', () => {
+    it('shows student empty copy covering every student request route', () => {
         personaMocks.resolveActivePersona.mockReturnValue(PERSONA_STUDENT)
         render(<ChatWindow />)
         expect(screen.getByText(/submit a new absence request/i)).toBeInTheDocument()
         expect(screen.getByText(/report a Banner registration error/i)).toBeInTheDocument()
-        expect(screen.getByRole('button', { name: /submit an absence/i })).toBeInTheDocument()
-        expect(screen.getByRole('button', { name: /I got a Banner registration error/i })).toBeInTheDocument()
+        expect(screen.getByText(/Report an IT problem or a building issue/i)).toBeInTheDocument()
+        expect(screen.getByText(/order catering/i)).toBeInTheDocument()
+        expect(screen.getByText(/ABS-, EB-, IT-, FM-, and CT- codes/i)).toBeInTheDocument()
         expect(screen.getByText('Student persona')).toBeInTheDocument()
     })
 
-    it('shows student IT Support and Facilities prompts and mentions them in the empty copy', () => {
+    it('keeps the student My studies question prompts and drops hard-coded request prompts', () => {
         personaMocks.resolveActivePersona.mockReturnValue(PERSONA_STUDENT)
         render(<ChatWindow />)
-        expect(screen.getByText(/Report an IT problem or a building issue/i)).toBeInTheDocument()
-        expect(screen.getByText(/ABS-, EB-, IT-, FM-, and CT- codes/i)).toBeInTheDocument()
-        expect(screen.getByRole('button', { name: /My Wi-Fi is not working/i })).toBeInTheDocument()
-        expect(screen.getByRole('button', { name: /AC in my classroom/i })).toBeInTheDocument()
-        expect(screen.getByText('IT Support')).toBeInTheDocument()
-        expect(screen.getByText('Facilities')).toBeInTheDocument()
-    })
-
-    it('shows student Catering prompts and mentions catering and CT- codes in the empty copy', () => {
-        personaMocks.resolveActivePersona.mockReturnValue(PERSONA_STUDENT)
-        render(<ChatWindow />)
-        expect(screen.getByText(/order catering/i)).toBeInTheDocument()
-        expect(screen.getByText(/ABS-, EB-, IT-, FM-, and CT- codes/i)).toBeInTheDocument()
-        expect(screen.getByRole('button', { name: /I want to order coffee/i })).toBeInTheDocument()
-        expect(screen.getByRole('button', { name: /Show me the catering menu/i })).toBeInTheDocument()
-        expect(screen.getByText('Catering')).toBeInTheDocument()
+        expect(screen.getByText('My studies')).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: /Who is my advisor\?/i })).toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: /submit an absence/i })).not.toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: /I want to order coffee/i })).not.toBeInTheDocument()
     })
 })
