@@ -202,7 +202,8 @@ student absence + visitor experience enabled.
 10. Reload mid-`date_request` or mid-`attachment_request`: the matching control restores from the
     last AI turn without a new SSE. An overlap re-ask after an attach turn must restore the
     **start-date** picker, not the attach control.
-11. Dual-persona: switch persona; other-context conversations are read-only; **New Chat** uses the
+11. Dual-persona: the persona picked at sign-in stays fixed (no header switch). Click **Sign out**, sign in
+    again picking the other persona; the previous persona's conversations are read-only; **New Chat** uses the
     active envelope. Env switch clears visitId, studentId, and activePersona.
 
 ### Orchestration start shapes

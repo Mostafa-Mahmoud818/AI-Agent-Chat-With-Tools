@@ -12,7 +12,11 @@ import {
     setActivePersona,
     getAvailablePersonas,
     getActivePersona,
+    getLockedPersona,
+    resolveActivePersona,
+    ensureActivePersona,
 } from '../personaSession.js'
+import { clearTokens, setAccessToken } from '../../auth/tokenStore.js'
 import {
     setRuntimeVisitId,
     setRuntimeDxpUserId,
@@ -34,6 +38,7 @@ describe('personaSession', () => {
 
     afterEach(() => {
         vi.unstubAllGlobals()
+        clearTokens()
     })
 
     it('getAvailablePersonas reflects configured ids', () => {
@@ -151,5 +156,55 @@ describe('personaSession', () => {
         const token = `${encode({ alg: 'none' })}.${encode({ persona_code: 'STUDENT' })}.sig`
         expect(applyPersonaFromAccessToken(token)).toBe('STUDENT')
         expect(getActivePersona()).toBe('STUDENT')
+    })
+
+    describe('persona locked by the sign-in token', () => {
+        const encode = (obj) =>
+            btoa(JSON.stringify(obj)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+        const tokenFor = (persona) => `${encode({ alg: 'none' })}.${encode({ persona_code: persona })}.sig`
+
+        beforeEach(() => {
+            setRuntimeVisitId(VISIT)
+            setStudentEligible(true)
+            setRuntimeDxpUserId(USER)
+        })
+
+        it('uses the JWT persona even when both contexts resolved and another was stored', () => {
+            setAccessToken(tokenFor('STUDENT'))
+            setActivePersona(PERSONA_VISITOR)
+
+            expect(getLockedPersona()).toBe(PERSONA_STUDENT)
+            expect(resolveActivePersona()).toBe(PERSONA_STUDENT)
+            expect(ensureActivePersona()).toBe(PERSONA_STUDENT)
+            expect(getChatContextForStart().contextType).toBe('STUDENT')
+        })
+
+        it('offers only the locked persona as available', () => {
+            setAccessToken(tokenFor('VISITOR'))
+            expect(getAvailablePersonas()).toEqual([PERSONA_VISITOR])
+        })
+
+        it('stays on the locked persona before its context resolves (no fallback to the other one)', () => {
+            setRuntimeVisitId('')
+            setAccessToken(tokenFor('VISITOR'))
+            expect(getAvailablePersonas()).toEqual([])
+            expect(resolveActivePersona()).toBe(PERSONA_VISITOR)
+            expect(hasConfiguredActivePersonaContext({ VITE_DEFAULT_VISIT_ID: undefined })).toBe(false)
+        })
+
+        it('ignores ?persona= for a different persona', () => {
+            setAccessToken(tokenFor('STUDENT'))
+            vi.stubGlobal('location', { ...window.location, search: '?persona=VISITOR' })
+            applyPersonaQueryOverrides()
+            expect(resolveActivePersona()).toBe(PERSONA_STUDENT)
+        })
+
+        it('falls back to resolved contexts when the token has no persona_code', () => {
+            setAccessToken('opaque-ci-token')
+            setActivePersona(PERSONA_STUDENT)
+            expect(getLockedPersona()).toBeNull()
+            expect(resolveActivePersona()).toBe(PERSONA_STUDENT)
+            expect(getAvailablePersonas()).toEqual([PERSONA_VISITOR, PERSONA_STUDENT])
+        })
     })
 })

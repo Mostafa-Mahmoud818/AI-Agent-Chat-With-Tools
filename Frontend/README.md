@@ -23,7 +23,7 @@ On first load you'll see an **environment picker dialog** (DEV / TEST / STAGE / 
 - Student persona → OTP `check-eligibility` (`personas` contains `STUDENT` or `reasons` contains `STUDENT_EXISTS`)
 - Student chat id → `GET /api/v1/secure/identity/profile/me` (`data.id` = Identity user UUID)
 
-If both succeed, a **Visitor / Student persona picker** appears in the chat header (last choice is persisted; a JWT `persona_code` of STUDENT or VISITOR is used as the initial choice). If only one succeeds, that persona is selected automatically. Everything is persisted to `localStorage`, so subsequent reloads skip the dialog. A **"Change"** link in the badge row re-opens the picker any time.
+The persona chosen at sign-in is **fixed for the whole session**: the JWT `persona_code` (STUDENT or VISITOR) is always the active persona, even if both contexts resolve, and there is no in-app switch (`?persona=` for a different persona is ignored). To use the other persona, click **Sign out** in the chat header and sign in again, picking the other persona. Sign out calls `POST /api/v1/secure/identity/auth/logout` (5s timeout) and then clears the local session whatever the result, so a failed call never leaves the user signed in. Tokens without `persona_code` (CI bearer, non-OTP logins) fall back to the resolved context: the sole one, or the last stored choice. Everything is persisted to `localStorage`, so subsequent reloads skip the dialog. A **"Change"** link in the badge row re-opens the picker any time.
 
 > Testers no longer need to edit `.env` — pick env + sign in via email OTP in the UI.
 
@@ -70,7 +70,7 @@ Bearer-token precedence: the OTP dialog writes to `localStorage: ankabut.chat.ac
 - Multi-turn conversational AI with message history
 - Multi-agent routing (Visitor Experience / Front Door, Catering, IT Support, Facilities & Maintenance, Student Absence, Error Banner, Student Experience, Student IT Support / Facilities & Maintenance / Catering)
 - Empty chat screen shows only the server-driven "What are you looking for?" request cards (`GET .../orchestration/request-types`): label, template prompt and icon all come from the backend, in English or Arabic. No static welcome text or quick prompts.
-- Persona picker when both Visitor and Student contexts are available
+- Persona fixed at sign-in (JWT `persona_code`); **Sign out** in the header to sign in as the other persona — no in-app persona switch
 - Student absence composer modes from the last AI subtype: exclusive end-date (`date_request`) then attach (`attachment_request`) when required, including resume from last turn. An approved-overlap conflict reuses `date_request` for `dateFrom` (picker + markdown `textString`); no new subtype.
 - Markdown rendering of agent responses
 - Structured menus (catering; single-level absence reasons; Error Banner categories)
@@ -101,8 +101,8 @@ src/
 │   └── studentResolution.js      # eligible students → profile/me Identity UUID
 ├── components/
 │   ├── auth/LocalAuthDialog.*    # Env picker + email OTP / optional visit UUID
-│   ├── layout/ChatLayout.*       # Sidebar + main pane, persona picker, auth gating
-│   ├── layout/PersonaPicker.*    # Visitor / Student switcher
+│   ├── layout/ChatLayout.*       # Sidebar + main pane, sign-out, auth gating
+│   ├── layout/SignOutButton.*    # Header sign-out (persona switch = sign out + sign in)
 │   ├── chat/                     # ChatWindow, ChatInput, MessageBubble, ThinkingIndicator, RequestTypeCards
 │   ├── sidebar/                  # ConversationSidebar (Visit/Student badges)
 │   └── __tests__/                # Vitest specs
@@ -140,7 +140,7 @@ All env vars are optional — the UI can supply backend env, token, and visit id
 | `ankabut.chat.visitId` | Active visit UUID |
 | `ankabut.chat.dxpUserId` | Identity user UUID — envelope `userId` for both personas |
 | `ankabut.chat.studentEligible` | `true` when OTP eligibility matched STUDENT |
-| `ankabut.chat.activePersona` | `VISITOR` \| `STUDENT` |
+| `ankabut.chat.activePersona` | `VISITOR` \| `STUDENT` (ignored while the token carries `persona_code`) |
 
 ### API alignment (Ankabut modulith)
 
@@ -185,8 +185,8 @@ All env vars are optional — the UI can supply backend env, token, and visit id
 backend answers for the JWT `persona_code` claim and returns `[{ key, label, templatePrompt, icon }]`, already
 filtered to the routes that persona is granted. Rules on the client:
 
-- Cards render only when the picker's active persona equals the JWT `persona_code`; otherwise the endpoint is not
-  called (its answer would belong to the other persona).
+- Cards render only when the active persona equals the JWT `persona_code` (always true for OTP sign-ins, since the
+  persona is locked to the token); otherwise the endpoint is not called.
 - `lang` is `ar` when `navigator.language` starts with `ar`, else `en`.
 - `icon` is a `data:image/svg+xml;base64,...` URI rendered with `<img src>` — never as markup. Anything that is not a
   base64 SVG/PNG/WebP data URI falls back to a built-in chat icon.
@@ -204,7 +204,7 @@ Follow-ups: `{ followUpInput, displayText?, clientMessageId? }`. Open SSE **afte
 
 | Preset | Auth | Contexts after OTP |
 |--------|------|--------------------|
-| DEV / TEST / STAGE | Email + OTP (public identity) | Parallel visit + student; picker if both |
+| DEV / TEST / STAGE | Email + OTP (public identity) | Parallel visit + student; active persona fixed by the sign-in choice |
 | LOCAL | Email + OTP (provision + public) | Same |
 
 Switching env clears token, visit id, student id, and active persona.
@@ -239,6 +239,7 @@ POST   /api/v1/secure/chatting/orchestration/conversations/{conversationId}/user
 GET    /api/v1/secure/chatting/orchestration/conversations/{conversationId}/assistant-round/stream
 GET    /api/v1/secure/chatting/orchestration/request-types?lang=en|ar
 GET    /api/v1/secure/identity/profile/me
+POST   /api/v1/secure/identity/auth/logout
 POST   /api/v1/secure/students/absence-requests/attachments
 POST   /api/v1/secure/errorbanner/attachments
 ```
@@ -264,10 +265,10 @@ Every secure request (including SSE via `fetch`) sends `Authorization: Bearer <t
 4. **Session expired (410)** — start a new turn / New Chat.
 5. **No account found for this email** — not eligible on that env.
 6. **Configure a Visit/Student ID** — active persona has no resolved id; sign in again, use `?visitId=`, or `?studentId=<uuid>` (eligibility) plus a working `profile/me`.
-7. **Other-context conversation read-only** — conversation was started under the other persona; switch persona or New Chat.
+7. **Other-context conversation read-only** — conversation was started under the other persona (or another visit); start a New Chat, or sign out and sign in as that persona.
 8. **Missing Banner** — linked students see a reason menu; unlinked students get a stop message in chat (no menu / no attach). Attachment **422** is only a fallback if staging is reached without a Banner id — show the server message once.
 9. **Attachment 400** — MIME/size validation (client also rejects >10 MB / bad types).
-10. **No request cards on the empty screen** — the token has no `persona_code` (non-OTP login), the persona picker is on a different persona than the token, the persona has no cards or route grants, or `GET .../request-types` failed (see the console `RequestTypeCards` warning).
+10. **No request cards on the empty screen** — the token has no `persona_code` (non-OTP login), the active persona differs from the token (only possible for tokens without `persona_code`), the persona has no cards or route grants, or `GET .../request-types` failed (see the console `RequestTypeCards` warning).
 
 ## Manual smoke (personas)
 

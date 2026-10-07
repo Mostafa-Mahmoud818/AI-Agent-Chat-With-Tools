@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import ChatLayout from '../layout/ChatLayout.jsx'
 import * as api from '../../services/api.js'
-import { clearTokens, setTokens } from '../../auth/tokenStore.js'
+import { clearTokens, getAccessToken, setTokens } from '../../auth/tokenStore.js'
 
 vi.mock('../../services/api', () => ({
     ApiError: class ApiError extends Error {
@@ -15,6 +15,7 @@ vi.mock('../../services/api', () => ({
     archiveConversation: vi.fn(),
     deleteConversation: vi.fn(),
     loadAllConversations: vi.fn(),
+    logout: vi.fn(async () => {}),
     unarchiveConversation: vi.fn(),
 }))
 
@@ -22,8 +23,8 @@ vi.mock('../chat/ChatWindow.jsx', () => ({
     default: ({ headerAccessory }) => <div data-testid="chat-window">{headerAccessory}</div>,
 }))
 
-vi.mock('../layout/PersonaPicker.jsx', () => ({
-    default: () => <div>persona-picker</div>,
+vi.mock('../layout/SignOutButton.jsx', () => ({
+    default: ({ onSignOut }) => <button type="button" onClick={onSignOut}>sign-out</button>,
 }))
 
 vi.mock('../auth/LocalAuthDialog.jsx', () => ({
@@ -38,9 +39,15 @@ vi.mock('../../auth/studentResolution.js', () => ({
     tryResolveDxpUserIdForCurrentUser: vi.fn(async () => null),
 }))
 
-vi.mock('../../config/personaSession.js', () => ({
+const personaMocks = vi.hoisted(() => ({
     ensureActivePersona: vi.fn(() => 'VISITOR'),
     isOtherContextConversation: vi.fn(() => false),
+    clearPersonaSession: vi.fn(),
+}))
+
+vi.mock('../../config/personaSession.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    ...personaMocks,
 }))
 
 describe('ChatLayout', () => {
@@ -133,13 +140,53 @@ describe('ChatLayout', () => {
     it('drops to signed-out state when the tokens are cleared (M4)', async () => {
         render(<ChatLayout />)
         await waitFor(() => expect(screen.getByText('Active one')).toBeInTheDocument())
-        expect(screen.getByText('persona-picker')).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'sign-out' })).toBeInTheDocument()
 
         act(() => {
             clearTokens()
         })
 
-        await waitFor(() => expect(screen.queryByText('persona-picker')).not.toBeInTheDocument())
+        await waitFor(() => expect(screen.queryByRole('button', { name: 'sign-out' })).not.toBeInTheDocument())
         expect(screen.queryByText('Active one')).not.toBeInTheDocument()
+    })
+
+    it('offers Sign out instead of a persona switch, and signing out ends the session', async () => {
+        render(<ChatLayout />)
+        await waitFor(() => expect(screen.getByText('Active one')).toBeInTheDocument())
+        expect(screen.queryByRole('group', { name: /chat persona/i })).not.toBeInTheDocument()
+
+        fireEvent.click(screen.getByRole('button', { name: 'sign-out' }))
+
+        await waitFor(() => expect(getAccessToken()).toBe(''))
+        expect(api.logout).toHaveBeenCalledTimes(1)
+        expect(personaMocks.clearPersonaSession).toHaveBeenCalled()
+        await waitFor(() => expect(screen.queryByRole('button', { name: 'sign-out' })).not.toBeInTheDocument())
+        expect(screen.queryByText('Active one')).not.toBeInTheDocument()
+    })
+
+    it('calls the server logout before clearing the local session', async () => {
+        let tokenAtLogout = null
+        vi.mocked(api.logout).mockImplementationOnce(async () => {
+            tokenAtLogout = getAccessToken()
+        })
+        render(<ChatLayout />)
+        await waitFor(() => expect(screen.getByText('Active one')).toBeInTheDocument())
+
+        fireEvent.click(screen.getByRole('button', { name: 'sign-out' }))
+
+        await waitFor(() => expect(getAccessToken()).toBe(''))
+        expect(tokenAtLogout).toBe('tok')
+    })
+
+    it('still signs out locally when the server logout fails', async () => {
+        vi.mocked(api.logout).mockRejectedValueOnce(new Error('network down'))
+        render(<ChatLayout />)
+        await waitFor(() => expect(screen.getByText('Active one')).toBeInTheDocument())
+
+        fireEvent.click(screen.getByRole('button', { name: 'sign-out' }))
+
+        await waitFor(() => expect(getAccessToken()).toBe(''))
+        expect(personaMocks.clearPersonaSession).toHaveBeenCalled()
+        await waitFor(() => expect(screen.queryByRole('button', { name: 'sign-out' })).not.toBeInTheDocument())
     })
 })

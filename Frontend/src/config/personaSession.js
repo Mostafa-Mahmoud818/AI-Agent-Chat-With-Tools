@@ -1,6 +1,12 @@
 /**
  * @file Active chat persona (VISITOR | STUDENT) and orchestration start envelope.
  * @module config/personaSession
+ *
+ * The persona is fixed at sign-in: when the access token carries a chat-supported
+ * {@code persona_code} claim, that persona is always the active one ({@link getLockedPersona}).
+ * Stored choices and {@code ?persona=} cannot switch it — the user signs out and signs in as the
+ * other persona. Tokens without the claim (CI bearer, non-OTP logins) fall back to the
+ * resolved-context rules below.
  */
 
 import {
@@ -30,6 +36,7 @@ import {
     setStudentEligible,
 } from './chatContext.js'
 import {readJwtPersonaCode} from '../auth/jwtClaims.js'
+import {getAccessToken} from '../auth/tokenStore.js'
 import {createLogger} from '../utils/logger.js'
 
 const log = createLogger('personaSession')
@@ -112,6 +119,15 @@ export function applyPersonaFromAccessToken(accessToken) {
 }
 
 /**
+ * Chat persona fixed at sign-in by the current access token's {@code persona_code} claim.
+ *
+ * @returns {'VISITOR'|'STUDENT'|null} null when the token has no chat-supported persona
+ */
+export function getLockedPersona() {
+    return canonicalizePersona(readJwtPersonaCode(getAccessToken()))
+}
+
+/**
  * @returns {'VISITOR'|'STUDENT'|null}
  */
 export function getActivePersona() {
@@ -139,7 +155,8 @@ export function setActivePersona(persona) {
 }
 
 /**
- * Personas for which we have a resolved context id.
+ * Personas for which we have a resolved context id. When the persona is locked by the token, only
+ * that persona can be available.
  *
  * @returns {Array<'VISITOR'|'STUDENT'>}
  */
@@ -147,15 +164,21 @@ export function getAvailablePersonas() {
     const available = []
     if (hasConfiguredVisitId()) available.push(PERSONA_VISITOR)
     if (hasConfiguredStudentId()) available.push(PERSONA_STUDENT)
-    return available
+    const locked = getLockedPersona()
+    return locked ? available.filter((p) => p === locked) : available
 }
 
 /**
- * Picks an active persona: restore last choice if still available, else sole available, else null.
+ * Picks the active persona. A token-locked persona always wins, even before its context id has
+ * resolved (callers then show that persona's missing-context hint, never the other persona).
+ * Without a lock: restore last choice if still available, else sole available, else null.
  *
  * @returns {'VISITOR'|'STUDENT'|null}
  */
 export function resolveActivePersona() {
+    const locked = getLockedPersona()
+    if (locked) return locked
+
     const available = getAvailablePersonas()
     if (available.length === 0) return null
 
@@ -281,6 +304,7 @@ export function getOtherContextComposerPlaceholder(conversation) {
 
 /**
  * Apply optional QA query overrides: {@code ?persona=STUDENT|VISITOR|VISIT}, {@code ?studentId=}.
+ * {@code ?persona=} is ignored when it names a different persona than the token-locked one.
  *
  * {@code ?studentId=<uuid>} only marks STUDENT eligibility (same as OTP
  * {@code STUDENT}/{@code STUDENT_EXISTS}). Envelope {@code userId} always comes from
@@ -297,7 +321,10 @@ export function applyPersonaQueryOverrides() {
         }
         const personaRaw = params.get('persona')?.trim()?.toUpperCase()
         const canonical = canonicalizePersona(personaRaw)
-        if (canonical) {
+        const locked = getLockedPersona()
+        if (canonical && locked && canonical !== locked) {
+            log.info('Ignored ?persona= override; persona is fixed by sign-in', {requested: canonical, locked})
+        } else if (canonical) {
             setActivePersona(canonical)
             log.info('Applied ?persona= override', {persona: canonical})
         }

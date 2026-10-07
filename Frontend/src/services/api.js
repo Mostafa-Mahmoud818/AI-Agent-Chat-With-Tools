@@ -40,6 +40,7 @@ const PATH_SECURE = '/api/v1/secure/chatting'
 const SPEECH_PATH_SECURE = '/api/v1/secure/speech'
 const STUDENTS_PATH_SECURE = '/api/v1/secure/students'
 const ERRORBANNER_PATH_SECURE = '/api/v1/secure/errorbanner'
+const IDENTITY_PATH_SECURE = '/api/v1/secure/identity'
 
 const REQUEST_TIMEOUT_MS = 15_000
 /**
@@ -459,6 +460,21 @@ export async function startOrchestration(conversationId, inputText, chatContext,
         processInstanceKey: dataResp?.processInstanceKey,
     })
     return dataResp
+}
+
+/** Sign-out must never hold the UI for long; the local session is cleared either way. */
+const LOGOUT_TIMEOUT_MS = 5_000
+
+/**
+ * Tells the modulith the current session is ending: {@code POST /api/v1/secure/identity/auth/logout}
+ * (204). Callers clear the local session regardless of the outcome, so failures here are thrown for
+ * logging only.
+ *
+ * @returns {Promise<void>}
+ */
+export async function logout() {
+    await post(`${API_ORIGIN}${IDENTITY_PATH_SECURE}/auth/logout`, {}, LOGOUT_TIMEOUT_MS)
+    log.info('Logout acknowledged by server')
 }
 
 /**

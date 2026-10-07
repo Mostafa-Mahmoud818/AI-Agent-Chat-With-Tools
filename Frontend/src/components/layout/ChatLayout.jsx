@@ -9,12 +9,14 @@ import {
     archiveConversation,
     deleteConversation,
     loadAllConversations,
+    logout,
     unarchiveConversation,
 } from '../../services/api'
-import PersonaPicker from './PersonaPicker.jsx'
+import SignOutButton from './SignOutButton.jsx'
 import {bumpConversationLastActivity, sortConversationsForSidebar} from '../../utils/conversationSidebarOrder.js'
 import {createLogger} from '../../utils/logger.js'
 import {getAccessToken, onTokensCleared} from '../../auth/tokenStore.js'
+import {clearSecureAuthSession} from '../../auth/secureAuthSession.js'
 import {tryResolveVisitIdForCurrentUser} from '../../auth/visitResolution.js'
 import {tryResolveDxpUserIdForCurrentUser} from '../../auth/studentResolution.js'
 import {
@@ -39,6 +41,7 @@ export default function ChatLayout() {
     const [showArchived, setShowArchived] = useState(false)
     const [personaKey, setPersonaKey] = useState(0)
     const [chatBusy, setChatBusy] = useState(false)
+    const [signingOut, setSigningOut] = useState(false)
     // Source of truth for which view a (possibly late) reload should fetch. Updated synchronously in
     // handleToggleArchived, before the toggle's own reload effect runs, so loadConversations never
     // reads a stale closure value (M7).
@@ -119,10 +122,23 @@ export default function ChatLayout() {
         loadConversations()
     }, [loadConversations])
 
-    const handlePersonaChange = useCallback(() => {
-        setPersonaKey((k) => k + 1)
-        // Switching persona does not rewrite an open conversation's frozen context —
-        // other-context conversations become read-only; New Chat uses the new envelope.
+    /**
+     * The persona is fixed at sign-in (JWT `persona_code`), so there is no in-app switch: signing out
+     * tells the server (`POST .../identity/auth/logout`), then clears the session and reopens the
+     * sign-in dialog, where the user picks the other persona. The local session is cleared even when
+     * the logout call fails or times out, so the user is never stuck signed in.
+     */
+    const handleSignOut = useCallback(async () => {
+        setSigningOut(true)
+        try {
+            await logout()
+        } catch (e) {
+            log.warn('Server logout failed; clearing the local session anyway', e)
+        } finally {
+            clearSecureAuthSession()
+            setResetKey((k) => k + 1)
+            setSigningOut(false)
+        }
     }, [])
 
     const handleSelectConversation = useCallback((id) => {
@@ -263,7 +279,7 @@ export default function ChatLayout() {
                     selectedConversation={selectedConversation}
                     key={`${resetKey}-${personaKey}-${selectedConversationId ?? 'new'}`}
                     headerAccessory={authenticated
-                        ? <PersonaPicker key={personaKey} onPersonaChange={handlePersonaChange} disabled={chatBusy}/>
+                        ? <SignOutButton onSignOut={handleSignOut} disabled={chatBusy || signingOut}/>
                         : null}
                     onNewChat={handleNewChat}
                     onConversationCreated={handleConversationCreated}

@@ -325,3 +325,44 @@ describe('getRequestTypes', () => {
         expect(url).toMatch(/\/orchestration\/request-types$/)
     })
 })
+
+describe('logout', () => {
+    beforeEach(async () => {
+        vi.resetModules()
+        vi.stubGlobal('fetch', vi.fn())
+        localStorage.clear()
+        const { setAccessToken } = await import('../../auth/tokenStore.js')
+        setAccessToken('test-token')
+    })
+
+    it('POSTs the secure identity logout with the bearer token and accepts 204', async () => {
+        fetch.mockResolvedValueOnce({ ok: true, status: 204 })
+
+        const { logout } = await import('../api.js')
+        await logout()
+
+        const [url, options] = fetch.mock.calls[0]
+        expect(url).toContain('/api/v1/secure/identity/auth/logout')
+        expect(options.method).toBe('POST')
+        expect(options.headers.Authorization).toBe('Bearer test-token')
+    })
+
+    it('uses a short timeout so sign-out never hangs', async () => {
+        const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+        fetch.mockResolvedValueOnce({ ok: true, status: 204 })
+
+        const { logout } = await import('../api.js')
+        await logout()
+
+        expect(setTimeoutSpy.mock.calls.some(([, ms]) => ms === 5_000)).toBe(true)
+        setTimeoutSpy.mockRestore()
+    })
+
+    it('rejects on a server error so the caller can log it', async () => {
+        fetch.mockResolvedValueOnce({ ok: false, status: 500, text: async () => '' })
+
+        const { logout } = await import('../api.js')
+
+        await expect(logout()).rejects.toMatchObject({ status: 500 })
+    })
+})

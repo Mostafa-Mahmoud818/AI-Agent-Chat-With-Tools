@@ -56,7 +56,7 @@ export const OTHER_VISIT_READONLY_MESSAGE =
     "This visit has ended. You can view this conversation's history but can't continue chatting."
 
 export const OTHER_CONTEXT_READONLY_MESSAGE =
-    "This conversation belongs to a different persona or context. You can view history but can't continue chatting here. Start a New Chat."
+    "This conversation belongs to a different persona or context. You can view its history but can't continue it here. Start a New Chat, or sign out and sign in as the other persona."
 
 /** Composer placeholder when the selected conversation is from a different visit. */
 export const OTHER_VISIT_COMPOSER_PLACEHOLDER = 'This visit has ended — history only.'
