@@ -8,6 +8,7 @@ import { applyPersonaFromAccessToken, applyPersonaQueryOverrides, ensureActivePe
 import { getAccessToken, initTokenStore } from './auth/tokenStore.js'
 import { tryResolveDxpUserIdForCurrentUser } from './auth/studentResolution.js'
 import { wipeLegacyRosterStudentId } from './config/chatContext.js'
+import { beginUaePassCallback } from './auth/uaePassFlow.js'
 
 const log = createLogger('authBootstrap')
 
@@ -19,6 +20,8 @@ const log = createLogger('authBootstrap')
 export async function applySecureChatEnv() {
     if (import.meta.env.MODE === 'test') return
 
+    // Must run before initTokenStore so a session cleared by a UAE PASS callback is not loaded.
+    beginUaePassCallback(import.meta.env)
     initTokenStore(import.meta.env)
     wipeLegacyRosterStudentId()
     applyPersonaFromAccessToken(getAccessToken())

@@ -17,6 +17,7 @@ import {bumpConversationLastActivity, sortConversationsForSidebar} from '../../u
 import {createLogger} from '../../utils/logger.js'
 import {getAccessToken, onTokensCleared} from '../../auth/tokenStore.js'
 import {clearSecureAuthSession} from '../../auth/secureAuthSession.js'
+import {endUaePassSession, wasUaePassSession} from '../../auth/uaePassFlow.js'
 import {tryResolveVisitIdForCurrentUser} from '../../auth/visitResolution.js'
 import {tryResolveDxpUserIdForCurrentUser} from '../../auth/studentResolution.js'
 import {
@@ -129,6 +130,8 @@ export default function ChatLayout() {
      * the logout call fails or times out, so the user is never stuck signed in.
      */
     const handleSignOut = useCallback(async () => {
+        // Read before the try: clearSecureAuthSession removes the auth-method marker.
+        const viaUaePass = wasUaePassSession()
         setSigningOut(true)
         try {
             await logout()
@@ -139,6 +142,8 @@ export default function ChatLayout() {
             setResetKey((k) => k + 1)
             setSigningOut(false)
         }
+        // A UAE PASS session also ends at UAE PASS, so the next sign-in asks for credentials again.
+        if (viaUaePass) endUaePassSession()
     }, [])
 
     const handleSelectConversation = useCallback((id) => {

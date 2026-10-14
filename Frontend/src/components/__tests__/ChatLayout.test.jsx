@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import ChatLayout from '../layout/ChatLayout.jsx'
 import * as api from '../../services/api.js'
 import { clearTokens, getAccessToken, setTokens } from '../../auth/tokenStore.js'
+import * as uaePass from '../../auth/uaePassFlow.js'
 
 vi.mock('../../services/api', () => ({
     ApiError: class ApiError extends Error {
@@ -29,6 +30,11 @@ vi.mock('../layout/SignOutButton.jsx', () => ({
 
 vi.mock('../auth/LocalAuthDialog.jsx', () => ({
     default: () => <div>sign-in-dialog</div>,
+}))
+
+vi.mock('../../auth/uaePassFlow.js', () => ({
+    wasUaePassSession: vi.fn(() => false),
+    endUaePassSession: vi.fn(),
 }))
 
 vi.mock('../../auth/visitResolution.js', () => ({
@@ -188,5 +194,54 @@ describe('ChatLayout', () => {
         await waitFor(() => expect(getAccessToken()).toBe(''))
         expect(personaMocks.clearPersonaSession).toHaveBeenCalled()
         await waitFor(() => expect(screen.queryByRole('button', { name: 'sign-out' })).not.toBeInTheDocument())
+    })
+
+    describe('UAE PASS sign-out', () => {
+        beforeEach(() => {
+            vi.mocked(uaePass.wasUaePassSession).mockReset().mockReturnValue(false)
+            vi.mocked(uaePass.endUaePassSession).mockReset()
+        })
+
+        it('ends the UAE PASS session once, after the server logout and the local clear', async () => {
+            vi.mocked(uaePass.wasUaePassSession).mockReturnValue(true)
+            let tokenWhenEnding = null
+            vi.mocked(uaePass.endUaePassSession).mockImplementation(() => {
+                tokenWhenEnding = getAccessToken()
+            })
+            render(<ChatLayout />)
+            await waitFor(() => expect(screen.getByText('Active one')).toBeInTheDocument())
+
+            fireEvent.click(screen.getByRole('button', { name: 'sign-out' }))
+
+            await waitFor(() => expect(uaePass.endUaePassSession).toHaveBeenCalledTimes(1))
+            expect(tokenWhenEnding).toBe('')
+            expect(vi.mocked(api.logout).mock.invocationCallOrder.at(-1))
+                .toBeLessThan(vi.mocked(uaePass.endUaePassSession).mock.invocationCallOrder.at(-1))
+            // The marker is read before clearSecureAuthSession (which clears the persona) removes it.
+            expect(vi.mocked(uaePass.wasUaePassSession).mock.invocationCallOrder.at(-1))
+                .toBeLessThan(personaMocks.clearPersonaSession.mock.invocationCallOrder.at(-1))
+        })
+
+        it('still ends the UAE PASS session when the server logout fails', async () => {
+            vi.mocked(uaePass.wasUaePassSession).mockReturnValue(true)
+            vi.mocked(api.logout).mockRejectedValueOnce(new Error('network down'))
+            render(<ChatLayout />)
+            await waitFor(() => expect(screen.getByText('Active one')).toBeInTheDocument())
+
+            fireEvent.click(screen.getByRole('button', { name: 'sign-out' }))
+
+            await waitFor(() => expect(uaePass.endUaePassSession).toHaveBeenCalledTimes(1))
+            expect(getAccessToken()).toBe('')
+        })
+
+        it('never ends a UAE PASS session for an OTP sign-out', async () => {
+            render(<ChatLayout />)
+            await waitFor(() => expect(screen.getByText('Active one')).toBeInTheDocument())
+
+            fireEvent.click(screen.getByRole('button', { name: 'sign-out' }))
+
+            await waitFor(() => expect(getAccessToken()).toBe(''))
+            expect(uaePass.endUaePassSession).not.toHaveBeenCalled()
+        })
     })
 })

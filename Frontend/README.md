@@ -17,19 +17,19 @@ npm run dev
 
 Opens http://localhost:5173.
 
-On first load you'll see an **environment picker dialog** (DEV / TEST / STAGE / LOCAL). After picking, sign in with **email + OTP**. If check-eligibility returns **two or more personas** (e.g. Student + Visitor), the OTP step asks you to **pick one** — that selection is sent as `personaCode` on verify and stamped on the JWT as `persona_code`. After sign-in the app resolves **visit** and/or **student** context in parallel:
+On first load you'll see an **environment picker dialog** (DEV / TEST / STAGE / LOCAL). After picking, sign in with **email + OTP**, or with **Sign in with UAE PASS** (staging UAE PASS, redirect back to the app root; the token exchange goes through the same modulith endpoint for every env). If check-eligibility returns **two or more personas** (e.g. Student + Visitor), the OTP step asks you to **pick one** — that selection is sent as `personaCode` on verify and stamped on the JWT as `persona_code`. UAE PASS works the other way round: when the token comes back without `persona_code` but with `matched_personas`, the dialog shows the same choice and restarts UAE PASS with the picked `personaCode` (the persona-less token is never stored). After sign-in the app resolves **visit** and/or **student** context in parallel:
 
 - Visit → `GET /api/v1/secure/visitor-management/my-visits*` (`visitId`)
 - Student persona → OTP `check-eligibility` (`personas` contains `STUDENT` or `reasons` contains `STUDENT_EXISTS`)
 - Student chat id → `GET /api/v1/secure/identity/profile/me` (`data.id` = Identity user UUID)
 
-The persona chosen at sign-in is **fixed for the whole session**: the JWT `persona_code` (STUDENT or VISITOR) is always the active persona, even if both contexts resolve, and there is no in-app switch (`?persona=` for a different persona is ignored). To use the other persona, click **Sign out** in the chat header and sign in again, picking the other persona. Sign out calls `POST /api/v1/secure/identity/auth/logout` (5s timeout) and then clears the local session whatever the result, so a failed call never leaves the user signed in. Tokens without `persona_code` (CI bearer, non-OTP logins) fall back to the resolved context: the sole one, or the last stored choice. Everything is persisted to `localStorage`, so subsequent reloads skip the dialog. A **"Change"** link in the badge row re-opens the picker any time.
+The persona chosen at sign-in is **fixed for the whole session**: the JWT `persona_code` (STUDENT or VISITOR) is always the active persona, even if both contexts resolve, and there is no in-app switch (`?persona=` for a different persona is ignored). To use the other persona, click **Sign out** in the chat header and sign in again, picking the other persona. Sign out calls `POST /api/v1/secure/identity/auth/logout` (5s timeout) with the stored refresh token, which the server revokes, and then clears the local session whatever the result, so a failed call never leaves the user signed in. A session started with UAE PASS also redirects to the UAE PASS logout afterwards (`stg-id.uaepass.ae`), so the next sign-in asks for credentials again. Tokens without `persona_code` (CI bearer, or a UAE PASS account with no persona) fall back to the resolved context: the sole one, or the last stored choice. Everything is persisted to `localStorage`, so subsequent reloads skip the dialog. A **"Change"** link in the badge row re-opens the picker any time.
 
 > Testers no longer need to edit `.env` — pick env + sign in via email OTP in the UI.
 
 ### Auth
 
-- **JWT only** — all chat/speech calls use `/api/v1/secure/*` with `Authorization: Bearer …`. Sign in via **email + OTP** in the auth dialog (DEV, TEST, STAGE, and LOCAL). Optional `VITE_API_BEARER_TOKEN` for CI/automation bootstrap.
+- **JWT only** — all chat/speech calls use `/api/v1/secure/*` with `Authorization: Bearer …`. Sign in via **email + OTP** in the auth dialog (DEV, TEST, STAGE, and LOCAL), or via **Sign in with UAE PASS** (staging authorize/logout endpoints; `VITE_UAEPASS_CLIENT_ID` must match the backend's `uaepass.client-id`, default `sandbox_stage`). The UAE PASS button is hidden when `VITE_API_BEARER_TOKEN` is set. Optional `VITE_API_BEARER_TOKEN` for CI/automation bootstrap.
 - **Guest / public chatting was removed** — there is no `VITE_CHAT_AUTH=guest` path and no `/api/v1/public/chatting/*` client.
 
 ## Runtime configuration precedence

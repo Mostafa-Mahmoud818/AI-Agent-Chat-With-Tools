@@ -346,3 +346,47 @@
     color: var(--text-primary) !important;
     box-shadow: 0 0 0 1px rgba(184, 146, 255, 0.12);
 }
+
+.local-auth-divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 4px 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.local-auth-divider::before,
+.local-auth-divider::after {
+    content: '';
+    flex: 1 1 auto;
+    height: 1px;
+    background: var(--border-subtle);
+}
+
+/* Bare wrapper around the official UAE PASS image: no own button styling (UAE PASS button guidelines). */
+.uaepass-signin-btn {
+    align-self: center;
+    display: block;
+    padding: 0;
+    border: 0;
+    border-radius: 12px;
+    background: transparent;
+    line-height: 0;
+    cursor: pointer;
+}
+
+.uaepass-signin-btn img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+}
+
+.uaepass-signin-btn:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
+}
+
+.uaepass-signin-btn:disabled {
+    cursor: wait;
+}

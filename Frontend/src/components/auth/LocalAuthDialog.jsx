@@ -1,6 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import PropTypes from 'prop-types'
 import SparkIcon from '../ui/SparkIcon.jsx'
+import PersonaPicker from './PersonaPicker.jsx'
+import uaePassSignInButton from '../../assets/uaepass-signin.svg'
+import uaePassSignInDisabledButton from '../../assets/uaepass-signin-disabled.svg'
 import { createLogger } from '../../utils/logger.js'
 import {
     exchangeOtpForToken,
@@ -10,6 +13,13 @@ import {
     prepareOtpChallenge,
 } from '../../auth/otpAccessTokenFlow.js'
 import { clearSecureAuthSession } from '../../auth/secureAuthSession.js'
+import {
+    completeUaePassSignIn,
+    endUaePassSession,
+    startUaePassSignIn,
+    takePendingUaePassSignIn,
+    wasUaePassSession,
+} from '../../auth/uaePassFlow.js'
 import { getBackendEnvLabel, resolveApiOrigin, API_BACKENDS } from '../../config/apiOrigin.js'
 import {
     getRuntimeBackendEnv,
@@ -34,10 +44,10 @@ import './LocalAuthDialog.css'
 const log = createLogger('LocalAuthDialog')
 
 const ENV_OPTIONS = [
-    { label: 'DEV', description: 'dev-modulith.naitive.ai — email + OTP' },
-    { label: 'TEST', description: 'test-modulith.naitive.ai — email + OTP' },
-    { label: 'STAGE', description: 'stg-modulith.naitive.ai — email + OTP' },
-    { label: 'LOCAL', description: 'localhost:8085 — email + OTP' },
+    { label: 'DEV', description: 'dev-modulith.naitive.ai — email + OTP or UAE PASS' },
+    { label: 'TEST', description: 'test-modulith.naitive.ai — email + OTP or UAE PASS' },
+    { label: 'STAGE', description: 'stg-modulith.naitive.ai — email + OTP or UAE PASS' },
+    { label: 'LOCAL', description: 'localhost:8085 — email + OTP or UAE PASS' },
 ]
 
 function initialStep() {
@@ -76,6 +86,14 @@ export default function LocalAuthDialog({ onAuthenticated }) {
     const [hint, setHint] = useState(null)
     /** Set when sign-in succeeded but the persona has no chat experience (e.g. EMPLOYEE). */
     const [chatUnavailablePersona, setChatUnavailablePersona] = useState('')
+    /** Set for a UAE PASS sign-in with no chat for the account (may have no persona code). */
+    const [noChatForAccount, setNoChatForAccount] = useState(false)
+    /** True while a UAE PASS callback is being exchanged; hides the email step. */
+    const [uaePassCompleting, setUaePassCompleting] = useState(false)
+    /** UAE PASS returned a persona-less token with these choices: pick one and restart UAE PASS with it. */
+    const [uaePassPersonas, setUaePassPersonas] = useState([])
+    /** UAE PASS is offered only when no bootstrap bearer token is configured. */
+    const uaePassAvailable = !(typeof env.VITE_API_BEARER_TOKEN === 'string' && env.VITE_API_BEARER_TOKEN.trim() !== '')
 
     const handlePickEnv = (label) => {
         const previous = getRuntimeBackendEnv()
@@ -163,14 +181,27 @@ export default function LocalAuthDialog({ onAuthenticated }) {
             setError('Select which persona to sign in as.')
             return
         }
+        await finishSignIn(exchangeOtpForToken(env, email, code, personaForVerify || undefined), personaForVerify)
+    }
+
+    /**
+     * Shared outcome handling for a token exchange (OTP or UAE PASS): success calls onAuthenticated,
+     * chatUnavailable shows the "signed in" card, and context errors fall back to the manual visit field.
+     *
+     * @param {Promise<object>} resultPromise resolves to the completeSecureAuth result
+     * @param {string} [personaForVerify] persona sent with the OTP verify (OTP only)
+     * @param {boolean} [anyAccount] true for UAE PASS: the "signed in" card shows even without a persona
+     */
+    const finishSignIn = async (resultPromise, personaForVerify = '', anyAccount = false) => {
         setLoading(true)
         setError(null)
         setHint('Loading your visit and student context from the server…')
         setStudentOnlySuccess(false)
         try {
-            const result = await exchangeOtpForToken(env, email, code, personaForVerify || undefined)
+            const result = await resultPromise
             if (result.chatUnavailable) {
                 setChatUnavailablePersona(result.personaCode || personaForVerify || '')
+                setNoChatForAccount(anyAccount)
                 setHint(null)
                 setError(null)
                 return
@@ -224,6 +255,39 @@ export default function LocalAuthDialog({ onAuthenticated }) {
         }
     }
 
+    // Completes a UAE PASS callback handled before React mounted (takes the pending result once).
+    useEffect(() => {
+        const pending = takePendingUaePassSignIn()
+        if (!pending) return
+        setUaePassCompleting(true)
+        setLoading(true)
+        setHint('Completing UAE PASS sign-in…')
+        pending
+            .then(
+                (tokens) => {
+                    // The persona-less token is never stored: the user picks a persona and signs in again.
+                    if (tokens.matchedPersonas?.length) {
+                        setUaePassPersonas(tokens.matchedPersonas)
+                        setHint('This UAE PASS account has more than one sign-in option. Pick one — UAE PASS will confirm it.')
+                        setLoading(false)
+                        return
+                    }
+                    return finishSignIn(completeUaePassSignIn(env, tokens), '', true)
+                },
+                (err) => {
+                    setHint(null)
+                    setError(err.message)
+                    setLoading(false)
+                },
+            )
+            .finally(() => setUaePassCompleting(false))
+    }, [])
+
+    const cancelUaePassPersonaChoice = () => {
+        setUaePassPersonas([])
+        setHint(null)
+    }
+
     const goBackToEmail = () => {
         setOtpStep('email')
         setCode('')
@@ -236,11 +300,15 @@ export default function LocalAuthDialog({ onAuthenticated }) {
 
     /** From the "signed in, no chat for this persona" terminal state: sign out and start over. */
     const handleUseAnotherAccount = () => {
+        // Read before clearing: clearSecureAuthSession removes the auth-method marker.
+        const viaUaePass = wasUaePassSession()
         clearSecureAuthSession()
         setChatUnavailablePersona('')
+        setNoChatForAccount(false)
         setEmail('')
         setCode('')
         setOtpStep('email')
+        if (viaUaePass) endUaePassSession()
     }
 
     if (step === 'env') {
@@ -275,14 +343,14 @@ export default function LocalAuthDialog({ onAuthenticated }) {
                     </div>
 
                     <p className="local-auth-hint">
-                        All environments sign in with email + OTP. Visit and student context load automatically when available.
+                        All environments offer email + OTP or UAE PASS. Visit and student context load automatically when available.
                     </p>
                 </div>
             </div>
         )
     }
 
-    if (chatUnavailablePersona) {
+    if (chatUnavailablePersona || noChatForAccount) {
         return (
             <div className="local-auth-overlay" role="dialog" aria-modal="true" aria-labelledby="local-auth-title">
                 <div className="local-auth-card glass">
@@ -328,22 +396,58 @@ export default function LocalAuthDialog({ onAuthenticated }) {
                 <h2 id="local-auth-title">{title}</h2>
                 <p className="local-auth-subtitle">{subtitle}</p>
 
-                {otpStep === 'email' ? (
-                    <form onSubmit={submitEmail} className="local-auth-form">
-                        <label htmlFor="local-auth-email">Email</label>
-                        <input
-                            id="local-auth-email"
-                            type="email"
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            placeholder="name@example.com"
-                            required
-                            disabled={loading}
+                {uaePassCompleting ? null : uaePassPersonas.length > 0 ? (
+                    <div className="local-auth-form">
+                        <PersonaPicker
+                            legend="Sign in with UAE PASS as"
+                            personas={uaePassPersonas}
+                            onPick={(persona) => startUaePassSignIn(persona)}
                         />
-                        <button type="submit" disabled={loading}>
-                            {loading ? 'Preparing OTP...' : 'Send OTP'}
-                        </button>
-                    </form>
+                        <div className="local-auth-actions">
+                            <button type="button" className="secondary" onClick={cancelUaePassPersonaChoice}>
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                ) : otpStep === 'email' ? (
+                    <>
+                        <form onSubmit={submitEmail} className="local-auth-form">
+                            <label htmlFor="local-auth-email">Email</label>
+                            <input
+                                id="local-auth-email"
+                                type="email"
+                                value={email}
+                                onChange={(e) => setEmail(e.target.value)}
+                                placeholder="name@example.com"
+                                required
+                                disabled={loading}
+                            />
+                            <button type="submit" disabled={loading}>
+                                {loading ? 'Preparing OTP...' : 'Send OTP'}
+                            </button>
+                        </form>
+                        {uaePassAvailable && (
+                            <>
+                                <div className="local-auth-divider" role="separator">
+                                    <span>or</span>
+                                </div>
+                                {/* Official UAE PASS "Sign in with" assets (Button Assets download, EN, Default), used unmodified. */}
+                                <button
+                                    type="button"
+                                    className="uaepass-signin-btn"
+                                    onClick={() => startUaePassSignIn()}
+                                    disabled={loading}
+                                >
+                                    <img
+                                        src={loading ? uaePassSignInDisabledButton : uaePassSignInButton}
+                                        alt="Sign in with UAE PASS"
+                                        width="264"
+                                        height="50"
+                                    />
+                                </button>
+                            </>
+                        )}
+                    </>
                 ) : (
                     <form onSubmit={submitOtp} className="local-auth-form">
                         <label htmlFor="local-auth-otp">OTP code</label>
@@ -360,26 +464,16 @@ export default function LocalAuthDialog({ onAuthenticated }) {
                             disabled={loading}
                         />
                         {matchedPersonas.length >= 2 && (
-                            <fieldset className="local-auth-persona" disabled={loading}>
-                                <legend>Sign in as</legend>
-                                <div className="local-auth-persona-grid" role="radiogroup" aria-label="Sign in as">
-                                    {matchedPersonas.map((persona) => (
-                                        <button
-                                            key={persona}
-                                            type="button"
-                                            role="radio"
-                                            aria-checked={selectedPersona === persona}
-                                            className={`local-auth-persona-btn${selectedPersona === persona ? ' local-auth-persona-btn--active' : ''}`}
-                                            onClick={() => {
-                                                setSelectedPersona(persona)
-                                                setError(null)
-                                            }}
-                                        >
-                                            {personaDisplayName(persona)}
-                                        </button>
-                                    ))}
-                                </div>
-                            </fieldset>
+                            <PersonaPicker
+                                legend="Sign in as"
+                                personas={matchedPersonas}
+                                selected={selectedPersona}
+                                onPick={(persona) => {
+                                    setSelectedPersona(persona)
+                                    setError(null)
+                                }}
+                                disabled={loading}
+                            />
                         )}
                         <div className="local-auth-actions">
                             <button type="button" className="secondary" onClick={goBackToEmail} disabled={loading}>

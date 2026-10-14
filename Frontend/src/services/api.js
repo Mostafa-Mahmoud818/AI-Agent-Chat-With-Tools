@@ -23,6 +23,7 @@
 import {createLogger} from '../utils/logger.js'
 import {resolveApiOrigin} from '../config/apiOrigin.js'
 import {ensureFreshAccessToken, refreshAccessToken} from '../auth/tokenRefresh.js'
+import {reloadPersistedRefreshToken} from '../auth/tokenStore.js'
 import {isValidContextId, isVisitorContextType} from '../config/chatContext.js'
 import {
     ABSENCE_ATTACHMENT_MAX_BYTES,
@@ -467,13 +468,16 @@ const LOGOUT_TIMEOUT_MS = 5_000
 
 /**
  * Tells the modulith the current session is ending: {@code POST /api/v1/secure/identity/auth/logout}
- * (204). Callers clear the local session regardless of the outcome, so failures here are thrown for
- * logging only.
+ * (204). The stored refresh token, when there is one, is sent so the server revokes it. Callers clear the
+ * local session regardless of the outcome, so failures here are thrown for logging only.
  *
  * @returns {Promise<void>}
  */
 export async function logout() {
-    await post(`${API_ORIGIN}${IDENTITY_PATH_SECURE}/auth/logout`, {}, LOGOUT_TIMEOUT_MS)
+    // Refresh first: a refresh rotates the refresh token, so read it only after any refresh has happened.
+    await ensureFreshAccessToken(import.meta.env)
+    const refreshToken = reloadPersistedRefreshToken()
+    await post(`${API_ORIGIN}${IDENTITY_PATH_SECURE}/auth/logout`, refreshToken ? {refreshToken} : {}, LOGOUT_TIMEOUT_MS)
     log.info('Logout acknowledged by server')
 }
 

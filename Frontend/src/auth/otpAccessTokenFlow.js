@@ -60,7 +60,7 @@ function errorFromResponse(res, json) {
     })
 }
 
-async function postJson(url, body) {
+export async function postJson(url, body) {
     const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

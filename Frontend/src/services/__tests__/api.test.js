@@ -347,6 +347,26 @@ describe('logout', () => {
         expect(options.headers.Authorization).toBe('Bearer test-token')
     })
 
+    it('sends the stored refresh token so the server revokes it', async () => {
+        const { setTokens } = await import('../../auth/tokenStore.js')
+        setTokens({ accessToken: 'test-token', refreshToken: 'refresh-1' })
+        fetch.mockResolvedValueOnce({ ok: true, status: 204 })
+
+        const { logout } = await import('../api.js')
+        await logout()
+
+        expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ refreshToken: 'refresh-1' })
+    })
+
+    it('sends an empty body when there is no refresh token', async () => {
+        fetch.mockResolvedValueOnce({ ok: true, status: 204 })
+
+        const { logout } = await import('../api.js')
+        await logout()
+
+        expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({})
+    })
+
     it('uses a short timeout so sign-out never hangs', async () => {
         const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
         fetch.mockResolvedValueOnce({ ok: true, status: 204 })

@@ -21,13 +21,45 @@ import {createLogger} from '../utils/logger.js'
 
 const log = createLogger('secureAuthSession')
 
+/** localStorage key for how the current session was started ({@code 'UAEPASS'}); absent means OTP. */
+export const AUTH_METHOD_KEY = 'ankabut.chat.authMethod'
+
 /**
- * Clears bearer token, refresh token, visit id, student id, and active persona.
+ * Records how the current session was started. Only UAE Pass writes a value; OTP leaves it absent.
+ *
+ * @param {string} method
+ */
+export function setAuthMethod(method) {
+    try {
+        localStorage.setItem(AUTH_METHOD_KEY, String(method))
+    } catch {
+        // private mode / quota
+    }
+}
+
+/**
+ * @returns {string} the stored auth method, or {@code ''} when none (OTP)
+ */
+export function getAuthMethod() {
+    try {
+        return localStorage.getItem(AUTH_METHOD_KEY) ?? ''
+    } catch {
+        return ''
+    }
+}
+
+/**
+ * Clears bearer token, refresh token, visit id, student id, active persona, and the auth method.
  */
 export function clearSecureAuthSession() {
     clearTokens()
     setRuntimeVisitId(null)
     clearPersonaSession()
+    try {
+        localStorage.removeItem(AUTH_METHOD_KEY)
+    } catch {
+        // private mode / quota
+    }
 }
 
 /**

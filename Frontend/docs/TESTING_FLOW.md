@@ -46,6 +46,20 @@ Copy the printed `ACCESS_TOKEN=...` / `VISIT_ID=...` / `USER_ID=...` block.
 Repeat with a second email for **User B** — Postman folder **B. Auth (User B)**, or k6 with
 `-e LABEL=userB` — only if you're planning to run the bulkhead test (scenario 4, §4).
 
+**Browser demo — UAE PASS sign-in (STAGE):** use the UAE PASS **staging** app and a **staging** account
+(SOP1 is enough). The staging app now requires scanning an Emirates ID or passport to register, so borrow an
+existing staging account (e.g. from the mobile team) or ask UAE PASS for one. The demo calls the staging authorize endpoint for every env, so run it against STAGE
+(or DEV/TEST/LOCAL with the same client id, see `VITE_UAEPASS_CLIENT_ID` in `.env.example`):
+1. Start the demo (`npm run dev`), pick **STAGE** in the env picker.
+2. Click **Sign in with UAE PASS**; the browser goes to `stg-id.uaepass.ae`.
+3. Log in with the staging account and confirm in the UAE PASS staging app.
+4. You return to the app root, the dialog shows "Completing UAE PASS sign-in…", then the chat opens
+   (or the "Signed in" card / manual visit field, as for OTP).
+   With an account that matches two or more personas (e.g. Student + Visitor), the dialog instead asks
+   "Sign in with UAE PASS as"; pick one and the browser goes back to UAE PASS, then returns signed in as that persona.
+5. Cancel once on purpose: the dialog shows "User cancelled the login.".
+6. **Sign out** from the chat header; the browser passes through UAE PASS logout and back to the sign-in dialog.
+
 ## 3. Start a conversation
 
 Every scenario needs a real, pre-existing conversation — `conversationId` isn't something you can
